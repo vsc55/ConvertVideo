@@ -3,9 +3,82 @@
     Fase ASK: elige que pistas conservar. El multiplex las mapea con sus metadatos.
 #>
 
+function Test-CvSubtitleUsable {
+    <#
+        $true si el subtitulo tiene un codec que FFMPEG PUEDE LEER (copiar/convertir). $false si el
+        codec_name viene vacio / 'none' / 'unknown': p.ej. S_TEXT/WEBVTT que el demuxer de Matroska de
+        esta build no mapea y ffprobe reporta como "Subtitle: none". Copiar (o convertir) uno de esos con
+        ffmpeg hace fallar el comando entero ("Subtitle codec 0 is not supported"); hay que RESCATARLO con
+        mkvextract (ver Resolve-CvSubtitleAction).
+    #>
+    param([Parameter(Mandatory)]$Stream)
+    $c = [string]$Stream.codec_name
+    return (-not [string]::IsNullOrWhiteSpace($c)) -and ($c.ToLower() -notin @('none', 'unknown'))
+}
+
+function Resolve-CvSubtitleAction {
+    <#
+        Decide QUE hacer con un subtitulo, segun si ffmpeg lo puede leer y la lista encode.subtitles.toSrt
+        (Context.SubtitlesToSrt, codecs a convertir a SRT):
+          'copy'    = legible y NO en la lista -> se copia tal cual.
+          'srt'     = legible y en la lista    -> se transcodifica a SubRip ('-c:s srt', ffmpeg lo lee).
+          'rescue'  = ilegible por ffmpeg (WEBVTT embebido) en un MKV y 'webvtt' esta en la lista -> se
+                      extrae con mkvextract a un temporal y ffmpeg lo convierte a srt en el mismo comando.
+          'discard' = ilegible y no rescatable (contenedor no Matroska o 'webvtt' no esta en la lista):
+                      se ignora (copiarlo tumbaria toda la conversion).
+    #>
+    param([Parameter(Mandatory)]$Context, [Parameter(Mandatory)]$Info, [Parameter(Mandatory)]$Stream)
+    $toSrt = @($Context.SubtitlesToSrt)
+    if (Test-CvSubtitleUsable $Stream) {
+        $c = "$($Stream.codec_name)".ToLower()
+        if ($toSrt -contains $c) { return 'srt' }
+        return 'copy'
+    }
+    # Ilegible por ffmpeg: solo rescatable si es Matroska (mkvextract) y 'webvtt' esta en la lista
+    # (el unico caso real de codec ilegible es el WEBVTT embebido).
+    $fmt = "$($Info.format.format_name)".ToLower()
+    if (($fmt -match 'matroska|webm') -and ($toSrt -contains 'webvtt')) { return 'rescue' }
+    return 'discard'
+}
+
 function Get-SubtitleStreams {
+    <# TODAS las pistas de subtitulo del archivo (la decision de copiar/convertir/rescatar/descartar la
+       toma Resolve-CvSubtitleAction en Select-Subtitles). #>
     param([Parameter(Mandatory)]$Info)
     @($Info.streams | Where-Object { $_.codec_type -eq 'subtitle' })
+}
+
+function Invoke-CvSubtitleExtract {
+    <#
+        Fase WORKER (I/O): extrae con mkvextract los subtitulos marcados 'Rescue' del MKV a temporales
+        .vtt y los devuelve con la ruta del temporal en '.File' (para que el emisor los mapee como input
+        EXTRA y ffmpeg los convierta a srt). Los demas subtitulos se devuelven sin tocar. Fail-soft POR
+        PISTA: si mkvextract falta o falla, se OMITE ese subtitulo (no la conversion). Devuelve
+        @{ Subs = [subs, los rescatados con .File]; Temps = [rutas temporales a borrar al terminar] }.
+    #>
+    param([Parameter(Mandatory)]$Context, [Parameter(Mandatory)][string]$File, $Subtitles)
+    $mkx    = "$($Context.MkvExtract)"
+    $tmpDir = [System.IO.Path]::GetTempPath()
+    $out    = @()
+    $temps  = @()
+    foreach ($s in @($Subtitles | Where-Object { $_ })) {
+        if (-not ($s.PSObject.Properties['Rescue'] -and [bool]$s.Rescue)) { $out += $s; continue }
+        if ([string]::IsNullOrWhiteSpace($mkx) -or -not (Test-Path -LiteralPath $mkx)) {
+            Write-CvLog 'SUB' ("[AVISO] - mkvextract no disponible; se omite el subtitulo rescatado (pista {0})." -f $s.Index) -Indent 3
+            continue
+        }
+        $tmp = Join-Path $tmpDir ("cv-sub-{0}.vtt" -f ([guid]::NewGuid().ToString('N').Substring(0, 8)))
+        $r = Invoke-ToolCapture -Exe $mkx -Arguments @('tracks', $File, ("{0}:{1}" -f [int]$s.Index, $tmp)) -Context $Context
+        if (($r.ExitCode -eq 0) -and (Test-Path -LiteralPath $tmp) -and ((Get-Item -LiteralPath $tmp).Length -gt 0)) {
+            $s2 = $s.PSObject.Copy(); $s2 | Add-Member -NotePropertyName File -NotePropertyValue $tmp -Force
+            $out += $s2
+            $temps += $tmp
+        } else {
+            Write-CvLog 'SUB' ("[AVISO] - No se pudo rescatar el subtitulo (pista {0}, codigo {1}); se omite." -f $s.Index, $r.ExitCode) -Indent 3
+            if (Test-Path -LiteralPath $tmp) { Remove-Item -Force -LiteralPath $tmp -ErrorAction SilentlyContinue }
+        }
+    }
+    return @{ Subs = @($out); Temps = @($temps) }
 }
 
 function Test-SubForced {
@@ -29,16 +102,21 @@ function ConvertTo-SubSel {
         -Default: $true/$false lo fuerza; si se omite ($null) se conserva el flag
         'default' ORIGINAL de la pista (asi un forzado que ya era predefinido lo sigue siendo).
     #>
-    param([Parameter(Mandatory)]$Stream, [object]$Default = $null, [object]$Forced = $null)
+    param([Parameter(Mandatory)]$Stream, [object]$Default = $null, [object]$Forced = $null, [string]$Action = 'copy')
     $isDefault = if ($null -ne $Default) { [bool]$Default } else { (Test-SubDefault $Stream) }
     $isForced  = if ($null -ne $Forced)  { [bool]$Forced }  else { (Test-SubForced $Stream) }
+    # Accion (Resolve-CvSubtitleAction): 'srt' = transcodificar a SubRip; 'rescue' = ademas hay que
+    # extraerlo con mkvextract (ffmpeg no lo lee del contenedor); 'copy' = tal cual. ToSrt = srt|rescue.
+    $codec = if ($Action -eq 'rescue') { 'webvtt' } else { "$($Stream.codec_name)" }
     [pscustomobject]@{
         Index   = [int]$Stream.index
         Lang    = (Get-Tag $Stream 'language')
         Title   = (Get-Tag $Stream 'title')
-        Codec   = $Stream.codec_name
+        Codec   = $codec
         Forced  = $isForced
         Default = $isDefault
+        ToSrt   = ($Action -in @('srt', 'rescue'))
+        Rescue  = ($Action -eq 'rescue')
     }
 }
 
@@ -150,7 +228,9 @@ function Select-SubtitlesKeep {
         foreach ($s in $streams) {
             $t = Get-Tag $s 'title'; $tt = ''; if ($t) { $tt = "'$t'" }
             $c = $cues[[int]$s.index]; $ctxt = if ($c -ge 0) { "$c cues" } else { '? cues' }
-            $lines += ("[{0}] idioma={1} codec={2} ({3}) {4}" -f $s.index, (Get-Tag $s 'language'), $s.codec_name, $ctxt, $tt)
+            $act = Resolve-CvSubtitleAction -Context $Context -Info $Info -Stream $s
+            $cod = if ($act -eq 'rescue') { 'webvtt (rescate->srt)' } elseif ($act -eq 'srt') { "$($s.codec_name) (->srt)" } else { "$($s.codec_name)" }
+            $lines += ("[{0}] idioma={1} codec={2} ({3}) {4}" -f $s.index, (Get-Tag $s 'language'), $cod, $ctxt, $tt)
         }
         Show-Menu -Title 'SUBTITULOS (ninguno del idioma preferido) - elige cuales conservar:' -Lines ($lines + @(
             '',
@@ -192,7 +272,8 @@ function Select-SubtitlesKeep {
         }
         Write-Host ''
         # -Forced $true si el usuario lo marco con '*'; si no ($null), se detecta del origen (Test-SubForced).
-        $sel = @($chosen | ForEach-Object { ConvertTo-SubSel $_ -Forced $(if ($forcedSet.ContainsKey([int]$_.index)) { $true } else { $null }) })
+        # -Action (Resolve-CvSubtitleAction): copy/srt/rescue por pista (los 'discard' ya se filtraron antes).
+        $sel = @($chosen | ForEach-Object { ConvertTo-SubSel $_ -Forced $(if ($forcedSet.ContainsKey([int]$_.index)) { $true } else { $null }) -Action (Resolve-CvSubtitleAction -Context $Context -Info $Info -Stream $_) })
         return @(@($sel | Where-Object { $_.Forced }) + @($sel | Where-Object { -not $_.Forced }))
     }
 }
@@ -207,8 +288,22 @@ function Select-Subtitles {
     #>
     param([Parameter(Mandatory)]$Context, [Parameter(Mandatory)]$Info, [ref]$Manual = $null)
 
-    $subs = @(Get-SubtitleStreams -Info $Info)
-    if ($subs.Count -eq 0) { if ($Context.Debug) { Write-CvLog 'SUB' '[INFO] - El archivo no tiene subtitulos' }; return @() }
+    # Accion por pista (Resolve-CvSubtitleAction): copy / srt / rescue / discard. Los 'discard' (codec
+    # ilegible y no rescatable) se IGNORAN aqui, con aviso, para que no entren en el job ni tumben la
+    # conversion. El resto sigue el flujo normal llevando su accion.
+    $actions = @{}
+    $subs    = @()
+    $discard = 0
+    foreach ($s in @(Get-SubtitleStreams -Info $Info)) {
+        $act = Resolve-CvSubtitleAction -Context $Context -Info $Info -Stream $s
+        if ($act -eq 'discard') { $discard++; continue }
+        $actions[[int]$s.index] = $act
+        $subs += $s
+    }
+    if ($discard -gt 0) {
+        Write-CvLog 'SUB' ("[AVISO] - {0} subtitulo(s) con codec ilegible se ignoran (no se pueden copiar; p.ej. WEBVTT sin 'webvtt' en encode.subtitles.toSrt, o contenedor no-MKV)." -f $discard) -Indent 3
+    }
+    if ($subs.Count -eq 0) { if ($Context.Debug) { Write-CvLog 'SUB' '[INFO] - El archivo no tiene subtitulos utilizables' }; return @() }
 
     $pref = @($subs | Where-Object { Test-CvLanguage (Get-Tag $_ 'language') $Context.SubLangs })
     if ($pref.Count -eq 0) {
@@ -224,15 +319,16 @@ function Select-Subtitles {
         Write-CvLog 'SUB' ("[AVISO] - {0} subtitulos completos en el idioma preferido; se conservan todos (ninguno marcado como principal)." -f $complete.Count) -Indent 3
     }
 
-    # Forzados primero (default+forced); luego completos (sin default ni forced).
+    # Forzados primero (default+forced); luego completos (sin default ni forced). Cada uno lleva su accion.
     $result = @()
-    foreach ($s in $forced)   { $result += (ConvertTo-SubSel $s -Forced $true  -Default $true) }
-    foreach ($s in $complete) { $result += (ConvertTo-SubSel $s -Forced $false -Default $false) }
+    foreach ($s in $forced)   { $result += (ConvertTo-SubSel $s -Forced $true  -Default $true  -Action $actions[[int]$s.index]) }
+    foreach ($s in $complete) { $result += (ConvertTo-SubSel $s -Forced $false -Default $false -Action $actions[[int]$s.index]) }
 
     if ($Context.Debug) {
         foreach ($r in $result) {
             $rol = if ($r.Forced) { 'forzado' } else { 'completo' }
-            Write-CvLog 'SUB' ("[INFO] - Pista {0} ({1}, {2}) - {3}" -f $r.Index, $r.Lang, $r.Codec, $rol)
+            $cv  = if ($r.Rescue) { ' -> rescatar+srt' } elseif ($r.ToSrt) { ' -> srt' } else { '' }
+            Write-CvLog 'SUB' ("[INFO] - Pista {0} ({1}, {2}) - {3}{4}" -f $r.Index, $r.Lang, $r.Codec, $rol, $cv)
         }
     }
     return $result

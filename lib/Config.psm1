@@ -210,14 +210,16 @@ function Get-CvConfigDefaults {
                     '26.02' = '56b8cc9f4971cef253644fafe54063ed7fdca551d4dee0f8c6baa81b855acd72'
                 }
             }
-            # mkvtoolnix: solo se usa 'mkvpropedit.exe' para limpiar las etiquetas DURATION del
-            # MKV final. Se distribuye como .7z (se extrae con 7zr). El exe es autosuficiente.
+            # mkvtoolnix: 'mkvpropedit.exe' limpia las etiquetas DURATION del MKV final; 'mkvextract.exe'
+            # rescata subtitulos embebidos que ffmpeg NO puede leer (p.ej. S_TEXT/WEBVTT, que el demuxer
+            # de Matroska de ffmpeg marca como codec 'none') extrayendolos a un fichero que luego ffmpeg
+            # convierte a .srt. Se distribuye como .7z (se extrae con 7zr). Los exe son autosuficientes.
             mkvtoolnix = [ordered]@{
                 selected     = '100.0'
                 type         = '7z'
                 url          = 'https://mkvtoolnix.download/windows/releases/{version}/mkvtoolnix-64-bit-{version}.7z'
                 binPath      = 'mkvtoolnix'
-                files        = @('mkvpropedit.exe')
+                files        = @('mkvpropedit.exe', 'mkvextract.exe')
                 dependsOn    = @('sevenzip')   # 7zr para extraer el .7z (LZMA)
                 platform     = 'x86_64'
                 versionExe   = 'mkvpropedit.exe'
@@ -401,6 +403,14 @@ function Get-CvConfigDefaults {
                         LRA = 11
                     }
                 }
+            }
+            # subtitles.toSrt: lista de tipos de subtitulo (por codec) a CONVERTIR A SRT. Los de la lista
+            # se transcodifican a SubRip; el WEBVTT embebido que ffmpeg NO puede leer (el demuxer de
+            # Matroska lo marca como codec 'none') se RESCATA con mkvextract a un temporal y se convierte
+            # en la misma ejecucion. Los que NO estan en la lista se copian tal cual. Lista vacia = no
+            # convertir nada (un subtitulo ilegible se descarta con aviso). Anade p.ej. 'ass','mov_text'.
+            subtitles = [ordered]@{
+                toSrt = @('webvtt')
             }
         }
         # customProfile: valores por DEFECTO del constructor de perfil CUSTOM interactivo (opcion 0
@@ -643,6 +653,7 @@ function Get-CvConfigHelp {
         'encode/audio/keepTitle'      = 'Conservar el titulo del audio de origen en la salida (false = titulo en blanco)'
         'encode/audio/syncThreshold'  = 'Detectar audio adelantado si acaba N s antes que el video (0 = off); PREPARAR pregunta el retardo'
         'encode/audio/aacCoder'       = 'Coder del encoder AAC nativo (twoloop = mayor calidad)'
+        'encode/subtitles/toSrt'      = 'Tipos de subtitulo (por codec) a convertir a SRT (p.ej. webvtt); el WEBVTT ilegible se rescata con mkvextract. Vacio = no convertir'
 
         'customProfile'             = 'Valores por defecto del constructor de perfil CUSTOM (opcion 0 de USAR PERFIL); mismos campos que un profiles[]'
         'customProfile/videoEncoder'= 'Codec de video: libx264|h264_nvenc|libx265|hevc_nvenc|libsvtav1|av1_nvenc|copy|auto'
@@ -993,6 +1004,7 @@ function Repair-CvConfigArrays($cfg) {
     }
     if ($cfg.PSObject.Properties['profiles'] -and $null -ne $cfg.profiles) { $cfg.profiles = @($cfg.profiles) }
     if ($cfg.encode -and $null -ne $cfg.encode.extensions) { $cfg.encode.extensions = @($cfg.encode.extensions) }
+    if ($cfg.encode -and $cfg.encode.subtitles -and $null -ne $cfg.encode.subtitles.toSrt) { $cfg.encode.subtitles.toSrt = @($cfg.encode.subtitles.toSrt) }
 }
 function Read-CvConfigFile {
     param([Parameter(Mandatory)][string]$Path)

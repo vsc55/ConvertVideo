@@ -21,23 +21,52 @@ function Resolve-CvMuxInputIndex {
 function Get-CvSubtitleMapArgs {
     <#
         Args de mapeo de los SUBTITULOS del comando final, compartidos por el multiplex y la ejecucion
-        en una pasada. Por cada sub (en orden): -map <InputIndex>:<index>? + language + title
-        ('Forzados' si forzado, '' si completo) + disposition (default/forced/'0'). El indice de salida
-        (:s:N) va 0..K-1. $InputIndex = input que aporta los subs (0 en una pasada; el original en el
-        multiplex). PURA. Los objetos $s usan {Index; Lang; Forced; Default}. Vacio -> array vacio.
+        en una pasada. Por cada sub (en orden): -map <ii>:<si>? + language + title ('Forzados' si forzado,
+        '' si completo) + disposition (default/forced/'0') + codec por pista ('-c:s:N' = 'srt' si el sub
+        se convierte a SubRip, 'copy' si no). El indice de salida (:s:N) va 0..K-1.
+        $InputIndex = input que aporta los subs EMBEBIDOS (0 en una pasada; el original en el multiplex).
+        Cada sub puede traer '.InputIndex' (input propio, p.ej. un temporal rescatado) y '.File' (si es un
+        fichero externo -> se mapea su pista 0). '.ToSrt' -> '-c:s:N srt'. PURA. Vacio -> array vacio.
     #>
     param($Subtitles, [int]$InputIndex)
     $a  = @()
     $oi = 0
     foreach ($s in @($Subtitles | Where-Object { $_ })) {
-        $a += @('-map', ("{0}:{1}?" -f $InputIndex, [int]$s.Index))
+        $ii = if ($s.PSObject.Properties['InputIndex'] -and $null -ne $s.InputIndex) { [int]$s.InputIndex } else { $InputIndex }
+        $si = if ($s.PSObject.Properties['File'] -and "$($s.File)") { 0 } else { [int]$s.Index }   # fichero externo = pista 0
+        $a += @('-map', ("{0}:{1}?" -f $ii, $si))
         $a += @(('-metadata:s:s:{0}' -f $oi), ("language={0}" -f $(if ($s.Lang) { $s.Lang } else { 'und' })))
         $a += @(('-metadata:s:s:{0}' -f $oi), ("title={0}" -f $(if ($s.Forced) { 'Forzados' } else { '' })))
         $disp = @(); if ($s.Default) { $disp += 'default' }; if ($s.Forced) { $disp += 'forced' }
         $a += @(('-disposition:s:{0}' -f $oi), $(if ($disp.Count -gt 0) { $disp -join '+' } else { '0' }))
+        $a += @(('-c:s:{0}' -f $oi), $(if ($s.PSObject.Properties['ToSrt'] -and [bool]$s.ToSrt) { 'srt' } else { 'copy' }))
         $oi++
     }
     return ,$a
+}
+
+function Resolve-CvSubtitleInputs {
+    <#
+        Para los subtitulos con FICHERO EXTERNO ('.File', p.ej. un temporal rescatado con mkvextract) asigna
+        un '-i' propio a partir de $NextInput y les fija '.InputIndex'. Devuelve @{ Inputs = @('-i',file,...)
+        en orden; Subs = [subs, los externos ya con .InputIndex] }. Los subs EMBEBIDOS (sin .File) se
+        devuelven sin tocar (usaran el InputIndex base del emisor). PURA (no toca disco).
+    #>
+    param($Subtitles, [int]$NextInput)
+    $inputs = @()
+    $subs   = @()
+    $idx    = $NextInput
+    foreach ($s in @($Subtitles | Where-Object { $_ })) {
+        if ($s.PSObject.Properties['File'] -and "$($s.File)") {
+            $inputs += @('-i', "$($s.File)")
+            $s2 = $s.PSObject.Copy(); $s2 | Add-Member -NotePropertyName InputIndex -NotePropertyValue $idx -Force
+            $subs += $s2
+            $idx++
+        } else {
+            $subs += $s
+        }
+    }
+    return @{ Inputs = @($inputs); Subs = @($subs) }
 }
 
 function Get-CvAttachmentMapArgs {
@@ -74,6 +103,11 @@ function Get-CvMultiplexArgs {
     $ffArgs += @('-i',$Plan.VideoSrc)                                       # input 0 = video
     foreach ($a in $Plan.TempAudio) { $ffArgs += @('-i', "$($a.File)") }    # inputs 1..M = audios recodificados
     if ($Plan.NeedOrig) { $ffArgs += @('-i',$Plan.File) }                   # input N = original (subs/adjuntos/capitulos/audio copy)
+    # Subtitulos con fichero externo (rescatados a temporal): un input propio a partir del siguiente libre
+    # (video + audios recodificados + original). Resolve-CvSubtitleInputs fija su .InputIndex.
+    $nextIn = 1 + $Plan.TempAudio.Count + $(if ($Plan.NeedOrig) { 1 } else { 0 })
+    $subIn  = Resolve-CvSubtitleInputs -Subtitles $Plan.Subs -NextInput $nextIn
+    $ffArgs += @($subIn.Inputs)
 
     # Limpiar TODOS los metadatos heredados de una sola vez: '-map_metadata -1' global tambien
     # vacia los tags de cada pista (ENCODER/_STATISTICS obsoletos que se copian al recodificar el
@@ -122,13 +156,14 @@ function Get-CvMultiplexArgs {
         $ffArgs += @('-map', ("{0}:a:0?" -f $Plan.OrigInput), '-map_metadata:s:a:0', ("{0}:s:a:0" -f $Plan.OrigInput))
     }
 
-    # mapeo subtitulos (idioma + titulo Forzados/'' + disposition) y adjuntos (filename/mimetype),
-    # fuente unica compartida con la ejecucion en una pasada. Aqui el input que los aporta es el original.
-    $ffArgs += (Get-CvSubtitleMapArgs   -Subtitles $Plan.Subs    -InputIndex $Plan.OrigInput)
+    # mapeo subtitulos (idioma + titulo Forzados/'' + disposition + codec por pista) y adjuntos
+    # (filename/mimetype), fuente unica compartida con la ejecucion en una pasada. Los subs EMBEBIDOS
+    # vienen del original; los rescatados, de su input externo (.InputIndex ya fijado). El codec de subs
+    # va por pista ('-c:s:N srt|copy' dentro de Get-CvSubtitleMapArgs), asi que no hay '-c:s copy' global.
+    $ffArgs += (Get-CvSubtitleMapArgs   -Subtitles $subIn.Subs     -InputIndex $Plan.OrigInput)
     $ffArgs += (Get-CvAttachmentMapArgs -Attachments $Plan.KeepAtt -InputIndex $Plan.OrigInput)
 
     $ffArgs += @('-c:v','copy','-c:a','copy')
-    if ($Plan.HasSubs)             { $ffArgs += @('-c:s','copy') }
     if ($Plan.KeepAtt.Count -gt 0) { $ffArgs += @('-c:t','copy') }
     # Modo pruebas: acotar la salida final. Imprescindible en perfil copy (el video se copia del
     # original a longitud COMPLETA, mientras el audio recodificado ya viene a TestLimit); tambien
@@ -171,8 +206,11 @@ function Invoke-Multiplex {
     # copy CLASICO (sin lista de pistas): AudioSkipped y ninguna pista -> se copia 0:a:0 del original.
     $legacyCopy = (($audioT.Count -eq 0) -and $AudioSkipped)
 
-    # Subtitulos seleccionados en la fase preparar (filtramos posibles nulos del JSON).
-    $subs    = @($Subtitles | Where-Object { $_ })
+    # Subtitulos seleccionados en la fase preparar (filtramos posibles nulos del JSON). Los ilegibles
+    # marcados 'Rescue' (WEBVTT) se extraen con mkvextract a temporales ANTES del comando; se anaden como
+    # inputs extra y ffmpeg los convierte a srt. Fail-soft por pista. Se borran al terminar ($sx.Temps).
+    $sx      = Invoke-CvSubtitleExtract -Context $Context -File $File -Subtitles @($Subtitles | Where-Object { $_ })
+    $subs    = @($sx.Subs)
     $hasSubs = $subs.Count -gt 0
     # Adjuntos del original a conservar (fuentes/caratulas segun config; por defecto ninguno).
     $keepAtt = @(Select-Attachments -Context $Context -Info $Info)
@@ -210,6 +248,8 @@ function Invoke-Multiplex {
 
     Start-CvStep $Context 'MULTIPLEX' 'Uniendo pistas...'
     $code = Invoke-ToolShow -Exe $Context.FFmpeg -Arguments $ffArgs -Context $Context
+    # Borrar los temporales de subtitulos rescatados (se hayan usado o no).
+    foreach ($t in @($sx.Temps)) { if (Test-Path -LiteralPath $t) { Remove-Item -Force -LiteralPath $t -ErrorAction SilentlyContinue } }
     $ok = (($code -eq 0) -and (Test-Path -LiteralPath $out) -and ((Get-Item -LiteralPath $out).Length -gt 0))
     $mbTxt = if ($ok) { ("({0} MB)" -f [math]::Round((Get-Item -LiteralPath $out).Length / 1MB, 1)) } else { '' }
     Stop-CvStep $Context 'MULTIPLEX' $ok -Extra $mbTxt -OkMsg ("[OK] - {0}  {1}" -f (Split-Path $out -Leaf), $mbTxt) -FailMsg ("[ERR] - ffmpeg devolvio codigo {0}" -f $code)

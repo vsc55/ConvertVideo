@@ -126,6 +126,15 @@ function New-CvToolContext {
             }
         }
     }
+    # mkvextract (rescate de subtitulos que ffmpeg no puede leer, p.ej. WEBVTT embebido): misma
+    # version 'selected' de mkvtoolnix, misma carpeta que mkvpropedit.
+    if ($c.PSObject.Properties['MkvExtract']) {
+        $mkvApp2 = Get-CvAppDescriptor -Context $Context -Name 'mkvtoolnix'
+        if ($mkvApp2) {
+            $md2 = Get-CvToolDir -Context $Context -Name 'mkvtoolnix' -Version "$($mkvApp2.selected)"
+            $c.MkvExtract = Join-Path $md2 'mkvextract.exe'
+        }
+    }
     return $c
 }
 

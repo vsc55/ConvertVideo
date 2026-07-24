@@ -13,7 +13,8 @@ tools/
 ├── aacgain/
 │   └── 2.0.0/x64/aacgain.exe
 ├── mkvtoolnix/
-│   └── 100.0/x64/mkvpropedit.exe      (limpieza de etiquetas del MKV final)
+│   └── 100.0/x64/  mkvpropedit.exe    (limpieza de etiquetas del MKV final)
+│                   mkvextract.exe     (rescate de subtítulos que ffmpeg no lee, p. ej. WEBVTT)
 └── sevenzip/
     └── 26.02/x64/7zr.exe              (extractor .7z; bootstrap de mkvtoolnix)
 ```

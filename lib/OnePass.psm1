@@ -51,7 +51,10 @@ function Get-CvOnePassArgs {
         # Filtro de volumen POR PISTA (alineado a spec.Audio), resuelto en runtime por Invoke-CvOnePass
         # cuando el metodo es 'peak' (mide el pico y calcula la ganancia). Si no se pasa, se usa el
         # loudnorm del spec para todas (metodo 'loudnorm').
-        [string[]]$VolumeFilters = $null
+        [string[]]$VolumeFilters = $null,
+        # Subtitulos ya resueltos por el worker (con los rescatados extraidos a temporales, .File). Si no
+        # se pasan, se usan los del spec (sin rescate). Permite que el worker haga la extraccion (I/O).
+        $Subtitles = $null
     )
     # Todas las DECISIONES (video/audio/subs/adjuntos/codecs) salen del spec de render (fuente unica,
     # Resolve-CvRenderSpec); aqui solo se EMITE el comando de una pasada a partir de el.
@@ -91,10 +94,15 @@ function Get-CvOnePassArgs {
         if ($tr.Bitrate) { $aCodec += @(('-b:a:{0}' -f $ti), "$($tr.Bitrate)") }
     }
 
-    $hasSubs = $spec.Subtitles.Count -gt 0
+    # Subtitulos: los del worker (con rescatados ya extraidos a temporales) o, si no, los del spec.
+    # Los que tienen fichero externo (.File) reciben un input propio a partir del 1 (el 0 es el original).
+    $subsIn  = if ($null -ne $Subtitles) { @($Subtitles | Where-Object { $_ }) } else { @($spec.Subtitles) }
+    $subIn   = Resolve-CvSubtitleInputs -Subtitles $subsIn -NextInput 1
+    $hasSubs = @($subIn.Subs).Count -gt 0
 
     # ----- ensamblar el comando -----
     $ff  = @('-hide_banner','-y','-threads',"$($Context.Threads)",'-i',$File)
+    $ff += @($subIn.Inputs)   # inputs extra: un fichero por subtitulo rescatado (temporal .vtt)
     $ff += @('-filter_complex', ($fc -join ';'))
     # Limpiar TODOS los metadatos heredados (global + por pista) y fijar los capitulos del original
     # (input 0). '+bitexact' evita que ffmpeg escriba su propia etiqueta ENCODER global.
@@ -104,15 +112,17 @@ function Get-CvOnePassArgs {
     # audio (mapas + metadatos por pista)
     $ff += $aMaps
     # subtitulos y adjuntos: misma fuente unica que el multiplex (Get-CvSubtitleMapArgs /
-    # Get-CvAttachmentMapArgs). Aqui todo viene del unico input 0 (el original).
-    $ff += (Get-CvSubtitleMapArgs   -Subtitles $spec.Subtitles    -InputIndex 0)
+    # Get-CvAttachmentMapArgs). Los adjuntos vienen del input 0; los subs, del 0 (embebidos) o de su
+    # input externo (rescatados, .InputIndex ya fijado por Resolve-CvSubtitleInputs). El codec por pista
+    # ('-c:s:N srt|copy') lo emite Get-CvSubtitleMapArgs, asi que no se pone un '-c:s copy' global.
+    $ff += (Get-CvSubtitleMapArgs   -Subtitles $subIn.Subs        -InputIndex 0)
     $ff += (Get-CvAttachmentMapArgs -Attachments $spec.Attachments -InputIndex 0)
     # codecs: video (Get-VideoArgs) + audio (codec global; -ac/-ar/-b:a por pista) + copy subs/adjuntos.
     $ff += (Get-VideoArgs -Context $Context -Prof $Prof -Anim $spec.Video.Anim)
     $ff += @('-c:a',$spec.AudioCodec)
     if ($spec.AacCoder) { $ff += @('-aac_coder', $spec.AacCoder) }   # coder AAC nativo (config)
     $ff += $aCodec
-    if ($hasSubs)                    { $ff += @('-c:s','copy') }
+    # (el codec de subtitulos va por pista en Get-CvSubtitleMapArgs: '-c:s:N srt|copy')
     if ($spec.Attachments.Count -gt 0) { $ff += @('-c:t','copy') }
     # Modo pruebas: acotar la salida a los primeros TestLimit segundos.
     if ($spec.TestLimit -gt 0) { $ff += @('-t',"$($spec.TestLimit)") }
@@ -134,6 +144,11 @@ function Invoke-CvOnePass {
     )
     $name = [System.IO.Path]::GetFileNameWithoutExtension($File)
     $out  = Get-OutputPath $Context $name
+
+    # Subtitulos: rescatar los ilegibles (WEBVTT) a temporales con mkvextract ANTES del comando; se pasan
+    # al emisor como inputs extra y ffmpeg los convierte a srt en la misma pasada. Fail-soft por pista.
+    $sx   = Invoke-CvSubtitleExtract -Context $Context -File $File -Subtitles $Job.subtitles
+    $subs = @($sx.Subs)
 
     # Volumen 'peak': una pasada de ANALISIS previa por pista (volumedetect) para calcular la ganancia
     # ('volume=XdB'); el resto (video+audio+mux) sigue siendo UN solo comando. 'loudnorm' no mide (es
@@ -158,9 +173,9 @@ function Invoke-CvOnePass {
         }
     }
     $ff = if ($null -ne $volFilters) {
-        Get-CvOnePassArgs -Context $Context -Prof $Prof -File $File -Info $Info -Job $Job -Out $out -VolumeFilters $volFilters
+        Get-CvOnePassArgs -Context $Context -Prof $Prof -File $File -Info $Info -Job $Job -Out $out -VolumeFilters $volFilters -Subtitles $subs
     } else {
-        Get-CvOnePassArgs -Context $Context -Prof $Prof -File $File -Info $Info -Job $Job -Out $out
+        Get-CvOnePassArgs -Context $Context -Prof $Prof -File $File -Info $Info -Job $Job -Out $out -Subtitles $subs
     }
 
     # Total del progreso: duracion (+ el mayor silencio de sincronia, que alarga la pista), acotado a -t.
@@ -177,6 +192,8 @@ function Invoke-CvOnePass {
         Start-CvStep $Context 'UNA-PASADA' 'Codificando en una sola pasada...'
         $code = Invoke-ToolShow -Exe $Context.FFmpeg -Arguments $ff -Context $Context
     }
+    # Borrar los temporales de subtitulos rescatados (se hayan usado o no).
+    foreach ($t in @($sx.Temps)) { if (Test-Path -LiteralPath $t) { Remove-Item -Force -LiteralPath $t -ErrorAction SilentlyContinue } }
     $ok = (($code -eq 0) -and (Test-Path -LiteralPath $out) -and ((Get-Item -LiteralPath $out).Length -gt 0))
     if (-not $ok) {
         Stop-CvStep $Context 'UNA-PASADA' $false -FailMsg ("[ERR] - ffmpeg devolvio codigo {0}" -f $code)

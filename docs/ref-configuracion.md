@@ -38,7 +38,8 @@ Esquema completo (tras la fusión con los defaults):
                               "tuning": { "presetNvenc": "slow", "presetX26x": "slow", "presetSvtav1": "6", "presetAv1Nvenc": "p6", "rcLookahead": 32, "refs": 4, "tier": "high" },
                               "border": { "start": 120, "duration": 120, "samples": 6, "autoAcceptPct": 60, "autoAcceptMinMargin": 2, "autoSamples": 3, "autoDuration": 5, "minCropPct": 2 } },
                    "audio": { "hz": 44100, "channels": 2, "encoder": "aac_coder", "codec": "aac", "bitrate": "192k", "downmixMode": "default", "downmixCoeffs": { "center": 0.5, "front": 0.35, "surround": 0.15 }, "syncAdelay": true, "multiAudio": true, "keepTitle": false, "syncThreshold": 2.0, "aacCoder": "twoloop",
-                              "volume": { "method": "peak", "peakTarget": 0, "loudnorm": { "I": -16, "TP": -1.5, "LRA": 11 } } } },
+                              "volume": { "method": "peak", "peakTarget": 0, "loudnorm": { "I": -16, "TP": -1.5, "LRA": 11 } } },
+                   "subtitles": { "toSrt": ["webvtt"] } } },
   "customProfile": { "videoEncoder": "hevc_nvenc", "videoProfile": "main10", "videoLevel": "5.0", "qmin": 1, "qmax": 23, "crf": 21, "multipass": "off", "audioCodec": "aac", "audioBitrate": "192k" },
   "preview":     { "start": 0, "seconds": 0, "syncSeconds": 0 },
   "postprocess": { "stripTags": true, "mkvpropedit": "", "attachments": { "keep": false, "fonts": true, "covers": false, "other": false } },
@@ -136,6 +137,12 @@ Las claves de vídeo van bajo **`encode.video`** y las de audio bajo **`encode.a
 | `audio.keepTitle` | `false` | Si `true`, la(s) pista(s) de audio de salida **conservan el título** del origen (útil para distinguir varias del mismo idioma). `false` (por defecto) = **título en blanco**. |
 | `audio.syncThreshold` | `2.0` | **Detección de audio adelantado**: si el audio **acaba** N s (este umbral) **antes** que el vídeo con inicios alineados, PREPARAR **avisa**, hace un **preview forzoso** y **pide confirmación** del retardo (por defecto el detectado; teclear otro / `0` = ninguno; ver [explica-audio.md](explica-audio.md) · Caso 2). `0` = desactiva. El retardo se aplica con `adelay`. **Ojo:** un audio con **cola legítimamente más corta** puede dar un falso positivo → por eso pregunta y previsualiza antes de aplicar. |
 | `audio.aacCoder` | `"twoloop"` | Coder del encoder **AAC nativo** (`-aac_coder`): `twoloop` (por defecto, mayor calidad) u otros que soporte ffmpeg. Solo aplica al codec `aac`. |
+
+**`encode.subtitles`**
+
+| Clave | Default | Qué hace |
+|---|---|---|
+| `subtitles.toSrt` | `["webvtt"]` | **Lista de tipos de subtítulo (por codec) a convertir a SRT.** Un subtítulo **legible** cuyo codec esté en la lista se transcodifica a SubRip (`-c:s srt`) en el mismo comando. El **WEBVTT embebido** que ffmpeg **no puede leer** (el demuxer de Matroska lo marca `none`) se **rescata con `mkvextract`** a un temporal y se convierte a srt en la misma ejecución. Los subtítulos ilegibles **no** cubiertos por la lista (o en contenedor no-MKV) se **ignoran** con `[AVISO]` (copiarlos tumbaría la conversión). Lista **vacía** = no convertir nada. Añade p. ej. `"ass"`, `"mov_text"`. Necesita `mkvextract` (se descarga con mkvtoolnix). Detalle en [ref-gotchas.md](ref-gotchas.md). |
 
 Sobre `threads` (uso de CPU):
 

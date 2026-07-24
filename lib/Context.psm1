@@ -5,7 +5,7 @@
 
 function Get-CvVersion {
     <# Version del proyecto (fuente unica; la usan Convert.ps1 y setup.ps1). #>
-    '4.5.1'
+    '4.5.2'
 }
 
 function Get-CvAppName {
@@ -242,6 +242,9 @@ function New-CvContext {
         # Conservar el titulo del audio de origen en la salida (false = titulo en blanco). Lo aplica
         # Invoke-Multiplex leyendo el titulo del origen por el indice de cada pista.
         AudioKeepTitle = [bool]$cfg.encode.audio.keepTitle
+        # Tipos de subtitulo (por codec) a convertir a SRT (encode.subtitles.toSrt); en minusculas para
+        # comparar sin distinguir mayusculas. El WEBVTT ilegible de un MKV se rescata con mkvextract.
+        SubtitlesToSrt = @($(if ($cfg.encode.subtitles -and $null -ne $cfg.encode.subtitles.toSrt) { @($cfg.encode.subtitles.toSrt) | ForEach-Object { "$_".ToLower() } } else { @() }))
         # log: transcript de la ejecucion a logs\; el marcador 'no_log' lo desactiva.
         Log            = ([bool]$cfg.behavior.log -and -not (Test-Path (Join-Path $Root 'no_log')))
         # Postproceso: limpiar las etiquetas DURATION del MKV con mkvpropedit.
@@ -249,6 +252,8 @@ function New-CvContext {
         StripTags           = [bool]$cfg.postprocess.stripTags
         MkvPropEditOverride = "$($cfg.postprocess.mkvpropedit)"
         MkvPropEdit         = ''
+        # mkvextract (misma version de mkvtoolnix): rescata subtitulos que ffmpeg no puede leer.
+        MkvExtract          = ''
         # Conservacion de adjuntos (por defecto ninguno). Permitir/excluir por categoria.
         Attachments         = [pscustomobject]@{
             Keep   = [bool]$cfg.postprocess.attachments.keep

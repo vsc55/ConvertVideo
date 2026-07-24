@@ -81,6 +81,7 @@ Todo es configurable en `config.json` (detalle en [ref-configuracion.md](docs/re
 | Funcionalidad | Opciones |
 |---|---|
 | **Selección automática** | Conserva forzados + completos del idioma preferido; clasifica por flag o por tamaño de cues; *fallback* para elegir cuáles conservar |
+| **Conversión a SRT** | Lista configurable `encode.subtitles.toSrt` (por defecto `webvtt`): convierte esos subtítulos a SubRip; el WEBVTT que ffmpeg no puede leer se rescata con `mkvextract` y se convierte en la misma ejecución; los ilegibles no cubiertos se ignoran (evita que tumben la conversión) |
 | **Preview / contenido** | Previsualizar con ffplay o ver el `.srt` extraído |
 | **FixSyncSub** (`.srt` externos) | Re-sincronización lineal, OCR (`l`→`I`), espaciado y detección de codificación |
 

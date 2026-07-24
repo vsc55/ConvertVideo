@@ -595,6 +595,31 @@ Assert-Eq 'SubForced por titulo' $true  (Test-SubForced ([pscustomobject]@{ tags
 Assert-Eq 'SubForced normal'     $false (Test-SubForced ([pscustomobject]@{ tags = [pscustomobject]@{ title = 'Completo' } }))
 Assert-Eq 'SubDefault flag'      $true  (Test-SubDefault ([pscustomobject]@{ disposition = [pscustomobject]@{ default = 1 } }))
 Assert-Eq 'SubDefault no'        $false (Test-SubDefault ([pscustomobject]@{ disposition = [pscustomobject]@{ default = 0 } }))
+# Subtitulo utilizable: codec reconocible sí, codec ausente/'none'/'unknown' no (WEBVTT no soportado)
+Assert-Eq 'SubUsable subrip'     $true  (Test-CvSubtitleUsable ([pscustomobject]@{ codec_name = 'subrip' }))
+Assert-Eq 'SubUsable pgs'        $true  (Test-CvSubtitleUsable ([pscustomobject]@{ codec_name = 'hdmv_pgs_subtitle' }))
+Assert-Eq 'SubUsable sin codec'  $false (Test-CvSubtitleUsable ([pscustomobject]@{ codec_name = $null }))
+Assert-Eq 'SubUsable none'       $false (Test-CvSubtitleUsable ([pscustomobject]@{ codec_name = 'none' }))
+Assert-Eq 'SubUsable unknown'    $false (Test-CvSubtitleUsable ([pscustomobject]@{ codec_name = 'unknown' }))
+# Get-SubtitleStreams devuelve TODAS; Resolve-CvSubtitleAction decide copy/srt/rescue/discard
+$stInfo = [pscustomobject]@{
+    format  = [pscustomobject]@{ format_name = 'matroska,webm' }
+    streams = @(
+        [pscustomobject]@{ index = 3; codec_type = 'subtitle'; codec_name = $null }       # WEBVTT ilegible
+        [pscustomobject]@{ index = 4; codec_type = 'subtitle'; codec_name = 'subrip' }
+        [pscustomobject]@{ index = 5; codec_type = 'subtitle'; codec_name = 'ass' }
+    )
+}
+Assert-Eq 'SubStreams todas' 3 (@(Get-SubtitleStreams -Info $stInfo).Count)
+$ctxSub  = [pscustomobject]@{ SubtitlesToSrt = @('webvtt') }
+$ctxSub2 = [pscustomobject]@{ SubtitlesToSrt = @('webvtt', 'ass') }
+$ctxSub0 = [pscustomobject]@{ SubtitlesToSrt = @() }
+Assert-Eq 'SubAction subrip copy'    'copy'    (Resolve-CvSubtitleAction -Context $ctxSub  -Info $stInfo -Stream $stInfo.streams[1])
+Assert-Eq 'SubAction webvtt rescue'  'rescue'  (Resolve-CvSubtitleAction -Context $ctxSub  -Info $stInfo -Stream $stInfo.streams[0])
+Assert-Eq 'SubAction ass->srt'       'srt'     (Resolve-CvSubtitleAction -Context $ctxSub2 -Info $stInfo -Stream $stInfo.streams[2])
+Assert-Eq 'SubAction webvtt discard' 'discard' (Resolve-CvSubtitleAction -Context $ctxSub0 -Info $stInfo -Stream $stInfo.streams[0])
+$mp4Info = [pscustomobject]@{ format = [pscustomobject]@{ format_name = 'mov,mp4' }; streams = @([pscustomobject]@{ index = 2; codec_type = 'subtitle'; codec_name = $null }) }
+Assert-Eq 'SubAction no-mkv discard' 'discard' (Resolve-CvSubtitleAction -Context $ctxSub -Info $mp4Info -Stream $mp4Info.streams[0])
 $subSel = ConvertTo-SubSel ([pscustomobject]@{
     index      = 4
     codec_name = 'subrip'
@@ -972,8 +997,8 @@ $goS = Get-CvOnePassArgs -Context (New-OpCtx -Attachments ([pscustomobject]@{ Ke
         [pscustomobject]@{ index=3; codec_type='subtitle' }
         [pscustomobject]@{ index=4; codec_type='subtitle' }
         [pscustomobject]@{ index=5; codec_type='attachment'; tags=[pscustomobject]@{ filename='f.ttf'; mimetype='application/x-truetype-font' } }) })
-Assert-True 'GOLDEN subs+adjuntos mapeo' (($goS -join ' ') -match ([regex]::Escape('-map 0:3? -metadata:s:s:0 language=spa -metadata:s:s:0 title=Forzados -disposition:s:0 default+forced -map 0:4? -metadata:s:s:1 language=spa -metadata:s:s:1 title= -disposition:s:1 0 -map 0:5? -metadata:s:t:0 filename=f.ttf -metadata:s:t:0 mimetype=application/x-truetype-font')))
-Assert-True 'GOLDEN subs -> -c:s copy' (($goS -join ' ') -match '-c:s copy')
+Assert-True 'GOLDEN subs+adjuntos mapeo' (($goS -join ' ') -match ([regex]::Escape('-map 0:3? -metadata:s:s:0 language=spa -metadata:s:s:0 title=Forzados -disposition:s:0 default+forced -c:s:0 copy -map 0:4? -metadata:s:s:1 language=spa -metadata:s:s:1 title= -disposition:s:1 0 -c:s:1 copy -map 0:5? -metadata:s:t:0 filename=f.ttf -metadata:s:t:0 mimetype=application/x-truetype-font')))
+Assert-True 'GOLDEN subs -> -c:s:0 copy por pista' (($goS -join ' ') -match '-c:s:0 copy')
 Assert-True 'GOLDEN adjuntos -> -c:t copy' (($goS -join ' ') -match '-c:t copy')
 # Peak en una pasada: VolumeFilters por pista (resueltos en runtime). Con ganancia -> volume=XdB;
 # ganancia 0 pero con sync -> solo adelay; ganancia 0 sin sync/downmix -> 'anull' (conserva [aN]).
@@ -1182,12 +1207,20 @@ Assert-Eq 'mux chap copy -> 0' 0 $mi2.Chap
 # Get-CvSubtitleMapArgs / Get-CvAttachmentMapArgs (fuente unica multiplex + one-pass)
 $smSubs = @([pscustomobject]@{ Index=5; Lang='spa'; Forced=$true; Default=$true }, [pscustomobject]@{ Index=6; Lang='eng'; Forced=$false; Default=$false })
 $sm = Get-CvSubtitleMapArgs -Subtitles $smSubs -InputIndex 3
-Assert-Eq 'submap exacto' '-map 3:5? -metadata:s:s:0 language=spa -metadata:s:s:0 title=Forzados -disposition:s:0 default+forced -map 3:6? -metadata:s:s:1 language=eng -metadata:s:s:1 title= -disposition:s:1 0' ($sm -join ' ')
+Assert-Eq 'submap exacto' '-map 3:5? -metadata:s:s:0 language=spa -metadata:s:s:0 title=Forzados -disposition:s:0 default+forced -c:s:0 copy -map 3:6? -metadata:s:s:1 language=eng -metadata:s:s:1 title= -disposition:s:1 0 -c:s:1 copy' ($sm -join ' ')
 Assert-Eq 'submap input0' '-map 0:5?' (((Get-CvSubtitleMapArgs -Subtitles @($smSubs[0]) -InputIndex 0))[0..1] -join ' ')
 Assert-Eq 'submap vacio -> 0' 0 (Get-CvSubtitleMapArgs -Subtitles @() -InputIndex 0).Count
 # aplanado con += (patron return ,$a como Get-VideoArgs)
 $smFF = @('X'); $smFF += (Get-CvSubtitleMapArgs -Subtitles $smSubs -InputIndex 0)
-Assert-Eq 'submap += aplana' 17 $smFF.Count
+Assert-Eq 'submap += aplana' 21 $smFF.Count
+# ToSrt + fichero externo (rescatado): mapea input propio, pista 0, '-c:s:0 srt'
+$smSrt = @([pscustomobject]@{ Index = 0; Lang = 'spa'; Forced = $false; Default = $false; ToSrt = $true; File = 'X:\t.vtt'; InputIndex = 1 })
+Assert-Eq 'submap srt+externo' '-map 1:0? -metadata:s:s:0 language=spa -metadata:s:s:0 title= -disposition:s:0 0 -c:s:0 srt' ((Get-CvSubtitleMapArgs -Subtitles $smSrt -InputIndex 0) -join ' ')
+# Resolve-CvSubtitleInputs asigna un -i por sub externo y le fija InputIndex; deja el embebido intacto
+$ri = Resolve-CvSubtitleInputs -Subtitles @([pscustomobject]@{ Index = 3; File = 'X:\a.vtt' }, [pscustomobject]@{ Index = 4 }) -NextInput 2
+Assert-Eq 'SubInputs -i externo'       '-i X:\a.vtt' ($ri.Inputs -join ' ')
+Assert-Eq 'SubInputs idx externo'      2 ([int]$ri.Subs[0].InputIndex)
+Assert-Eq 'SubInputs embebido intacto' 4 ([int]$ri.Subs[1].Index)
 $amAtt = @([pscustomobject]@{ index=7; tags=[pscustomobject]@{ filename='f.ttf'; mimetype='font/ttf' } })
 Assert-Eq 'attmap exacto' '-map 3:7? -metadata:s:t:0 filename=f.ttf -metadata:s:t:0 mimetype=font/ttf' ((Get-CvAttachmentMapArgs -Attachments $amAtt -InputIndex 3) -join ' ')
 Assert-Eq 'attmap vacio -> 0' 0 (Get-CvAttachmentMapArgs -Attachments @() -InputIndex 0).Count
@@ -1200,7 +1233,7 @@ $muxPlan = [pscustomobject]@{
     CopyAudio=@(); LegacyCopy=$false
     Subs=@([pscustomobject]@{ Index=3; Lang='spa'; Forced=$false; Default=$true }); KeepAtt=@()
     OrigInput=2; ChapInput=2; NeedOrig=$true; HasSubs=$true }
-Assert-Eq 'GOLDEN multiplex args' '-hide_banner -y -threads 4 -i X:\proc\v.mkv -i X:\proc\a0.m4a -i X:\in.mkv -map_metadata -1 -fflags +bitexact -map_chapters 2 -metadata title= -map 0:v:0 -metadata:s:v title= -metadata:s:v language=und -map 1:a:0 -metadata:s:a:0 language=spa -metadata:s:a:0 title= -disposition:a:0 default -map 2:3? -metadata:s:s:0 language=spa -metadata:s:s:0 title= -disposition:s:0 default -c:v copy -c:a copy -c:s copy -f matroska X:\out.mkv' ((Get-CvMultiplexArgs -Context $muxCtx -Info $muxInfo -Plan $muxPlan) -join ' ')
+Assert-Eq 'GOLDEN multiplex args' '-hide_banner -y -threads 4 -i X:\proc\v.mkv -i X:\proc\a0.m4a -i X:\in.mkv -map_metadata -1 -fflags +bitexact -map_chapters 2 -metadata title= -map 0:v:0 -metadata:s:v title= -metadata:s:v language=und -map 1:a:0 -metadata:s:a:0 language=spa -metadata:s:a:0 title= -disposition:a:0 default -map 2:3? -metadata:s:s:0 language=spa -metadata:s:s:0 title= -disposition:s:0 default -c:s:0 copy -c:v copy -c:a copy -f matroska X:\out.mkv' ((Get-CvMultiplexArgs -Context $muxCtx -Info $muxInfo -Plan $muxPlan) -join ' ')
 # copy clasico monopista: el audio se mapea del ORIGINAL por su input (OrigInput), NO del input 0.
 # full-copy: video=original en input0 y original tambien en input1 (NeedOrig) -> OrigInput=1.
 $muxPlanCopy = [pscustomobject]@{ File='X:\in.mkv'; Out='X:\out.mkv'; VideoSrc='X:\in.mkv'; Vmap='0:v:0'
