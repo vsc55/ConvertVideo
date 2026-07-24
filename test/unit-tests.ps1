@@ -289,7 +289,7 @@ Assert-Eq   'all sin duplicados'       $all.Count ($all | Select-Object -Unique)
 # ================================================================================================
 Write-Host "`nFuentes unicas (Context / Profile)" -ForegroundColor Cyan
 Assert-Eq 'Get-CvAppName' 'ConvertVideo' (Get-CvAppName)
-Assert-Eq 'Get-CvVersion' '4.5.1'        (Get-CvVersion)
+Assert-Eq 'Get-CvVersion' '4.5.2'        (Get-CvVersion)
 Assert-Eq 'perfiles de serie = 13' 13 ((Get-CvProfiles | ForEach-Object { $_.Profiles } | Measure-Object).Count)
 
 # ================================================================================================
@@ -430,6 +430,19 @@ Assert-Eq 'ArgString con espacio' '-i "a b.mkv"'  (ConvertTo-ArgString @('-i','a
 Set-CvMarkStyle -Ascii $true
 Assert-Eq 'marca ascii OK'    '[OK]'    (Get-CvMark $true)
 Assert-Eq 'marca ascii ERROR' '[ERROR]' (Get-CvMark $false)
+# Save-CvToolError: log con 2 secciones (ajustes del job + error)
+$errDir = Join-Path ([System.IO.Path]::GetTempPath()) ("cv-errlog-{0}" -f ([guid]::NewGuid().ToString('N').Substring(0,8)))
+$errCtx = [pscustomobject]@{ Logs = $errDir }
+$errJob = [pscustomobject]@{ profile = [pscustomobject]@{ VideoEncoder = 'hevc_nvenc' }; audio = [pscustomobject]@{ skip = $false } }
+$errPath = Save-CvToolError -Context $errCtx -Name 'Peli [1080p]' -Tool 'ffmpeg-onepass' -StdErr 'Subtitle codec 0 is not supported' -Job $errJob
+Assert-True 'ErrLog creado'         ($errPath -and (Test-Path -LiteralPath $errPath))
+$errTxt = Get-Content -Raw -LiteralPath $errPath
+Assert-True 'ErrLog seccion job'    ($errTxt -match 'AJUSTES DEL JOB')
+Assert-True 'ErrLog seccion error'  ($errTxt -match 'ERROR \(stderr')
+Assert-True 'ErrLog job serializado'($errTxt -match 'hevc_nvenc')
+Assert-True 'ErrLog error incluido' ($errTxt -match 'Subtitle codec 0 is not supported')
+Assert-Eq   'ErrLog sin StdErr -> vacio' '' (Save-CvToolError -Context $errCtx -Name 'x' -Tool 't' -StdErr '' -Job $errJob)
+Remove-Item -Recurse -Force -LiteralPath $errDir -ErrorAction SilentlyContinue
 Set-CvMarkStyle -Ascii $false
 Assert-Eq 'marca check U+2713' ([char]::ConvertFromUtf32(0x2713)) (Get-CvMark $true)
 Assert-Eq 'marca cruz U+00D7'  ([char]::ConvertFromUtf32(0x00D7)) (Get-CvMark $false)

@@ -453,6 +453,9 @@ while ($didAny) {
             }
             $didAny = $true
             $jctx = New-CvToolContext -Context $ctx -FFmpegVersion $ffVer -AacGainVersion $agVer
+            # Adjuntar el job al contexto del worker: la seccion 'AJUSTES DEL JOB' del log de error
+            # (Show-CvToolError -> Save-CvToolError) lo lee de aqui sin tener que pasarlo por cada Invoke-*.
+            $jctx | Add-Member -NotePropertyName CurrentJob -NotePropertyValue $job -Force
             if ($jctx.Debug) { Write-CvLog 'WORKER' ("[INFO] - ffmpeg {0}" -f $ffVer) } else { Write-Host (" - ffmpeg {0}" -f $ffVer) }
             if ("$($jctx.VolumeMethod)".ToLower() -eq 'aacgain' -and -not (Confirm-CvTool -Context $ctx -Name 'aacgain' -Version $agVer)) {
                 Write-CvLog 'WORKER' ("[AVISO] - No se pudo obtener aacgain {0}; el ajuste de volumen se omitira" -f $agVer)

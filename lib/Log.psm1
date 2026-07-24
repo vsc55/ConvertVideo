@@ -117,20 +117,35 @@ function Write-CvInfoStep {
 
 function Save-CvToolError {
     <#
-        Guarda en logs\ la salida de error (stderr) de una herramienta cuando falla, para poder
-        diagnosticarla despues (util en modo progreso, donde ffmpeg corre oculto sin ventana). Escribe
-        el detalle COMPLETO en un fichero 'error_<tool>_<nombre>_<fecha>_<pid>.log'. Devuelve la ruta,
-        o '' si no habia nada que guardar o no se pudo escribir. Se guarda siempre que haya fallo (es
-        un diagnostico puntual), independientemente de behavior.log.
+        Guarda en logs\ la salida de error de una herramienta cuando falla, para poder diagnosticarla
+        despues (util en modo progreso, donde ffmpeg corre oculto sin ventana). Escribe un fichero
+        'error_<tool>_<nombre>_<fecha>_<pid>.log' con DOS secciones: (1) los AJUSTES DEL JOB (perfil +
+        decisiones de video/audio/subtitulos, para reproducir el caso) y (2) el ERROR completo (stderr).
+        Devuelve la ruta, o '' si no habia error que guardar o no se pudo escribir. Se guarda siempre que
+        haya fallo (diagnostico puntual), independientemente de behavior.log.
     #>
-    param([Parameter(Mandatory)]$Context, [string]$Name = '', [string]$Tool = 'ffmpeg', [string]$StdErr = '')
+    param([Parameter(Mandatory)]$Context, [string]$Name = '', [string]$Tool = 'ffmpeg', [string]$StdErr = '', $Job = $null)
     if ([string]::IsNullOrWhiteSpace($StdErr)) { return '' }
     try {
         $dir = $Context.Logs
         if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
         $safe = ($Name -replace '[^\w\.\-]', '_'); if ($safe.Length -gt 60) { $safe = $safe.Substring(0, 60) }
         $file = Join-Path $dir ("error_{0}_{1}_{2}_{3}.log" -f $Tool, $safe, (Get-Date -Format 'yyyyMMdd_HHmmss'), $PID)
-        [System.IO.File]::WriteAllText($file, "$StdErr", (New-Object System.Text.UTF8Encoding($false)))
+        $jobTxt = if ($null -ne $Job) {
+            try { $Job | ConvertTo-Json -Depth 12 } catch { "(no se pudo serializar el job: {0})" -f $_.Exception.Message }
+        } else { '(no disponible)' }
+        $sb = New-Object System.Text.StringBuilder
+        [void]$sb.AppendLine('======== ERROR AL CONVERTIR ========')
+        [void]$sb.AppendLine(("Archivo    : {0}" -f $Name))
+        [void]$sb.AppendLine(("Herramienta: {0}" -f $Tool))
+        [void]$sb.AppendLine(("Fecha      : {0}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')))
+        [void]$sb.AppendLine('')
+        [void]$sb.AppendLine('======== AJUSTES DEL JOB ========')
+        [void]$sb.AppendLine($jobTxt)
+        [void]$sb.AppendLine('')
+        [void]$sb.AppendLine(("======== ERROR (stderr de {0}) ========" -f $Tool))
+        [void]$sb.AppendLine("$StdErr")
+        [System.IO.File]::WriteAllText($file, $sb.ToString(), (New-Object System.Text.UTF8Encoding($false)))
         return $file
     } catch { return '' }
 }
@@ -142,17 +157,19 @@ function Show-CvToolError {
         log completo, y limpia el buffer global. Sin nada capturado (p. ej. modo ventana aparte), no
         hace nada. Llamar tras Stop-CvStep en la rama de fallo.
     #>
-    param([Parameter(Mandatory)]$Context, [string]$Category = 'WORKER', [string]$Name = '', [string]$Tool = 'ffmpeg')
+    param([Parameter(Mandatory)]$Context, [string]$Category = 'WORKER', [string]$Name = '', [string]$Tool = 'ffmpeg', $Job = $null)
     $err = "$($global:CvLastToolError)"
     $global:CvLastToolError = $null
     if ([string]::IsNullOrWhiteSpace($err)) { return }
+    # El job para la seccion 'AJUSTES DEL JOB' del log: el explicito o el que el worker adjunta al contexto.
+    if ($null -eq $Job -and $Context.PSObject.Properties['CurrentJob']) { $Job = $Context.CurrentJob }
     $tail = @($err -split "`r?`n" | Where-Object { $_.Trim() -ne '' } | Select-Object -Last 8)
     if ($tail.Count -gt 0) {
         Write-CvLog $Category '[ERR] - Ultimas lineas de ffmpeg:'
         foreach ($l in $tail) { Write-Host ('     ' + $l) -ForegroundColor DarkGray }
     }
-    $path = Save-CvToolError -Context $Context -Name $Name -Tool $Tool -StdErr $err
-    if ($path) { Write-CvLog $Category ("[ERR] - Salida completa de ffmpeg guardada en: {0}" -f $path) }
+    $path = Save-CvToolError -Context $Context -Name $Name -Tool $Tool -StdErr $err -Job $Job
+    if ($path) { Write-CvLog $Category ("[ERR] - Detalle (ajustes del job + error) guardado en: {0}" -f $path) }
 }
 
 function Start-CvLog {
