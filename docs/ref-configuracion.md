@@ -43,7 +43,7 @@ Esquema completo (tras la fusión con los defaults):
   "customProfile": { "videoEncoder": "hevc_nvenc", "videoProfile": "main10", "videoLevel": "5.0", "qmin": 1, "qmax": 23, "crf": 21, "multipass": "off", "audioCodec": "aac", "audioBitrate": "192k" },
   "preview":     { "start": 0, "seconds": 0, "syncSeconds": 0 },
   "postprocess": { "stripTags": true, "mkvpropedit": "", "attachments": { "keep": false, "fonts": true, "covers": false, "other": false } },
-  "behavior":    { "cleanTemps": true, "separateWindow": true, "lockCloseButton": true, "log": true, "workers": 2, "retries": 2, "progress": true, "promptTimeout": { "default": 0, "sync": 5, "border": 10, "animation": 10, "anamorphic": 10, "audioSync": 15, "video": -1, "audio": -1, "subtitle": -1 }, "promptTimeoutStopOnType": true },
+  "behavior":    { "cleanTemps": true, "separateWindow": true, "lockCloseButton": true, "log": true, "workers": 2, "retries": 2, "progress": true, "promptTimeout": { "default": 0, "sync": 5, "border": 10, "animation": 10, "anamorphic": 10, "audioSync": 15, "video": -1, "audio": -1, "subtitle": -1, "subtitleLang": 15 }, "promptTimeoutStopOnType": true },
   "debug":       { "enabled": false, "pausePerCommand": true },
   "test":        { "enabled": false, "minutes": 5, "betaDownmix": false, "betaOnePass": false },
   "console":     { "background": "DarkBlue", "foreground": "Yellow", "font": "Cascadia Code", "fontSize": 18, "windowWidth": 150, "windowHeight": 40, "sepWidth": 64, "progressBarWidth": 20, "asciiMarks": false },
@@ -255,6 +255,7 @@ El timeout es configurable **por tipo de pregunta**, con un genérico de reserva
 | `video` | `-1` | Menú de selección de **pista de vídeo** (2+ pistas). Al expirar toma la preseleccionada (`*`). `-1` = hereda de `default` (por defecto `0` = off, para no auto-elegir pista sin querer). |
 | `audio` | `-1` | Menús de selección de **pista de audio** (varias del idioma preferido, o fallback sin idioma). Al expirar toma la preseleccionada. `-1` = hereda de `default`. |
 | `subtitle` | `-1` | Menú de **subtítulos fallback** (ninguno del idioma preferido). Al expirar **no conserva ninguno**. `-1` = hereda de `default`. |
+| `subtitleLang` | `15` | Pregunta del **idioma** de los subtítulos elegidos en ese fallback (para origen mal etiquetado). Al expirar **mantiene el idioma detectado** (el del origen). Clave aparte de `subtitle` porque el menú es elección activa (bloquea) pero esta refinación tiene default seguro. `0` = sin timeout. |
 
 Al expirar, si **no** has tecleado nada se aplica la respuesta por defecto (equivale a pulsar ENTER; se puede fijar otra en código con `-TimeoutDefault`). Si **sí** tecleaste algo, depende de `behavior.promptTimeoutStopOnType` (ver arriba): por defecto (`true`) al teclear el auto se **desactiva** y solo ENTER envía; con `false` (clásico) al expirar se respeta lo tecleado. El prompt avisa del timeout mostrando `[auto Ns]`. Para una pregunta/menú nuevo basta añadir su clave aquí y pasar su nombre a `Read-CvLine`/`Read-CvMenuLine` (vía `Get-CvPromptTimeout`). Solo actúa en consola interactiva real (en modo desatendido/tests con la entrada redirigida no aplica). Ejemplo: `"promptTimeout": { "default": 15, "sync": 5, "animation": 0 }` → 15 s general, 5 s en sync, animación sin timeout, bordes hereda 15 s.
 

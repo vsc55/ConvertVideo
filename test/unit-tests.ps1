@@ -194,6 +194,8 @@ Assert-Eq 'encode/video/qualityCheck def off' 'off' (Get-CvConfigDefaultValue 'e
 Assert-True 'help encode/video/qualityCheck'  ((Get-CvConfigHelp).Contains('encode/video/qualityCheck'))
 Assert-Eq 'encode/audio/syncThreshold def 2' 2.0 (Get-CvConfigDefaultValue 'encode/audio/syncThreshold')
 Assert-Eq 'promptTimeout/audioSync def 15'  15  (Get-CvConfigDefaultValue 'behavior/promptTimeout/audioSync')
+Assert-Eq 'promptTimeout/subtitleLang def 15' 15 (Get-CvConfigDefaultValue 'behavior/promptTimeout/subtitleLang')
+Assert-True 'help promptTimeout/subtitleLang' ((Get-CvConfigHelp).Contains('behavior/promptTimeout/subtitleLang'))
 Assert-True 'help encode/audio/syncThreshold' ((Get-CvConfigHelp).Contains('encode/audio/syncThreshold'))
 # customProfile: paridad de campos con un profiles[] (nuevos defaults + 'auto' en videoEncoder).
 Assert-Eq 'customProfile/detectBorder def' $false      (Get-CvConfigDefaultValue 'customProfile/detectBorder')
@@ -645,6 +647,10 @@ Assert-Eq 'SubSel Index'   4      $subSel.Index
 Assert-Eq 'SubSel Forced'  $true  $subSel.Forced
 Assert-Eq 'SubSel Default' $true  $subSel.Default
 Assert-Eq 'SubSel Lang'    'spa'  $subSel.Lang
+# -Lang fuerza el idioma de salida (origen mal etiquetado: 'eng' que es 'spa'); vacio = mantener
+$subLangOv = ConvertTo-SubSel ([pscustomobject]@{ index = 2; codec_name = 'ass'; tags = [pscustomobject]@{ language = 'eng' } }) -Forced $false -Default $false -Lang 'spa'
+Assert-Eq 'SubSel Lang override' 'spa' $subLangOv.Lang
+Assert-Eq 'SubSel Lang sin override' 'eng' (ConvertTo-SubSel ([pscustomobject]@{ index = 2; codec_name = 'ass'; tags = [pscustomobject]@{ language = 'eng' } }) -Forced $false -Default $false).Lang
 # Disposition por pista: forzada -> default+forced; completa -> '0' (aunque el origen fuera default)
 $dispSubs = @(
     [pscustomobject]@{ Index = 1; Lang = 'spa'; Forced = $true;  Default = $true },

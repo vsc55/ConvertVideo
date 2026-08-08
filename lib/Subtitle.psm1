@@ -102,15 +102,17 @@ function ConvertTo-SubSel {
         -Default: $true/$false lo fuerza; si se omite ($null) se conserva el flag
         'default' ORIGINAL de la pista (asi un forzado que ya era predefinido lo sigue siendo).
     #>
-    param([Parameter(Mandatory)]$Stream, [object]$Default = $null, [object]$Forced = $null, [string]$Action = 'copy')
+    param([Parameter(Mandatory)]$Stream, [object]$Default = $null, [object]$Forced = $null, [string]$Action = 'copy', [string]$Lang = '')
     $isDefault = if ($null -ne $Default) { [bool]$Default } else { (Test-SubDefault $Stream) }
     $isForced  = if ($null -ne $Forced)  { [bool]$Forced }  else { (Test-SubForced $Stream) }
     # Accion (Resolve-CvSubtitleAction): 'srt' = transcodificar a SubRip; 'rescue' = ademas hay que
     # extraerlo con mkvextract (ffmpeg no lo lee del contenedor); 'copy' = tal cual. ToSrt = srt|rescue.
     $codec = if ($Action -eq 'rescue') { 'webvtt' } else { "$($Stream.codec_name)" }
+    # -Lang fuerza el idioma de salida (util cuando el origen esta MAL etiquetado, p. ej. 'eng' que en
+    # realidad es 'spa'); si se omite, se conserva el del origen.
     [pscustomobject]@{
         Index   = [int]$Stream.index
-        Lang    = (Get-Tag $Stream 'language')
+        Lang    = $(if ($Lang) { $Lang } else { (Get-Tag $Stream 'language') })
         Title   = (Get-Tag $Stream 'title')
         Codec   = $codec
         Forced  = $isForced
@@ -232,11 +234,13 @@ function Select-SubtitlesKeep {
             $cod = if ($act -eq 'rescue') { 'webvtt (rescate->srt)' } elseif ($act -eq 'srt') { "$($s.codec_name) (->srt)" } else { "$($s.codec_name)" }
             $lines += ("[{0}] idioma={1} codec={2} ({3}) {4}" -f $s.index, (Get-Tag $s 'language'), $cod, $ctxt, $tt)
         }
-        Show-Menu -Title 'SUBTITULOS (ninguno del idioma preferido) - elige cuales conservar:' -Lines ($lines + @(
+        Show-Menu -Title 'SUBTITULOS (ninguno del idioma preferido) - elige cuales CONSERVAR:' -Lines ($lines + @(
             '',
-            "Indices separados por espacio (ej '3 5'). Marca el FORZADO con * (ej '*3 5' = conservar 3 y 5,",
-            "  forzado = 3); sin *, el forzado se detecta del origen (flag/titulo).",
-            "'P N'=reproducir / 'V N'=ver texto / T=todos / ENTER=ninguno")) -Indent 3
+            "Escribe el/los numeros a conservar. Pon * DELANTE del que sea el FORZADO.",
+            "   ej:  1       -> conservar solo el 1",
+            "        *1 2    -> conservar 1 y 2, y el 1 es el forzado",
+            "   (tras elegir, se pregunta el idioma por si vienen mal etiquetados)",
+            "T=todos / ENTER=ninguno / 'P N'=reproducir / 'V N'=ver texto")) -Indent 3
         $a = (Read-CvMenuLine '   [SUB] - Opcion' $to).Trim()
         if ($a -eq '') { Write-Host ''; return @() }
         # 'V N' = ver el contenido del subtitulo N (extrae a .srt y abre con el editor asociado).
@@ -271,14 +275,25 @@ function Select-SubtitlesKeep {
             if ($bad -or $chosen.Count -eq 0) { Write-Host '   Indices no validos.' -ForegroundColor Yellow; continue }
         }
         Write-Host ''
+        # Idioma: muchas fuentes traen el subtitulo MAL etiquetado (p. ej. 'eng' que en realidad es 'spa'),
+        # por eso caen en este fallback. Se pregunta UNA vez el idioma para TODAS las pistas conservadas:
+        # ENTER = mantener el del origen; un codigo (p. ej. 'spa') = reetiquetar todas con ese idioma.
+        $curLangs = @($chosen | ForEach-Object { Get-Tag $_ 'language' } | Where-Object { $_ } | Select-Object -Unique)
+        $curTxt   = if ($curLangs.Count -gt 0) { $curLangs -join '/' } else { 'und' }
+        # Timeout propio (behavior.promptTimeout.subtitleLang, 15s por defecto): al expirar se AUTO-ACEPTA
+        # el idioma DETECTADO (ENTER = mantener el del origen), como el resto de avisos. Clave aparte del
+        # menu de subtitulos ('subtitle'), que es una eleccion activa y por defecto bloquea.
+        $lto      = Get-CvPromptTimeout $Context 'subtitleLang'
+        $lang     = (Read-CvLine -Prompt ("   [SUB] - Idioma de los subtitulos elegidos [{0}] (ENTER=mantener / codigo, p.ej. spa)" -f $curTxt) -TimeoutSec $lto).Trim().ToLower()
+        Write-Host ''
         # Forced: '*' del usuario o, si no, el flag/titulo del origen (Test-SubForced). Default = MISMO que
         # forced: solo la pista forzada queda 'default' (antes se heredaba el 'default' del ORIGEN sin
         # tocarlo y, si el origen traia varias pistas con default=1 -como este caso-, quedaban VARIAS
-        # 'default' en la salida y el reproductor mostraba la que no era). Accion (copy/srt/rescue) por
-        # pista; los 'discard' ya se filtraron antes.
+        # 'default' en la salida y el reproductor mostraba la que no era). Lang: el tecleado (o el del
+        # origen si ENTER). Accion (copy/srt/rescue) por pista; los 'discard' ya se filtraron antes.
         $sel = @($chosen | ForEach-Object {
             $isForced = if ($forcedSet.ContainsKey([int]$_.index)) { $true } else { (Test-SubForced $_) }
-            ConvertTo-SubSel $_ -Forced $isForced -Default $isForced -Action (Resolve-CvSubtitleAction -Context $Context -Info $Info -Stream $_)
+            ConvertTo-SubSel $_ -Forced $isForced -Default $isForced -Lang $lang -Action (Resolve-CvSubtitleAction -Context $Context -Info $Info -Stream $_)
         })
         return @(@($sel | Where-Object { $_.Forced }) + @($sel | Where-Object { -not $_.Forced }))
     }

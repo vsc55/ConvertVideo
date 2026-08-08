@@ -509,6 +509,7 @@ function Get-CvConfigDefaults {
                 video      = -1
                 audio      = -1
                 subtitle   = -1
+                subtitleLang = 15
             }
             promptTimeoutStopOnType = $true
         }
@@ -729,6 +730,7 @@ function Get-CvConfigHelp {
         'behavior/promptTimeout/video'      = 'Timeout del menu de seleccion de pista de video (-1 = generico; toma la preseleccionada)'
         'behavior/promptTimeout/audio'      = 'Timeout del menu de seleccion de pista de audio (-1 = generico; toma la preseleccionada)'
         'behavior/promptTimeout/subtitle'   = 'Timeout del menu de subtitulos fallback (-1 = generico; al expirar no conserva ninguno)'
+        'behavior/promptTimeout/subtitleLang' = 'Timeout de la pregunta de idioma de los subtitulos elegidos (al expirar mantiene el idioma detectado; 0 = sin timeout)'
         'behavior/promptTimeoutStopOnType'  = 'Al teclear algo se desactiva el auto (solo ENTER envia); false = clasico (al expirar envia lo tecleado)'
 
         'debug'                 = 'Depuracion (log detallado; tambien se activa con el marcador debug_on)'
