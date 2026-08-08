@@ -271,9 +271,15 @@ function Select-SubtitlesKeep {
             if ($bad -or $chosen.Count -eq 0) { Write-Host '   Indices no validos.' -ForegroundColor Yellow; continue }
         }
         Write-Host ''
-        # -Forced $true si el usuario lo marco con '*'; si no ($null), se detecta del origen (Test-SubForced).
-        # -Action (Resolve-CvSubtitleAction): copy/srt/rescue por pista (los 'discard' ya se filtraron antes).
-        $sel = @($chosen | ForEach-Object { ConvertTo-SubSel $_ -Forced $(if ($forcedSet.ContainsKey([int]$_.index)) { $true } else { $null }) -Action (Resolve-CvSubtitleAction -Context $Context -Info $Info -Stream $_) })
+        # Forced: '*' del usuario o, si no, el flag/titulo del origen (Test-SubForced). Default = MISMO que
+        # forced: solo la pista forzada queda 'default' (antes se heredaba el 'default' del ORIGEN sin
+        # tocarlo y, si el origen traia varias pistas con default=1 -como este caso-, quedaban VARIAS
+        # 'default' en la salida y el reproductor mostraba la que no era). Accion (copy/srt/rescue) por
+        # pista; los 'discard' ya se filtraron antes.
+        $sel = @($chosen | ForEach-Object {
+            $isForced = if ($forcedSet.ContainsKey([int]$_.index)) { $true } else { (Test-SubForced $_) }
+            ConvertTo-SubSel $_ -Forced $isForced -Default $isForced -Action (Resolve-CvSubtitleAction -Context $Context -Info $Info -Stream $_)
+        })
         return @(@($sel | Where-Object { $_.Forced }) + @($sel | Where-Object { -not $_.Forced }))
     }
 }

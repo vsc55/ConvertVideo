@@ -289,7 +289,7 @@ Assert-Eq   'all sin duplicados'       $all.Count ($all | Select-Object -Unique)
 # ================================================================================================
 Write-Host "`nFuentes unicas (Context / Profile)" -ForegroundColor Cyan
 Assert-Eq 'Get-CvAppName' 'ConvertVideo' (Get-CvAppName)
-Assert-Eq 'Get-CvVersion' '4.5.2'        (Get-CvVersion)
+Assert-Eq 'Get-CvVersion' '4.5.3'        (Get-CvVersion)
 Assert-Eq 'perfiles de serie = 13' 13 ((Get-CvProfiles | ForEach-Object { $_.Profiles } | Measure-Object).Count)
 
 # ================================================================================================
@@ -645,6 +645,14 @@ Assert-Eq 'SubSel Index'   4      $subSel.Index
 Assert-Eq 'SubSel Forced'  $true  $subSel.Forced
 Assert-Eq 'SubSel Default' $true  $subSel.Default
 Assert-Eq 'SubSel Lang'    'spa'  $subSel.Lang
+# Disposition por pista: forzada -> default+forced; completa -> '0' (aunque el origen fuera default)
+$dispSubs = @(
+    [pscustomobject]@{ Index = 1; Lang = 'spa'; Forced = $true;  Default = $true },
+    [pscustomobject]@{ Index = 2; Lang = 'spa'; Forced = $false; Default = $false }
+)
+$dispStr = (Get-CvSubtitleMapArgs -Subtitles $dispSubs -InputIndex 0) -join ' '
+Assert-True 'SubDisp forzada default+forced' ($dispStr -match '-disposition:s:0 default\+forced')
+Assert-True 'SubDisp completa 0'             ($dispStr -match '-disposition:s:1 0')
 $fSubs = @(
     [pscustomobject]@{
         index       = 1
