@@ -282,6 +282,31 @@ function Get-CvResize {
     Get-CvMaxWidthResize -Width $Width -Sar $Sar -MaxWidth $MaxWidth
 }
 
+function Get-CvChangeSizeResize {
+    <#
+        Resuelve el reescalado FIJO (changeSize, valor literal 'W:H' donde -1/-2 = auto que conserva el
+        aspecto). SOLO REDUCE: si el destino AMPLIARIA el origen (p. ej. changeSize '1920:-2' sobre un
+        1280x720), devuelve '' para dejar el video a su tamaño ORIGINAL en vez de estirarlo. Devuelve el
+        propio ChangeSize cuando reduce (o iguala) el tamaño. Comparacion por dimension ALMACENADA (es lo
+        que toca el filtro scale). '' si no hay changeSize; se aplica tal cual si el formato es inesperado
+        o no hay datos del origen (comportamiento previo: no romper casos raros).
+    #>
+    param([string]$ChangeSize, [int]$Width, [int]$Height)
+    $cs = "$ChangeSize".Trim()
+    if ($cs -eq '') { return '' }
+    if ($Width -le 0 -or $Height -le 0) { return $cs }   # sin datos de origen: aplicar tal cual
+    $parts = $cs -split ':'
+    if ($parts.Count -lt 2) { return $cs }               # formato inesperado ('W' suelto, etc.): no tocar
+    $tw = 0; $th = 0
+    [void][int]::TryParse($parts[0].Trim(), [ref]$tw)
+    [void][int]::TryParse($parts[1].Trim(), [ref]$th)
+    # tw/th <= 0 => token 'auto' (-1/-2) o no numerico: no impone tamaño en esa dimension. Con -2 el
+    # otro eje sigue el aspecto, asi que basta comprobar la dimension NUMERICA contra el origen.
+    $up = (($tw -gt 0) -and ($tw -gt $Width)) -or (($th -gt 0) -and ($th -gt $Height))
+    if ($up) { return '' }
+    return $cs
+}
+
 function Get-CvAnamorphicWarning {
     <#
         Si la pista es ANAMORFICA (SAR != 1: el tamaño ALMACENADO que reporta el contenedor NO es el que

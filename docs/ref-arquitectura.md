@@ -18,6 +18,7 @@ ConvertVideo/
 │   ├── ConfigEditor.psm1   Editor interactivo de config.json (solo lo usa setup.ps1)
 │   ├── Context.psm1        Contexto de ejecución ($ctx) + helpers (idiomas, números, tiempo, listado de ficheros)
 │   ├── Console.psm1        Apariencia de consola, ventana nativa, menús y prompts
+│   ├── Gui.psm1            Ventanas GUI (WinForms): visor de texto del subtítulo ('V N' modo win)
 │   ├── Exec.psm1           Ejecución de procesos externos (ffmpeg/ffprobe…)
 │   ├── Job.psm1            Cola: jobs JSON, lock atómico, temporales, ruta de salida
 │   ├── Tools.psm1          Apps/versiones/descargas (ffmpeg, aacgain, sevenzip, mkvtoolnix)

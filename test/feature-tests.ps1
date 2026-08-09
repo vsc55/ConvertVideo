@@ -30,6 +30,7 @@ $modules = @(
     'Config'
     'Context'
     'Console'
+    'Gui'
     'Exec'
     'Job'
     'Tools'

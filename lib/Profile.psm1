@@ -14,7 +14,8 @@ function New-CvProfile {
         [object]$Qmax = $null,
         [object]$Crf  = $null,
         [object]$DetectBorder = $false,   # $false (nunca) | $true (siempre, interactivo) | 'auto' (pre-escaneo decide)
-        [string]$ChangeSize = '',      # '' = no | '1920:-2' etc. (escala SIEMPRE; altura -2 = auto y PAR)
+        [string]$ChangeSize = '',      # '' = no | '1920:-2' etc. (escala; altura -2 = auto y PAR)
+        [object]$NoUpscale = $false,   # $true = changeSize SOLO reduce (no amplia videos mas pequeños que el destino)
         [object]$MaxWidth = $null,     # $null = no | 1920 etc. (reduce a ese ancho SOLO si es mayor; nunca amplia)
         [string]$Multipass = '',       # '' = usar el global (encode.multipass) | off | qres | fullres (NVENC)
         # Salida de audio por defecto: FUENTE UNICA en config (encode.audio.*), no hardcodeada. El
@@ -30,7 +31,7 @@ function New-CvProfile {
     )
     [pscustomobject]@{
         VideoEncoder = $VideoEncoder; VideoProfile = $VideoProfile; VideoLevel = $VideoLevel
-        Qmin = $Qmin; Qmax = $Qmax; Crf = $Crf; DetectBorder = $DetectBorder; ChangeSize = $ChangeSize; MaxWidth = $MaxWidth
+        Qmin = $Qmin; Qmax = $Qmax; Crf = $Crf; DetectBorder = $DetectBorder; ChangeSize = $ChangeSize; NoUpscale = $NoUpscale; MaxWidth = $MaxWidth
         Multipass = $Multipass
         AudioEncoder = $AudioEncoder; AudioCodec = $AudioCodec; AudioBitrate = $AudioBitrate; AudioHz = $AudioHz
         AudioChannels = $AudioChannels; DownmixMode = $DownmixMode; DownmixCoeffs = $DownmixCoeffs
@@ -142,7 +143,7 @@ function Get-CvProfiles {
     @(
         [pscustomobject]@{ Profiles = @(
             (New-CvProfile -VideoEncoder 'copy')
-            (New-CvProfile -VideoEncoder 'auto' -Qmin 1 -Qmax 23 -DetectBorder 'auto' -ChangeSize '1920:-2')
+            (New-CvProfile -VideoEncoder 'auto' -Qmin 1 -Qmax 23 -DetectBorder 'auto' -ChangeSize '1920:-2' -NoUpscale $true)
         )}
         [pscustomobject]@{ Profiles = @(
             (New-CvProfile -VideoEncoder 'hevc_nvenc' -VideoProfile 'main10' -VideoLevel '5' -Qmin 1 -Qmax 23 -DetectBorder 'auto')
@@ -155,7 +156,7 @@ function Get-CvProfiles {
             (New-CvProfile -VideoEncoder 'hevc_nvenc' -VideoProfile 'main10' -VideoLevel '5' -Qmin 1 -Qmax 23 -MaxWidth 1920)
         )}
         [pscustomobject]@{ Profiles = @(
-            (New-CvProfile -VideoEncoder 'hevc_nvenc' -VideoProfile 'main10' -VideoLevel '5' -Qmin 1 -Qmax 23 -ChangeSize '1920:-2')
+            (New-CvProfile -VideoEncoder 'hevc_nvenc' -VideoProfile 'main10' -VideoLevel '5' -Qmin 1 -Qmax 23 -ChangeSize '1920:-2' -NoUpscale $true)
         )}
         [pscustomobject]@{ Profiles = @(
             (New-CvProfile -VideoEncoder 'hevc_nvenc' -VideoProfile 'main10' -VideoLevel '5' -DetectBorder 'auto')
@@ -691,6 +692,7 @@ function ConvertTo-CvProfile {
         -Crf  (Get-CvProfileProp $Obj 'crf'  $null) `
         -DetectBorder $(if ("$(Get-CvProfileProp $Obj 'detectBorder' $false)".ToLower() -eq 'auto') { 'auto' } else { [bool](Get-CvProfileProp $Obj 'detectBorder' $false) }) `
         -ChangeSize   "$(Get-CvProfileProp $Obj 'changeSize' '')" `
+        -NoUpscale    ([bool](Get-CvProfileProp $Obj 'noUpscale' $false)) `
         -MaxWidth     (Get-CvProfileProp $Obj 'maxWidth' $null) `
         -Multipass    "$(Get-CvProfileProp $Obj 'multipass' '')" `
         -AudioEncoder "$(Get-CvProfileProp $Obj 'audioEncoder' $eaud.encoder)" `
@@ -739,7 +741,7 @@ function Format-CvProfileLabel {
         if ("$($Prof.Multipass)" -in (Get-CvMultipass2Pass)) { $parts += ('2PASS:{0}' -f $Prof.Multipass) }
         if ("$($Prof.DetectBorder)".ToLower() -eq 'auto') { $parts += 'AUTO-BORDE' }
         elseif ([bool]$Prof.DetectBorder)                 { $parts += 'DETECT BORDE' }
-        if ($Prof.ChangeSize)   { $parts += ('RESIZE {0}' -f $Prof.ChangeSize) }
+        if ($Prof.ChangeSize)   { $parts += ('RESIZE{0} {1}' -f $(if ([bool]$Prof.NoUpscale) { '<=' } else { '' }), $Prof.ChangeSize) }
         if ($null -ne $Prof.MaxWidth -and [int]$Prof.MaxWidth -gt 0) { $parts += ('RESIZE<={0}w' -f [int]$Prof.MaxWidth) }
         $v = ($parts -join '/')
     }
@@ -786,6 +788,7 @@ function New-CustomProfile {
     # Semillas restantes (paridad con profiles[]): bordes, reescalado, audioEncoder/Hz/canales y downmix.
     $defDetect = if ($Context) { $Context.CustomDetectBorder } else { $(if ("$($cp.detectBorder)".ToLower() -eq 'auto') { 'auto' } else { [bool]$cp.detectBorder }) }
     $defChange = if ($Context) { "$($Context.CustomChangeSize)" } else { "$($cp.changeSize)" }
+    $defNoUp   = if ($Context) { [bool]$Context.CustomNoUpscale } else { [bool]$cp.noUpscale }
     $defMaxW   = if ($Context) { [int]$Context.CustomMaxWidth } else { [int]$cp.maxWidth }
     $defAEnc   = if ($Context -and "$($Context.CustomAudioEncoder)" -ne '') { "$($Context.CustomAudioEncoder)" } else { "$($cp.audioEncoder)" }
     $defHz     = if ($Context -and [int]$Context.CustomAudioHz -ge 1) { [int]$Context.CustomAudioHz } else { [int]$cp.audioHz }
@@ -870,6 +873,12 @@ function New-CustomProfile {
                         # fallar la codificacion en CPU: libx264/libx265).
                         if ($sz -notmatch ':') { $sz = "$sz`:-2" }
                         $p.ChangeSize = $sz
+                        # Solo reducir: si el video es MAS pequeño que el destino, no ampliarlo (dejarlo tal cual).
+                        $nuSel = Select-FromList -Title '¿Solo reducir? (no ampliar videos mas pequeños que el destino):' -Options @(
+                            @{ Value = '1'; Text = 'Si (solo reduce; un 720p no sube a 1080p)' }
+                            @{ Value = '0'; Text = 'No (escala siempre al destino, tambien amplia)' }
+                        ) -NoNone -DefaultValue $(if ($defNoUp) { '1' } else { '0' }) -AllowCancel
+                        $p.NoUpscale = ("$nuSel" -eq '1')
                     }
                 }
 

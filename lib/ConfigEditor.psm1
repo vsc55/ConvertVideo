@@ -26,7 +26,7 @@ function Get-CvEditorOptions {
     # Convierte un catálogo @{Value;Text} (o valores planos) en Items {Value;Label;Desc}. NO define
     # valores aquí: TODO sale de catálogos centrales (fuente única) de Config.psm1 / Profile.psm1.
     #  - Config:  Get-CvOutputContainers/TonemapHdrModes/AnamorphicModes/QualityCheckModes/MaxCodecOptions/
-    #             NvencTiers, Get-CvVolumeMethods, Get-CvTonemapCurves.
+    #             NvencTiers, Get-CvVolumeMethods, Get-CvTonemapCurves, Get-CvSubtitleEditorModes.
     #  - Profile: Get-CvVideoEncoders, Get-CvVideoProfileOptions/LevelOptions, Get-CvNvencMultipass,
     #             Get-CvAudioEncoders, Get-CvAudioCodecs, Get-CvAudioChannels, Get-CvDownmixModes,
     #             Get-CvDetectBorderModes.
@@ -61,6 +61,8 @@ function Get-CvEditorOptions {
         'channels'        { return [pscustomobject]@{ AllowCustom = $false; Items = @(Get-CvAudioChannels | ForEach-Object { [pscustomobject]@{ Value = [int]$_.Value; Label = "$($_.Value)"; Desc = "$($_.Text)" } }) } }
         'audioChannels'   { return [pscustomobject]@{ AllowCustom = $false; Items = @(Get-CvAudioChannels | ForEach-Object { [pscustomobject]@{ Value = [int]$_.Value; Label = "$($_.Value)"; Desc = "$($_.Text)" } }) } }
         'downmixMode'     { return (& $ret (Get-CvDownmixModes) $false) }
+        # --- preview ---
+        'subtitleEditor'  { return (& $ret (Get-CvSubtitleEditorModes) $false) }
         # --- consola (colores del .NET ConsoleColor, no un literal de datos) ---
         'background'      { return (& $ret ([enum]::GetNames([System.ConsoleColor])) $false) }
         'foreground'      { return (& $ret ([enum]::GetNames([System.ConsoleColor])) $false) }

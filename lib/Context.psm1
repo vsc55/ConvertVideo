@@ -5,7 +5,7 @@
 
 function Get-CvVersion {
     <# Version del proyecto (fuente unica; la usan Convert.ps1 y setup.ps1). #>
-    '4.5.3'
+    '4.5.4'
 }
 
 function Get-CvAppName {
@@ -173,6 +173,10 @@ function New-CvContext {
         # Tope (seg) de cada preview de la comparacion A/B de sincronia (Show-CvSyncPreview); 0 = SIN
         # limite (reproduce la fuente directa hasta el final o hasta q/ESC), como preview.seconds.
         PreviewSyncSeconds = [Math]::Max(0, [int]$cfg.preview.syncSeconds)
+        # Como abrir el .srt al ver el texto de un subtitulo ('V N'): modo (start/win/external) y, para
+        # 'external', el .exe. Se normalizan al usarse (Resolve-CvSubtitleOpen): '' -> start, 'ventana' -> win.
+        SubtitleEditor    = "$($cfg.preview.subtitleEditor)"
+        SubtitleEditorExe = "$($cfg.preview.subtitleEditorExe)"
         AudioLangs     = @($cfg.languages.audio)
         SubLangs       = @($cfg.languages.subtitle)
         # debug: desde config.json (seccion 'debug') o creando el marcador 'debug_on' (cualquiera lo
@@ -245,6 +249,9 @@ function New-CvContext {
         # Tipos de subtitulo (por codec) a convertir a SRT (encode.subtitles.toSrt); en minusculas para
         # comparar sin distinguir mayusculas. El WEBVTT ilegible de un MKV se rescata con mkvextract.
         SubtitlesToSrt = @($(if ($cfg.encode.subtitles -and $null -ne $cfg.encode.subtitles.toSrt) { @($cfg.encode.subtitles.toSrt) | ForEach-Object { "$_".ToLower() } } else { @() }))
+        # Idioma por defecto del fallback de subtitulos (encode.subtitles.defaultLang); '' = mantener el
+        # del subtitulo elegido. En minusculas.
+        SubtitlesDefaultLang = "$(if ($cfg.encode.subtitles) { $cfg.encode.subtitles.defaultLang })".ToLower()
         # log: transcript de la ejecucion a logs\; el marcador 'no_log' lo desactiva.
         Log            = ([bool]$cfg.behavior.log -and -not (Test-Path (Join-Path $Root 'no_log')))
         # Postproceso: limpiar las etiquetas DURATION del MKV con mkvpropedit.
@@ -295,6 +302,7 @@ function New-CvContext {
         # coeficientes). Los consume New-CustomProfile como default de cada pregunta.
         CustomDetectBorder = $(if ("$($cfg.customProfile.detectBorder)".ToLower() -eq 'auto') { 'auto' } else { [bool]$cfg.customProfile.detectBorder })
         CustomChangeSize   = "$($cfg.customProfile.changeSize)"
+        CustomNoUpscale    = [bool]$cfg.customProfile.noUpscale
         CustomMaxWidth     = [int]$cfg.customProfile.maxWidth
         CustomAudioEncoder = "$($cfg.customProfile.audioEncoder)"
         CustomAudioHz      = [int]$cfg.customProfile.audioHz

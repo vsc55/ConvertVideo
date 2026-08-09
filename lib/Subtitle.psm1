@@ -174,13 +174,46 @@ function Show-SubtitlePreview {
     Invoke-CvPreview -Context $Context -File $File -ExtraArgs @('-sst', ("s:{0}" -f $SubPos)) -Label $Label -Start $Start -Seconds $Seconds -Duration $Duration
 }
 
+function Resolve-CvSubtitleOpen {
+    <#
+        Normaliza como abrir un .srt a partir del modo/exe configurados (o del override puntual del
+        comando 'V N <modo> [exe]'). Devuelve @{ Mode='start'|'win'|'external'; Exe='<ruta>' }.
+        Compatibilidad: '' -> start; 'ventana' -> win; 'other' -> external; un token suelto que no sea
+        ninguno de los modos se trata como ruta a un .exe (external con esa ruta).
+    #>
+    param([string]$Mode = '', [string]$Exe = '')
+    $m  = "$Mode".Trim()
+    $e  = "$Exe".Trim()
+    switch ($m.ToLower()) {
+        ''         { @{ Mode = 'start';    Exe = '' } }
+        'start'    { @{ Mode = 'start';    Exe = '' } }
+        'win'      { @{ Mode = 'win';      Exe = '' } }
+        'ventana'  { @{ Mode = 'win';      Exe = '' } }
+        'external' { @{ Mode = 'external'; Exe = $e } }
+        'other'    { @{ Mode = 'external'; Exe = $e } }
+        default    { @{ Mode = 'external'; Exe = $m } }   # token suelto = ruta al .exe (compat / atajo)
+    }
+}
+
+function Open-CvSrtDefault {
+    <# Abre el .srt con el programa asociado de Windows; si falla, con Notepad. Best-effort. #>
+    param([Parameter(Mandatory)][string]$Path)
+    try { Start-Process -FilePath $Path } catch { try { Start-Process -FilePath 'notepad.exe' -ArgumentList $Path } catch {} }
+}
+
 function Show-SubtitleContent {
     <#
-        Extrae una pista de subtitulo de texto a un .srt temporal y lo abre con el programa
-        asociado de Windows (o Notepad). Las pistas de imagen (PGS/VobSub) no se pueden ver
-        como texto: se avisa y no se extrae.
+        Extrae una pista de subtitulo de texto a un .srt temporal y lo abre segun el modo:
+        'start' = programa asociado de Windows (fallback a Notepad); 'win' = ventana propia (WinForms);
+        'external' = el .exe indicado (preview.subtitleEditorExe). Sin -Mode/-Exe usa lo configurado
+        (Context.SubtitleEditor / .SubtitleEditorExe); con ellos, override puntual del comando 'V N'.
+        Si el modo elegido falla, cae al asociado de Windows. Las pistas de imagen (PGS/VobSub) no se
+        pueden ver como texto: se avisa y no se extrae.
     #>
-    param([Parameter(Mandatory)]$Context, [Parameter(Mandatory)][string]$File, [Parameter(Mandatory)]$Stream)
+    param(
+        [Parameter(Mandatory)]$Context, [Parameter(Mandatory)][string]$File, [Parameter(Mandatory)]$Stream,
+        [string]$Mode = '', [string]$Exe = ''
+    )
     $idx   = [int]$Stream.index
     $codec = "$($Stream.codec_name)".ToLower()
     $textCodecs = @(
@@ -202,8 +235,43 @@ function Show-SubtitleContent {
     if (Test-Path -LiteralPath $tmp) { Remove-Item -Force -LiteralPath $tmp -ErrorAction SilentlyContinue }
     [void](Invoke-ToolCapture -Exe $Context.FFmpeg -Arguments @('-hide_banner','-loglevel','error','-y','-i',$File,'-map',"0:$idx",'-c:s','srt',$tmp) -Context $Context)
     if (Test-Path -LiteralPath $tmp) {
-        Write-CvLog 'SUB' ("[TEST] - Abriendo subtitulo {0} en el editor de texto..." -f $idx) -Indent 3
-        try { Start-Process -FilePath $tmp } catch { try { Start-Process -FilePath 'notepad.exe' -ArgumentList $tmp } catch {} }
+        # Modo/exe efectivos: el override puntual del comando 'V N <modo> [exe]' si viene; si no, lo
+        # configurado (Context). Cada uno cae por separado a lo configurado, asi que 'V N external' sin
+        # exe usa el .exe de preview.subtitleEditorExe.
+        $mode = if ($Mode) { $Mode } else { $Context.SubtitleEditor }
+        $exe  = if ($Exe)  { $Exe }  else { $Context.SubtitleEditorExe }
+        $open = Resolve-CvSubtitleOpen -Mode $mode -Exe $exe
+        switch ($open.Mode) {
+            'win' {
+                # Ventana propia (WinForms + RichTextBox), modal. Si no hay GUI/STA, cae al asociado de Windows.
+                Write-CvLog 'SUB' ("[TEST] - Mostrando subtitulo {0} en una ventana..." -f $idx) -Indent 3
+                $txt = [System.IO.File]::ReadAllText($tmp)
+                $ok = Show-CvTextWindow -Title ("Subtitulo {0} - {1}" -f $idx, [System.IO.Path]::GetFileName($File)) -Text $txt
+                if (-not $ok) {
+                    Write-Host '   No se pudo abrir la ventana (sin GUI/STA); se usa el programa por defecto.' -ForegroundColor Yellow
+                    Open-CvSrtDefault $tmp
+                }
+            }
+            'external' {
+                # Programa externo (preview.subtitleEditorExe o el pasado en 'V N'). Si falta o falla, asociado de Windows.
+                if ([string]::IsNullOrWhiteSpace($open.Exe)) {
+                    Write-Host '   No hay programa externo definido (preview.subtitleEditorExe); se usa el asociado de Windows.' -ForegroundColor Yellow
+                    Open-CvSrtDefault $tmp
+                } else {
+                    Write-CvLog 'SUB' ("[TEST] - Abriendo subtitulo {0} con '{1}'..." -f $idx, (Split-Path $open.Exe -Leaf)) -Indent 3
+                    try { Start-Process -FilePath $open.Exe -ArgumentList $tmp }
+                    catch {
+                        Write-Host ("   No se pudo abrir con '{0}'; se usa el programa por defecto." -f $open.Exe) -ForegroundColor Yellow
+                        Open-CvSrtDefault $tmp
+                    }
+                }
+            }
+            default {
+                # 'start': el programa asociado de Windows (fallback a Notepad).
+                Write-CvLog 'SUB' ("[TEST] - Abriendo subtitulo {0} en el editor de texto..." -f $idx) -Indent 3
+                Open-CvSrtDefault $tmp
+            }
+        }
     } else {
         Write-Host ("   No se pudo extraer la pista {0}." -f $idx) -ForegroundColor Yellow
     }
@@ -243,12 +311,16 @@ function Select-SubtitlesKeep {
             "T=todos / ENTER=ninguno / 'P N'=reproducir / 'V N'=ver texto")) -Indent 3
         $a = (Read-CvMenuLine '   [SUB] - Opcion' $to).Trim()
         if ($a -eq '') { Write-Host ''; return @() }
-        # 'V N' = ver el contenido del subtitulo N (extrae a .srt y abre con el editor asociado).
-        $mView = [regex]::Match($a, '^[Vv]\s*(\d+)$')
+        # 'V N' = ver el contenido del subtitulo N (extrae a .srt y lo abre segun lo configurado).
+        # Override puntual opcional: 'V N <modo> [exe]' (modo = start/win/external u other; exe solo
+        # para external/other, el resto de la linea = ruta al programa, admite espacios).
+        $mView = [regex]::Match($a, '^[Vv]\s*(\d+)(?:\s+(\S+)(?:\s+(.+))?)?$')
         if ($mView.Success) {
-            $vi = [int]$mView.Groups[1].Value
+            $vi    = [int]$mView.Groups[1].Value
+            $vmode = $mView.Groups[2].Value.Trim()
+            $vexe  = $mView.Groups[3].Value.Trim().Trim('"')   # quitar comillas si envolvio la ruta
             $m = $streams | Where-Object { [int]$_.index -eq $vi } | Select-Object -First 1
-            if ($m) { Show-SubtitleContent -Context $Context -File $file -Stream $m }
+            if ($m) { Show-SubtitleContent -Context $Context -File $file -Stream $m -Mode $vmode -Exe $vexe }
             else { Write-Host '   Indice no valido.' -ForegroundColor Yellow }
             continue
         }
@@ -276,15 +348,26 @@ function Select-SubtitlesKeep {
         }
         Write-Host ''
         # Idioma: muchas fuentes traen el subtitulo MAL etiquetado (p. ej. 'eng' que en realidad es 'spa'),
-        # por eso caen en este fallback. Se pregunta UNA vez el idioma para TODAS las pistas conservadas:
-        # ENTER = mantener el del origen; un codigo (p. ej. 'spa') = reetiquetar todas con ese idioma.
+        # por eso caen en este fallback. Se pregunta UNA vez el idioma para TODAS las pistas conservadas.
+        # El DEFAULT (lo que aplica ENTER/timeout) sale de encode.subtitles.defaultLang si esta configurado
+        # (p. ej. 'spa' -> reetiqueta sin teclear nada cada vez); si esta vacio, el default es MANTENER el
+        # idioma del subtitulo elegido. En ambos casos se puede teclear otro codigo para sobreescribir.
         $curLangs = @($chosen | ForEach-Object { Get-Tag $_ 'language' } | Where-Object { $_ } | Select-Object -Unique)
         $curTxt   = if ($curLangs.Count -gt 0) { $curLangs -join '/' } else { 'und' }
-        # Timeout propio (behavior.promptTimeout.subtitleLang, 15s por defecto): al expirar se AUTO-ACEPTA
-        # el idioma DETECTADO (ENTER = mantener el del origen), como el resto de avisos. Clave aparte del
-        # menu de subtitulos ('subtitle'), que es una eleccion activa y por defecto bloquea.
+        $defLang  = "$($Context.SubtitlesDefaultLang)".ToLower()
+        if ($defLang) {
+            $prompt = "   [SUB] - Idioma de los subtitulos elegidos [{0}] (ENTER={0} configurado / origen: {1} / o teclea codigo)" -f $defLang, $curTxt
+        } else {
+            $prompt = "   [SUB] - Idioma de los subtitulos elegidos [{0}] (ENTER=mantener / codigo, p.ej. spa)" -f $curTxt
+        }
+        # Timeout propio (behavior.promptTimeout.subtitleLang, 15s por defecto): al expirar aplica el DEFAULT
+        # (el configurado, o mantener el del origen), como el resto de avisos. Clave aparte del menu de
+        # subtitulos ('subtitle'), que es una eleccion activa y por defecto bloquea.
         $lto      = Get-CvPromptTimeout $Context 'subtitleLang'
-        $lang     = (Read-CvLine -Prompt ("   [SUB] - Idioma de los subtitulos elegidos [{0}] (ENTER=mantener / codigo, p.ej. spa)" -f $curTxt) -TimeoutSec $lto).Trim().ToLower()
+        $ans      = (Read-CvLine -Prompt $prompt -TimeoutSec $lto).Trim().ToLower()
+        # $lang que se pasa a ConvertTo-SubSel: '' = mantener el del origen. ENTER/timeout ($ans vacio) ->
+        # el defaultLang configurado (o '' = mantener); si se teclea algo, ese codigo.
+        $lang     = if ($ans -eq '') { $defLang } else { $ans }
         Write-Host ''
         # Forced: '*' del usuario o, si no, el flag/titulo del origen (Test-SubForced). Default = MISMO que
         # forced: solo la pista forzada queda 'default' (antes se heredaba el 'default' del ORIGEN sin

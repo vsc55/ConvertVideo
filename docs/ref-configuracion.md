@@ -39,9 +39,9 @@ Esquema completo (tras la fusión con los defaults):
                               "border": { "start": 120, "duration": 120, "samples": 6, "autoAcceptPct": 60, "autoAcceptMinMargin": 2, "autoSamples": 3, "autoDuration": 5, "minCropPct": 2 } },
                    "audio": { "hz": 44100, "channels": 2, "encoder": "aac_coder", "codec": "aac", "bitrate": "192k", "downmixMode": "default", "downmixCoeffs": { "center": 0.5, "front": 0.35, "surround": 0.15 }, "syncAdelay": true, "multiAudio": true, "keepTitle": false, "syncThreshold": 2.0, "aacCoder": "twoloop",
                               "volume": { "method": "peak", "peakTarget": 0, "loudnorm": { "I": -16, "TP": -1.5, "LRA": 11 } } },
-                   "subtitles": { "toSrt": ["webvtt"] } } },
+                   "subtitles": { "toSrt": ["webvtt"], "defaultLang": "" } } },
   "customProfile": { "videoEncoder": "hevc_nvenc", "videoProfile": "main10", "videoLevel": "5.0", "qmin": 1, "qmax": 23, "crf": 21, "multipass": "off", "audioCodec": "aac", "audioBitrate": "192k" },
-  "preview":     { "start": 0, "seconds": 0, "syncSeconds": 0 },
+  "preview":     { "start": 0, "seconds": 0, "syncSeconds": 0, "subtitleEditor": "start", "subtitleEditorExe": "" },
   "postprocess": { "stripTags": true, "mkvpropedit": "", "attachments": { "keep": false, "fonts": true, "covers": false, "other": false } },
   "behavior":    { "cleanTemps": true, "separateWindow": true, "lockCloseButton": true, "log": true, "workers": 2, "retries": 2, "progress": true, "promptTimeout": { "default": 0, "sync": 5, "border": 10, "animation": 10, "anamorphic": 10, "audioSync": 15, "video": -1, "audio": -1, "subtitle": -1, "subtitleLang": 15 }, "promptTimeoutStopOnType": true },
   "debug":       { "enabled": false, "pausePerCommand": true },
@@ -143,6 +143,7 @@ Las claves de vídeo van bajo **`encode.video`** y las de audio bajo **`encode.a
 | Clave | Default | Qué hace |
 |---|---|---|
 | `subtitles.toSrt` | `["webvtt"]` | **Lista de tipos de subtítulo (por codec) a convertir a SRT.** Un subtítulo **legible** cuyo codec esté en la lista se transcodifica a SubRip (`-c:s srt`) en el mismo comando. El **WEBVTT embebido** que ffmpeg **no puede leer** (el demuxer de Matroska lo marca `none`) se **rescata con `mkvextract`** a un temporal y se convierte a srt en la misma ejecución. Los subtítulos ilegibles **no** cubiertos por la lista (o en contenedor no-MKV) se **ignoran** con `[AVISO]` (copiarlos tumbaría la conversión). Lista **vacía** = no convertir nada. Añade p. ej. `"ass"`, `"mov_text"`. Necesita `mkvextract` (se descarga con mkvtoolnix). Detalle en [ref-gotchas.md](ref-gotchas.md). |
+| `subtitles.defaultLang` | `""` | **Idioma por defecto** de la pregunta de idioma del **fallback** de subtítulos (cuando ninguno es del idioma preferido). Con un código (p. ej. `"spa"`), ese es el valor que aplica **ENTER**/timeout: reetiqueta las pistas elegidas sin teclearlo cada vez (útil si siempre vienen mal etiquetadas igual). **`""` (por defecto)** = clásico: ENTER **mantiene** el idioma del subtítulo elegido. Se puede teclear otro código en el momento para sobreescribir. |
 
 Sobre `threads` (uso de CPU):
 
@@ -162,7 +163,8 @@ Valores **por defecto** (semilla) del constructor de perfil **custom** interacti
 | `qmin` / `qmax` | `1` / `23` | Control de tasa por defecto en NVENC (GPU). **Derivados de `encode.video.auto.qmin`/`qmax`** (fuente única). Acotados a 0–51; **`-1` (o negativo) = auto** (sin `-qmin`/`-qmax`, decide el encoder). |
 | `crf` | `21` | Control de tasa por defecto en CPU (libx264/libx265). **Derivado de `encode.video.auto.crf`** (fuente única). Acotado a 0–51; **`-1` = auto** (sin `-crf`, usa el CRF por defecto del encoder). |
 | `detectBorder` | `false` | Default de la pregunta de detección de bordes: `false` (No) · `true` (sí, interactivo) · `"auto"` (pre-escaneo decide). |
-| `changeSize` | `""` | Default del reescalado "escalar siempre" (`""` = no; `"1920:-2"` = escala siempre, altura `-2` automática **par**). |
+| `changeSize` | `""` | Default del reescalado fijo (`""` = no; `"1920:-2"` = escala a ese ancho, altura `-2` automática **par**). |
+| `noUpscale` | `false` | Default de "**solo reducir**" para `changeSize`: `true` = no amplía vídeos más pequeños que el destino (un 720p **no** sube a 1080p; se deja a su tamaño original). `false` = escala siempre (también amplía). |
 | `maxWidth` | `0` | Default del reescalado "ancho máximo" (`0` = no; `1920` = reduce a ese ancho **solo si es mayor**, no amplía). Alternativa a `changeSize` en el builder. |
 | `multipass` | `"off"` | Default del **2-pass NVENC** (`off`/`qres`/`fullres`); solo aparece si el encoder es NVENC. |
 | `audioEncoder` | `"aac_coder"` | Default de la salida de audio (`"aac_coder"`/`"copy"`). **Heredado de `encode.audio.encoder`** (fuente única). |
@@ -198,6 +200,8 @@ Reproducción con ffplay en PREPARAR (previews de **pista de audio**, **pista de
 | `start` | `0` | Segundo donde **empieza** la muestra. `0` = **desde el principio**. Si el vídeo es **más corto** que el valor, el inicio se ajusta solo a ~10% de su duración (no se queda fuera). |
 | `seconds` | `0` | **Duración** (s) de la muestra. `0` = **sin límite**: reproduce hasta el final (o hasta que cierres con `q`/ESC). `> 0` = una muestra de esos segundos. |
 | `syncSeconds` | `0` | **Tope** (s) de **cada preview** de la comparación **A/B** de sincronía de audio (original vs corregido). Como ahora se reproduce la **fuente directa** con ffplay (no se codifica ningún clip), admite **`0` = sin límite** (reproduce hasta el final o hasta cerrar con `q`/ESC), igual que `seconds`. Ponlo `> 0` si prefieres una muestra corta. |
+| `subtitleEditor` | `"start"` | Cómo abrir el texto de un subtítulo con **`V N`** en el menú. Tres modos: **`"start"` (por defecto)** = el programa **asociado de Windows** (*fallback* a Notepad); **`"win"`** = una **ventana propia de PowerShell** (WinForms + `RichTextBox` de solo lectura, monoespaciado, con scroll; modal, ESC para cerrar), sin editor externo; **`"external"`** = el `.exe` de `subtitleEditorExe`. Si el modo elegido falla, cae al asociado de Windows. Compatibilidad: `""`≡`"start"` y `"ventana"`≡`"win"`. `V N` admite override puntual: **`V N <modo> [exe]`** (ver [ref-perfiles.md](ref-perfiles.md)). |
+| `subtitleEditorExe` | `""` | Ruta al `.exe` que usa el modo **`"external"`** de `subtitleEditor` (p. ej. `C:\...\SubtitleEdit.exe`, VS Code). Ignorado en `"start"`/`"win"`. Si está vacío estando en `"external"`, cae al asociado de Windows. |
 
 > Por defecto (`0`/`0`) la preview reproduce **todo el vídeo desde el principio** y la cierra el usuario. Sube `seconds` si prefieres una muestra corta. En los menús de selección de pista se puede indicar un **segundo de inicio puntual**: `P N <seg>` (p. ej. `A 2 300` reproduce la pista 2 solo-audio desde el segundo 300).
 
@@ -336,7 +340,8 @@ Array **opcional** de perfiles que se **añaden** a los de serie en el menú *US
 | `qmin` / `qmax` | `1` / `20` | NVENC. Ausentes = calidad automática. |
 | `crf` | `18` | CPU (libx264/libx265). |
 | `detectBorder` | `true` | Detección de bordes por archivo. |
-| `changeSize` | `"1920:-2"` | `scale=` (altura `-2` = automática **par**). Escala **siempre** (también amplía). Se usa `-2` y **no** `-1` porque `-1` puede dar una altura **impar** (sobre todo combinado con recorte de bordes) y 4:2:0 exige dimensiones pares → la codificación en **CPU** (libx264/libx265) abortaría; `-2` redondea a par. |
+| `changeSize` | `"1920:-2"` | `scale=` (altura `-2` = automática **par**). Escala al ancho dado; por defecto **también amplía** salvo que se ponga `noUpscale: true` (ver abajo). Se usa `-2` y **no** `-1` porque `-1` puede dar una altura **impar** (sobre todo combinado con recorte de bordes) y 4:2:0 exige dimensiones pares → la codificación en **CPU** (libx264/libx265) abortaría; `-2` redondea a par. |
+| `noUpscale` | `false` | Si `true`, `changeSize` **solo reduce**: cuando el origen ya es ≤ el destino **no** se reescala (se mantiene el tamaño original, no se amplía). En el menú el perfil se muestra como **`RESIZE<= 1920:-2`**. Los perfiles de serie con `RESIZE 1920:-2` lo llevan a `true`. |
 | `maxWidth` | `1920` | Reduce a ese ancho **solo si el vídeo es mayor** (manteniendo aspecto; no amplía). Alternativa a `changeSize` (si están los dos, manda `changeSize`). Se compara contra el **ancho mostrado** (`almacenado × SAR`), no el almacenado: en vídeo **anamórfico** (SAR ≠ 1, p. ej. un `1920` que se ve a `2538`) el tope actúa sobre lo que realmente se ve, y el reescalado conserva el aspecto (DAR) del original. Ver [ref-perfiles.md](ref-perfiles.md) y la nota de vídeo anamórfico en [ref-gotchas.md](ref-gotchas.md). |
 | `audioEncoder` / `audioCodec` / `audioBitrate` / `audioHz` | `"aac_coder"` / `"aac"` / `"192k"` / `44100` | Audio. `audioCodec` = codec de salida al recodificar (`aac`/`ac3`/`eac3`/`libmp3lame`/`flac`/`libopus`). Ver [explica-audio.md](explica-audio.md). |
 

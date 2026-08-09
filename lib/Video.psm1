@@ -449,11 +449,20 @@ function Invoke-VideoAsk {
     }
 
     # ---- Resize (se puede combinar con recorte: se aplica crop y luego scale) ----
-    # ChangeSize escala SIEMPRE (valor literal 'W:H'). MaxWidth reduce solo HACIA ABAJO: se decide
+    # ChangeSize aplica un escalado fijo (valor literal 'W:H'). Con NoUpscale, SOLO reduce: si el origen
+    # ya es <= el destino, no se reescala (no se amplia). MaxWidth reduce solo HACIA ABAJO: se decide
     # AQUI comparando el ancho de origen; si es mayor se reescala a ese ancho ('W:-2' = mantiene
     # aspecto y altura par), y si ya es <= no se reescala (Resize vacio). ChangeSize tiene prioridad.
     if ($Prof.ChangeSize) {
-        $res.Resize = $Prof.ChangeSize
+        if ([bool]$Prof.NoUpscale) {
+            $sw = [int]$vstream.width
+            $sh = [int]$vstream.height
+            $cs = Get-CvChangeSizeResize -ChangeSize $Prof.ChangeSize -Width $sw -Height $sh
+            if ($cs) { $res.Resize = $cs }
+            else { Write-CvLog 'VIDEO' ("[RESIZE] - Origen {0}x{1} <= destino ({2}): no se amplia, se mantiene el tamaño original." -f $sw, $sh, $Prof.ChangeSize) -Indent 3 }
+        } else {
+            $res.Resize = $Prof.ChangeSize
+        }
     } else {
         # Reescalado por ancho maximo y/o tratamiento anamorfico (Get-CvResize). Se compara contra el
         # ancho MOSTRADO (display = almacenado x SAR): en video anamorfico (SAR != 1) el que importa es

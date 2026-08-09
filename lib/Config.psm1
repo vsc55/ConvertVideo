@@ -108,6 +108,15 @@ function Get-CvMaxCodecOptions {
     )
 }
 
+function Get-CvSubtitleEditorModes {
+    <# Como abrir el texto de un subtitulo con 'V N' (preview.subtitleEditor). El 1o = default de fábrica. #>
+    @(
+        @{ Value = 'start';    Text = 'programa asociado de Windows (fallback a Notepad)' }
+        @{ Value = 'win';      Text = 'ventana propia (WinForms + RichTextBox)' }
+        @{ Value = 'external'; Text = 'el .exe definido en subtitleEditorExe' }
+    )
+}
+
 function Get-CvNvencTiers {
     <# Tier de hevc_nvenc (encode.video.tuning.tier). #>
     @(
@@ -409,8 +418,14 @@ function Get-CvConfigDefaults {
             # Matroska lo marca como codec 'none') se RESCATA con mkvextract a un temporal y se convierte
             # en la misma ejecucion. Los que NO estan en la lista se copian tal cual. Lista vacia = no
             # convertir nada (un subtitulo ilegible se descarta con aviso). Anade p.ej. 'ass','mov_text'.
+            # subtitles.defaultLang: idioma por defecto de la pregunta de idioma del fallback (cuando no
+            # hay subtitulo del idioma preferido). Vacio ('') = comportamiento clasico: ENTER mantiene el
+            # idioma del subtitulo elegido. Con un codigo (p. ej. 'spa') = ese es el default: ENTER/timeout
+            # reetiqueta a ese idioma sin tener que teclearlo cada vez (util cuando siempre vienen mal
+            # etiquetados igual). Se puede teclear otro codigo en el momento para sobreescribirlo.
             subtitles = [ordered]@{
-                toSrt = @('webvtt')
+                toSrt       = @('webvtt')
+                defaultLang = ''
             }
         }
         # customProfile: valores por DEFECTO del constructor de perfil CUSTOM interactivo (opcion 0
@@ -421,7 +436,9 @@ function Get-CvConfigDefaults {
         #   videoProfile: main|main10|... / videoLevel: 4.0|4.1|5.0|... (segun codec; se ignoran si no aplican).
         #   qmin/qmax: tasa por defecto en NVENC. crf: tasa por defecto en CPU. Rango 0-51; -1 = AUTO.
         #   detectBorder: false|true|'auto' (deteccion de bordes por archivo). changeSize: '' | '1920:-2'
-        #     (escala siempre). maxWidth: 0 (no) | 1920 (reduce a ese ancho solo si es mayor; no amplia).
+        #     (reescalado fijo). noUpscale: true = changeSize SOLO reduce (no amplia videos mas pequeños que
+        #     el destino; p.ej. un 720p no sube a 1080p). maxWidth: 0 (no) | 1920 (reduce a ese ancho solo
+        #     si es mayor; no amplia).
         #   audioEncoder: aac_coder (recodificar) | copy. audioCodec: aac|ac3|eac3|libmp3lame|flac|libopus.
         #   audioBitrate: bitrate de audio ('copy' = copiar la pista sin recodificar). audioHz: frecuencia.
         #   audioChannels: 2|6|8 (MAXIMO, no upmix). downmixMode: default|dialogue. downmixCoeffs: pesos
@@ -435,6 +452,7 @@ function Get-CvConfigDefaults {
             crf           = $null   # <- se deriva de encode.video.auto.crf
             detectBorder  = $false
             changeSize    = ''
+            noUpscale     = $false
             maxWidth      = 0
             multipass     = $null   # <- se deriva de encode.video.multipass (abajo)
             audioEncoder  = $null   # <- se deriva de encode.audio.encoder
@@ -452,10 +470,18 @@ function Get-CvConfigDefaults {
         #   syncSeconds = tope de duracion (seg) de cada preview de la comparacion A/B de sincronia de
         #   audio; 0 = SIN limite (por defecto: reproduce la fuente directa hasta el final o hasta q/ESC).
         #   Se puede acotar (> 0) si se prefiere una muestra corta.
+        #   subtitleEditor = como abrir el .srt al usar 'V N' (ver texto del subtitulo) en el menu. Tres
+        #   modos: 'start' (por defecto) = el programa asociado de Windows (fallback a Notepad); 'win' =
+        #   una ventana propia de PowerShell (WinForms + RichTextBox, modal); 'external' = el programa
+        #   definido en subtitleEditorExe (p. ej. Subtitle Edit o VS Code). subtitleEditorExe = ruta al
+        #   .exe que usa el modo 'external' (ignorado en los otros modos). Compatibilidad: '' equivale a
+        #   'start' y 'ventana' a 'win'. El comando 'V N' admite override puntual: 'V N <modo> [exe]'.
         preview   = [ordered]@{
-            start       = 0
-            seconds     = 0
-            syncSeconds = 0
+            start             = 0
+            seconds           = 0
+            syncSeconds       = 0
+            subtitleEditor    = 'start'
+            subtitleEditorExe = ''
         }
         # Postproceso del MKV final:
         #  - stripTags: limpiar con mkvpropedit las etiquetas DURATION por pista que anade el
@@ -655,6 +681,7 @@ function Get-CvConfigHelp {
         'encode/audio/syncThreshold'  = 'Detectar audio adelantado si acaba N s antes que el video (0 = off); PREPARAR pregunta el retardo'
         'encode/audio/aacCoder'       = 'Coder del encoder AAC nativo (twoloop = mayor calidad)'
         'encode/subtitles/toSrt'      = 'Tipos de subtitulo (por codec) a convertir a SRT (p.ej. webvtt); el WEBVTT ilegible se rescata con mkvextract. Vacio = no convertir'
+        'encode/subtitles/defaultLang' = 'Idioma por defecto de la pregunta de idioma del fallback de subtitulos (ENTER lo usa). Vacio = mantener el del subtitulo elegido'
 
         'customProfile'             = 'Valores por defecto del constructor de perfil CUSTOM (opcion 0 de USAR PERFIL); mismos campos que un profiles[]'
         'customProfile/videoEncoder'= 'Codec de video: libx264|h264_nvenc|libx265|hevc_nvenc|libsvtav1|av1_nvenc|copy|auto'
@@ -664,7 +691,8 @@ function Get-CvConfigHelp {
         'customProfile/qmax'        = 'Q maximo del control de tasa en NVENC (0-51)'
         'customProfile/crf'         = 'CRF por defecto en encoders de CPU (0-51); -1 = auto'
         'customProfile/detectBorder'= 'Deteccion de bordes por defecto: false | true | auto'
-        'customProfile/changeSize'  = 'Reescalado por defecto ("" = no; ej "1920:-2" escala siempre)'
+        'customProfile/changeSize'  = 'Reescalado fijo por defecto ("" = no; ej "1920:-2")'
+        'customProfile/noUpscale'   = 'changeSize SOLO reduce: no amplia videos mas pequeños que el destino (true/false)'
         'customProfile/maxWidth'    = 'Ancho maximo por defecto (0 = no; ej 1920 reduce solo si es mayor)'
         'customProfile/multipass'   = '2-pass NVENC del perfil custom: off | qres | fullres'
         'customProfile/audioEncoder'= 'Audio por defecto: aac_coder (recodificar) | copy'
@@ -693,6 +721,8 @@ function Get-CvConfigHelp {
         'preview/start'   = 'Segundo en que empieza la muestra (0 = desde el principio)'
         'preview/seconds' = 'Duracion de la muestra en seg (0 = sin limite, todo el video)'
         'preview/syncSeconds' = 'Tope (seg) del preview A/B de sincronia de audio (0 = sin limite, hasta el final o q/ESC)'
+        'preview/subtitleEditor' = "Ver texto de subtitulo ('V N'): 'start' = asociado de Windows | 'win' = ventana propia (WinForms) | 'external' = el .exe de subtitleEditorExe"
+        'preview/subtitleEditorExe' = "Ruta al .exe para el modo 'external' de subtitleEditor (p. ej. Subtitle Edit, VS Code); ignorado en 'start'/'win'"
 
         'encode/audio/volume'             = 'Normalizacion de volumen del audio'
         'encode/audio/volume/method'      = ('Metodo: {0}' -f ((Get-CvVolumeMethods) -join ' | '))

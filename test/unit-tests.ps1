@@ -24,6 +24,7 @@ $modules = @(
     'Config'
     'Context'
     'Console'
+    'Gui'
     'Exec'
     'Job'
     'Tools'
@@ -196,10 +197,30 @@ Assert-Eq 'encode/audio/syncThreshold def 2' 2.0 (Get-CvConfigDefaultValue 'enco
 Assert-Eq 'promptTimeout/audioSync def 15'  15  (Get-CvConfigDefaultValue 'behavior/promptTimeout/audioSync')
 Assert-Eq 'promptTimeout/subtitleLang def 15' 15 (Get-CvConfigDefaultValue 'behavior/promptTimeout/subtitleLang')
 Assert-True 'help promptTimeout/subtitleLang' ((Get-CvConfigHelp).Contains('behavior/promptTimeout/subtitleLang'))
+Assert-Eq 'encode/subtitles/defaultLang def vacio' '' (Get-CvConfigDefaultValue 'encode/subtitles/defaultLang')
+Assert-True 'help encode/subtitles/defaultLang' ((Get-CvConfigHelp).Contains('encode/subtitles/defaultLang'))
+Assert-Eq 'preview/subtitleEditor def start' 'start' (Get-CvConfigDefaultValue 'preview/subtitleEditor')
+Assert-True 'help preview/subtitleEditor' ((Get-CvConfigHelp).Contains('preview/subtitleEditor'))
+Assert-Eq 'preview/subtitleEditorExe def vacio' '' (Get-CvConfigDefaultValue 'preview/subtitleEditorExe')
+Assert-True 'help preview/subtitleEditorExe' ((Get-CvConfigHelp).Contains('preview/subtitleEditorExe'))
+# Resolve-CvSubtitleOpen: normaliza modo/exe (con compat '' -> start, 'ventana' -> win, token suelto -> external).
+Assert-Eq 'SubOpen vacio -> start'     'start'    (Resolve-CvSubtitleOpen -Mode '').Mode
+Assert-Eq 'SubOpen start'              'start'    (Resolve-CvSubtitleOpen -Mode 'start').Mode
+Assert-Eq 'SubOpen win'                'win'      (Resolve-CvSubtitleOpen -Mode 'win').Mode
+Assert-Eq 'SubOpen ventana -> win'     'win'      (Resolve-CvSubtitleOpen -Mode 'ventana').Mode
+Assert-Eq 'SubOpen mayus WIN -> win'   'win'      (Resolve-CvSubtitleOpen -Mode 'WIN').Mode
+Assert-Eq 'SubOpen external mode'      'external' (Resolve-CvSubtitleOpen -Mode 'external' -Exe 'x.exe').Mode
+Assert-Eq 'SubOpen external exe'       'x.exe'    (Resolve-CvSubtitleOpen -Mode 'external' -Exe 'x.exe').Exe
+Assert-Eq 'SubOpen other -> external'  'external' (Resolve-CvSubtitleOpen -Mode 'other' -Exe 'y.exe').Mode
+Assert-Eq 'SubOpen token suelto mode'  'external' (Resolve-CvSubtitleOpen -Mode 'C:\p\se.exe').Mode
+Assert-Eq 'SubOpen token suelto exe'   'C:\p\se.exe' (Resolve-CvSubtitleOpen -Mode 'C:\p\se.exe').Exe
+Assert-Eq 'SubOpen start ignora exe'   ''         (Resolve-CvSubtitleOpen -Mode 'start' -Exe 'z.exe').Exe
 Assert-True 'help encode/audio/syncThreshold' ((Get-CvConfigHelp).Contains('encode/audio/syncThreshold'))
 # customProfile: paridad de campos con un profiles[] (nuevos defaults + 'auto' en videoEncoder).
 Assert-Eq 'customProfile/detectBorder def' $false      (Get-CvConfigDefaultValue 'customProfile/detectBorder')
 Assert-Eq 'customProfile/changeSize def'   ''           (Get-CvConfigDefaultValue 'customProfile/changeSize')
+Assert-Eq 'customProfile/noUpscale def'    $false        (Get-CvConfigDefaultValue 'customProfile/noUpscale')
+Assert-True 'help customProfile/noUpscale' ((Get-CvConfigHelp).Contains('customProfile/noUpscale'))
 Assert-Eq 'customProfile/maxWidth def 0'   0            (Get-CvConfigDefaultValue 'customProfile/maxWidth')
 Assert-Eq 'customProfile/audioEncoder def' 'aac_coder'  (Get-CvConfigDefaultValue 'customProfile/audioEncoder')
 Assert-Eq 'customProfile/audioHz def'      44100        (Get-CvConfigDefaultValue 'customProfile/audioHz')
@@ -259,6 +280,9 @@ Assert-Eq 'editor detectBorder auto'   'auto' $db[2].Value
 Assert-True 'editor videoEncoder incluye auto' (((Get-CvEditorOptions -Key 'videoEncoder').Items | ForEach-Object { "$($_.Value)" }) -contains 'auto')
 Assert-Eq   'editor tonemapCurve AllowCustom' $true (Get-CvEditorOptions -Key 'tonemapCurve').AllowCustom
 Assert-Eq   'editor anamorphic cerrado'       $false (Get-CvEditorOptions -Key 'anamorphic').AllowCustom
+# subtitleEditor: enum cerrado start/win/external (Get-CvSubtitleEditorModes).
+Assert-Eq 'editor subtitleEditor vals' 'start,win,external' (((Get-CvEditorOptions -Key 'subtitleEditor').Items | ForEach-Object { $_.Value }) -join ',')
+Assert-Eq 'editor subtitleEditor cerrado' $false (Get-CvEditorOptions -Key 'subtitleEditor').AllowCustom
 # codec/channels comparten catalogo con sus gemelos audioCodec/audioChannels.
 Assert-Eq 'editor codec == audioCodec' (((Get-CvEditorOptions -Key 'codec').Items | ForEach-Object { $_.Value }) -join ',') (((Get-CvEditorOptions -Key 'audioCodec').Items | ForEach-Object { $_.Value }) -join ',')
 
@@ -291,8 +315,12 @@ Assert-Eq   'all sin duplicados'       $all.Count ($all | Select-Object -Unique)
 # ================================================================================================
 Write-Host "`nFuentes unicas (Context / Profile)" -ForegroundColor Cyan
 Assert-Eq 'Get-CvAppName' 'ConvertVideo' (Get-CvAppName)
-Assert-Eq 'Get-CvVersion' '4.5.3'        (Get-CvVersion)
+Assert-Eq 'Get-CvVersion' '4.5.4'        (Get-CvVersion)
 Assert-Eq 'perfiles de serie = 13' 13 ((Get-CvProfiles | ForEach-Object { $_.Profiles } | Measure-Object).Count)
+# Los perfiles de serie con changeSize '1920:-2' (RESIZE fijo) deben ser solo-reduce (NoUpscale).
+$rzProfs = @(Get-CvProfiles | ForEach-Object { $_.Profiles } | Where-Object { "$($_.ChangeSize)" -ne '' })
+Assert-Eq 'perfiles con changeSize = 2' 2 $rzProfs.Count
+Assert-True 'perfiles changeSize NoUpscale' (@($rzProfs | Where-Object { -not [bool]$_.NoUpscale }).Count -eq 0)
 
 # ================================================================================================
 Write-Host "`nMultipista de audio (Config / Job / MediaInfo)" -ForegroundColor Cyan
@@ -514,6 +542,16 @@ Assert-Eq 'Resize squareheight por alto' '2538:1072,setsar=1' (Get-CvResize -Wid
 Assert-Eq 'Resize square SAR1:1=clasico' '1280:-2'         (Get-CvResize -Width 1920 -Height 1072 -Sar '1:1'    -MaxWidth 1280 -Anamorphic 'square')
 Assert-Eq 'Resize square SAR1:1 sin max' ''                (Get-CvResize -Width 1920 -Height 1072 -Sar '1:1'    -MaxWidth 0    -Anamorphic 'square')
 Assert-Eq 'Resize dims invalidas -> ""'  ''                (Get-CvResize -Width 0    -Height 1072 -Sar '115:87' -MaxWidth 1280 -Anamorphic 'square')
+
+# Get-CvChangeSizeResize: changeSize fijo que SOLO reduce (no amplia). '1920:-2' sobre 4K reduce; sobre 720p no.
+Assert-Eq 'ChangeSize reduce 4K'         '1920:-2' (Get-CvChangeSizeResize -ChangeSize '1920:-2' -Width 3840 -Height 2160)
+Assert-Eq 'ChangeSize 720p no amplia'    ''        (Get-CvChangeSizeResize -ChangeSize '1920:-2' -Width 1280 -Height 720)
+Assert-Eq 'ChangeSize igual ancho aplica' '1920:-2' (Get-CvChangeSizeResize -ChangeSize '1920:-2' -Width 1920 -Height 1080)
+Assert-Eq 'ChangeSize WxH reduce'        '1280:720' (Get-CvChangeSizeResize -ChangeSize '1280:720' -Width 1920 -Height 1080)
+Assert-Eq 'ChangeSize WxH ampliaria alto' '' (Get-CvChangeSizeResize -ChangeSize '1280:720' -Width 1000 -Height 480)
+Assert-Eq 'ChangeSize vacio -> ""'       ''        (Get-CvChangeSizeResize -ChangeSize '' -Width 3840 -Height 2160)
+Assert-Eq 'ChangeSize sin datos aplica'  '1920:-2' (Get-CvChangeSizeResize -ChangeSize '1920:-2' -Width 0 -Height 0)
+Assert-Eq 'ChangeSize -2 ancho auto'     ''        (Get-CvChangeSizeResize -ChangeSize '-2:1080' -Width 1920 -Height 720)
 
 # Get-CvAnamorphicWarning: aviso SIEMPRE si SAR != 1 (tamaño almacenado != mostrado)
 Assert-Eq   'AnamWarn cuadrado -> ""'     '' (Get-CvAnamorphicWarning -Width 1920 -Height 1080 -Sar '1:1'    -Anamorphic 'keep')
@@ -752,7 +790,14 @@ $cp = ConvertTo-CvProfile ([pscustomobject]@{
 })
 Assert-Eq 'ConvertTo-CvProfile encoder' 'hevc_nvenc' $cp.VideoEncoder
 Assert-Eq 'ConvertTo-CvProfile detectBorder auto' 'auto' $cp.DetectBorder
+# NoUpscale: default false en New-CvProfile; ConvertTo-CvProfile lo lee de config (noUpscale).
+Assert-Eq 'New-CvProfile NoUpscale def' $false $np.NoUpscale
+Assert-Eq 'ConvertTo-CvProfile noUpscale' $true (ConvertTo-CvProfile ([pscustomobject]@{ videoEncoder = 'hevc_nvenc'; changeSize = '1920:-2'; noUpscale = $true })).NoUpscale
+Assert-Eq 'ConvertTo-CvProfile noUpscale def false' $false (ConvertTo-CvProfile ([pscustomobject]@{ videoEncoder = 'hevc_nvenc'; changeSize = '1920:-2' })).NoUpscale
 Assert-Eq 'Label NVENC' 'A: 192K, V: h265[NV]/M10/L5/Q(1-23)' (Format-CvProfileLabel $np)
+# Label: changeSize sin NoUpscale => 'RESIZE 1920:-2'; con NoUpscale => 'RESIZE<= 1920:-2'.
+Assert-True 'Label RESIZE escala siempre' ((Format-CvProfileLabel (New-CvProfile -VideoEncoder 'hevc_nvenc' -ChangeSize '1920:-2')) -match 'RESIZE 1920:-2')
+Assert-True 'Label RESIZE<= solo reduce'  ((Format-CvProfileLabel (New-CvProfile -VideoEncoder 'hevc_nvenc' -ChangeSize '1920:-2' -NoUpscale $true)) -match 'RESIZE<= 1920:-2')
 Assert-Eq 'Label copy' 'A: COPY, V: COPY' (Format-CvProfileLabel (New-CvProfile -VideoEncoder 'copy' -AudioEncoder 'copy'))
 Assert-Eq 'catalogo encoders = 7' 7 (Get-CvVideoEncoders).Count
 Assert-True 'encoders incluye libsvtav1' (@(Get-CvVideoEncoders | ForEach-Object { $_.Value }) -contains 'libsvtav1')
