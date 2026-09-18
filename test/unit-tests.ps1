@@ -92,6 +92,21 @@ Assert-Eq 'width 10, 30% -> len 10'  10 (Get-CvProgressBar -Percent 30 -Width 10
 Assert-Eq 'width 10, 30% -> 3 llenos' 3 (BarFull (Get-CvProgressBar -Percent 30 -Width 10))
 
 # ================================================================================================
+# Avance y velocidad de la linea de progreso: con el out_time de ffmpeg o, si lo da como 'N/A'
+# (basta una pista de salida VACIA para que pase toda la ejecucion), estimados con frames y fps.
+Write-Host "`nProgreso sin out_time (Exec)" -ForegroundColor Cyan
+Assert-Eq 'Prog out_time manda'        120   (Resolve-CvProgressSeconds -HasOutTime $true  -OutSeconds 120 -Frames 9999 -Fps 25)
+Assert-Eq 'Prog out_time 0 vale'         0   (Resolve-CvProgressSeconds -HasOutTime $true  -OutSeconds 0   -Frames 9999 -Fps 25)
+Assert-Eq 'Prog estima frames/fps'      40   (Resolve-CvProgressSeconds -HasOutTime $false -OutSeconds 0   -Frames 1000 -Fps 25)
+Assert-Eq 'Prog sin fps -> 0'            0   (Resolve-CvProgressSeconds -HasOutTime $false -OutSeconds 0   -Frames 1000 -Fps 0)
+Assert-Eq 'Prog sin frames -> 0'         0   (Resolve-CvProgressSeconds -HasOutTime $false -OutSeconds 0   -Frames 0    -Fps 25)
+Assert-Eq 'Vel de ffmpeg'              1.8   (Resolve-CvProgressSpeed -Speed '1.8x' -Seconds 100 -Elapsed 10)
+Assert-Eq 'Vel N/A -> media'            10   (Resolve-CvProgressSpeed -Speed 'N/A'  -Seconds 100 -Elapsed 10)
+Assert-Eq 'Vel vacia -> media'          10   (Resolve-CvProgressSpeed -Speed ''     -Seconds 100 -Elapsed 10)
+Assert-Eq 'Vel sin nada -> 0'            0   (Resolve-CvProgressSpeed -Speed 'N/A'  -Seconds 0   -Elapsed 10)
+Assert-Eq 'Vel ffmpeg 0x -> media'       5   (Resolve-CvProgressSpeed -Speed '0x'   -Seconds 50  -Elapsed 10)
+
+# ================================================================================================
 Write-Host "`nSeparadores (Console)" -ForegroundColor Cyan
 Assert-Eq 'Get-CvSepLine -Width 5'   '====='   (Get-CvSepLine -Width 5)
 Assert-Eq 'Get-CvDashLine -Width 3'  '---'     (Get-CvDashLine -Width 3)
@@ -244,10 +259,15 @@ Assert-Eq 'ruta inexistente -> null'    $null (Get-CvConfigDefaultValue 'no/exis
 
 # ================================================================================================
 Write-Host "`nMetodos de volumen y coeficientes (Config)" -ForegroundColor Cyan
-Assert-Eq 'volume methods'  @('peak','loudnorm','aacgain') (Get-CvVolumeMethods)
+Assert-Eq 'volume methods'  @('loudnorm','peak','aacgain') (Get-CvVolumeMethodValues)
 Assert-Eq   'tonemapCurve 1a = bt.2390' 'bt.2390' (@(Get-CvTonemapCurves)[0])
 Assert-True 'tonemapCurve incluye mobius' (@(Get-CvTonemapCurves) -contains 'mobius')
-Assert-Eq 'fallback = 1o (peak)' 'peak' (Get-CvVolumeMethods)[0]
+# loudnorm es el DEFAULT y el 1o del catalogo (= fallback); 'peak' queda marcado como LEGACY.
+Assert-Eq 'fallback = 1o (loudnorm)' 'loudnorm' (Get-CvVolumeMethodValues)[0]
+Assert-Eq 'volume method default' 'loudnorm' (Get-CvConfigDefaultValue 'encode/audio/volume/method')
+Assert-True 'peak marcado LEGACY' ((Get-CvVolumeMethods | Where-Object { $_.Value -eq 'peak' }).Text -cmatch 'LEGACY')
+Assert-True 'loudnorm sin LEGACY'  ((Get-CvVolumeMethods | Where-Object { $_.Value -eq 'loudnorm' }).Text -cnotmatch 'LEGACY')
+Assert-True 'todos los metodos con texto' (@(Get-CvVolumeMethods | Where-Object { -not "$($_.Text)".Trim() }).Count -eq 0)
 $dc = Get-CvDefaultDownmixCoeffs
 Assert-Eq 'downmix center 0.5'  0.5  $dc.Center
 Assert-Eq 'downmix front 0.35'  0.35 $dc.Front
@@ -263,6 +283,9 @@ Assert-Eq 'editor opts bitrate null' $null (Get-CvEditorOptions -Key 'bitrate')
 Assert-Eq 'editor anamorphic vals' 'square,squareheight,keep' (((Get-CvEditorOptions -Key 'anamorphic').Items | ForEach-Object { $_.Value }) -join ',')
 Assert-Eq 'editor tonemapHdr vals' 'auto,off' (((Get-CvEditorOptions -Key 'tonemapHdr').Items | ForEach-Object { $_.Value }) -join ',')
 Assert-Eq 'editor qualityCheck vals' 'off,ssim,vmaf' (((Get-CvEditorOptions -Key 'qualityCheck').Items | ForEach-Object { $_.Value }) -join ',')
+# method: catalogo @{Value;Text} -> el editor muestra descripcion (y el 'LEGACY' de peak) en Desc.
+Assert-Eq 'editor method vals' 'loudnorm,peak,aacgain' (((Get-CvEditorOptions -Key 'method').Items | ForEach-Object { $_.Value }) -join ',')
+Assert-True 'editor method desc peak LEGACY' (((Get-CvEditorOptions -Key 'method').Items | Where-Object { $_.Value -eq 'peak' }).Desc -cmatch 'LEGACY')
 # maxCodec incluye el valor '' (sin tope) con label '(vacio)'.
 $mc = (Get-CvEditorOptions -Key 'maxCodec').Items
 Assert-Eq 'editor maxCodec 1o vacio' '' $mc[0].Value
@@ -315,12 +338,32 @@ Assert-Eq   'all sin duplicados'       $all.Count ($all | Select-Object -Unique)
 # ================================================================================================
 Write-Host "`nFuentes unicas (Context / Profile)" -ForegroundColor Cyan
 Assert-Eq 'Get-CvAppName' 'ConvertVideo' (Get-CvAppName)
-Assert-Eq 'Get-CvVersion' '4.5.4'        (Get-CvVersion)
+Assert-Eq 'Get-CvVersion' '4.5.5'        (Get-CvVersion)
 Assert-Eq 'perfiles de serie = 13' 13 ((Get-CvProfiles | ForEach-Object { $_.Profiles } | Measure-Object).Count)
 # Los perfiles de serie con changeSize '1920:-2' (RESIZE fijo) deben ser solo-reduce (NoUpscale).
 $rzProfs = @(Get-CvProfiles | ForEach-Object { $_.Profiles } | Where-Object { "$($_.ChangeSize)" -ne '' })
 Assert-Eq 'perfiles con changeSize = 2' 2 $rzProfs.Count
 Assert-True 'perfiles changeSize NoUpscale' (@($rzProfs | Where-Object { -not [bool]$_.NoUpscale }).Count -eq 0)
+Assert-Eq 'encode.subtitles.dropEmpty def' $true (Get-CvConfigDefaultValue 'encode/subtitles/dropEmpty')
+Assert-True 'help encode/subtitles/dropEmpty' ((Get-CvConfigHelp).Contains('encode/subtitles/dropEmpty'))
+
+# ================================================================================================
+# Fps: fuente unica del fps de una pista (fraccion de ffprobe) y del fps de SALIDA (forceFps).
+Write-Host "`nFps de origen y de salida (MediaInfo / Video)" -ForegroundColor Cyan
+Assert-Eq 'Fps avg 24000/1001' '23.976023976024' ([math]::Round((Get-CvFrameRate ([pscustomobject]@{ avg_frame_rate = '24000/1001'; r_frame_rate = '25/1' })), 12))
+Assert-Eq 'Fps avg 0/0 -> r'   25 (Get-CvFrameRate ([pscustomobject]@{ avg_frame_rate = '0/0'; r_frame_rate = '25/1' }))
+Assert-Eq 'Fps denominador 0'   0 (Get-CvFrameRate ([pscustomobject]@{ avg_frame_rate = '0/0'; r_frame_rate = '30/0' }))
+Assert-Eq 'Fps sin stream'      0 (Get-CvFrameRate $null)
+$fpsInfo = [pscustomobject]@{ streams = @(
+    [pscustomobject]@{ index = 0; codec_type = 'video'; avg_frame_rate = '24000/1001'; r_frame_rate = '24000/1001' }
+    [pscustomobject]@{ index = 1; codec_type = 'audio' }
+) }
+Assert-Eq 'MediaFps primera de video' '23.98' ([math]::Round((Get-CvMediaFps -Info $fpsInfo), 2))
+Assert-Eq 'MediaFps sin video' 0 (Get-CvMediaFps -Info ([pscustomobject]@{ streams = @([pscustomobject]@{ index = 0; codec_type = 'audio' }) }))
+# forceFps: manda el fps de config (invariante, '23.976' con punto); sin forzar, el del origen.
+Assert-Eq 'OutFps forzado' '23.976' ([math]::Round((Get-CvOutputFps -Context ([pscustomobject]@{ ForceFps = $true; Fps = '23.976' }) -Info $fpsInfo), 3))
+Assert-Eq 'OutFps origen'  '23.98'  ([math]::Round((Get-CvOutputFps -Context ([pscustomobject]@{ ForceFps = $false; Fps = '23.976' }) -Info $fpsInfo), 2))
+Assert-Eq 'OutFps sin info' 0 (Get-CvOutputFps -Context ([pscustomobject]@{ ForceFps = $false; Fps = '23.976' }))
 
 # ================================================================================================
 Write-Host "`nMultipista de audio (Config / Job / MediaInfo)" -ForegroundColor Cyan
@@ -654,6 +697,22 @@ Assert-Eq 'SubUsable pgs'        $true  (Test-CvSubtitleUsable ([pscustomobject]
 Assert-Eq 'SubUsable sin codec'  $false (Test-CvSubtitleUsable ([pscustomobject]@{ codec_name = $null }))
 Assert-Eq 'SubUsable none'       $false (Test-CvSubtitleUsable ([pscustomobject]@{ codec_name = 'none' }))
 Assert-Eq 'SubUsable unknown'    $false (Test-CvSubtitleUsable ([pscustomobject]@{ codec_name = 'unknown' }))
+# Pista VACIA (sin cues): se detecta por tags (sin demultiplexar) o por un conteo ya hecho. Ante la
+# duda (sin tags, sin conteo) NO se considera vacia: nunca se descarta una pista por no saber.
+Assert-Eq 'SubEmpty NUMBER_OF_FRAMES 0'  $true  (Test-CvSubtitleEmpty ([pscustomobject]@{ tags = [pscustomobject]@{ NUMBER_OF_FRAMES = '0' } }))
+Assert-Eq 'SubEmpty NUMBER_OF_FRAMES 12' $false (Test-CvSubtitleEmpty ([pscustomobject]@{ tags = [pscustomobject]@{ NUMBER_OF_FRAMES = '12' } }))
+Assert-Eq 'SubEmpty DURATION 0'          $true  (Test-CvSubtitleEmpty ([pscustomobject]@{ tags = [pscustomobject]@{ DURATION = '00:00:00.000000000' } }))
+Assert-Eq 'SubEmpty DURATION real'       $false (Test-CvSubtitleEmpty ([pscustomobject]@{ tags = [pscustomobject]@{ DURATION = '00:50:09.536000000' } }))
+Assert-Eq 'SubEmpty sin tags'            $false (Test-CvSubtitleEmpty ([pscustomobject]@{ codec_name = 'subrip' }))
+Assert-Eq 'SubEmpty cues 0 manda'        $true  (Test-CvSubtitleEmpty ([pscustomobject]@{ tags = [pscustomobject]@{ DURATION = '00:50:09.536000000' } }) -Cues 0)
+Assert-Eq 'SubEmpty cues 5 manda'        $false (Test-CvSubtitleEmpty ([pscustomobject]@{ tags = [pscustomobject]@{ DURATION = '00:00:00.000000000' } }) -Cues 5)
+Assert-Eq 'SubEmpty NOF gana a DURATION' $false (Test-CvSubtitleEmpty ([pscustomobject]@{ tags = [pscustomobject]@{ NUMBER_OF_FRAMES = '3'; DURATION = '00:00:00.000000000' } }))
+# Conteo de cues: 'N/A' de '-count_packets' = CERO conocido (ffprobe ya demultiplexo), no desconocido.
+Assert-Eq 'CueCount numero'   1082 (ConvertTo-CvCueCount '1082')
+Assert-Eq 'CueCount N/A -> 0'    0 (ConvertTo-CvCueCount 'N/A')
+Assert-Eq 'CueCount n/a -> 0'    0 (ConvertTo-CvCueCount " n/a `n")
+Assert-Eq 'CueCount vacio -> -1' -1 (ConvertTo-CvCueCount '')
+Assert-Eq 'CueCount basura -> -1' -1 (ConvertTo-CvCueCount 'error')
 # Get-SubtitleStreams devuelve TODAS; Resolve-CvSubtitleAction decide copy/srt/rescue/discard
 $stInfo = [pscustomobject]@{
     format  = [pscustomobject]@{ format_name = 'matroska,webm' }
@@ -1213,11 +1272,14 @@ Assert-Eq 'plan capado flag'    $true $planCap.Capped
 # Resolve-CvVolumeMethod
 Assert-Eq 'vol peak/aac' 'peak' (Resolve-CvVolumeMethod -Method 'peak' -Codec 'aac').Method
 Assert-Eq 'vol aacgain/aac ok' 'aacgain' (Resolve-CvVolumeMethod -Method 'aacgain' -Codec 'aac').Method
+# aacgain con un codec que no es AAC cae al DEFAULT de config (loudnorm), no al fijo 'peak' (legacy).
 $vg = Resolve-CvVolumeMethod -Method 'aacgain' -Codec 'eac3'
-Assert-Eq 'vol aacgain/eac3 -> peak' 'peak' $vg.Method
+Assert-Eq 'vol aacgain/eac3 -> default' 'loudnorm' $vg.Method
 Assert-Eq 'vol aacgain downgraded'   $true  $vg.AacgainDowngraded
+Assert-Eq 'vol peak/aac no degrada'  $false (Resolve-CvVolumeMethod -Method 'peak' -Codec 'aac').AacgainDowngraded
 Assert-Eq 'vol LOUDNORM lower' 'loudnorm' (Resolve-CvVolumeMethod -Method 'LOUDNORM' -Codec 'aac').Method
-Assert-True 'vol invalido -> valido' ((Resolve-CvVolumeMethod -Method 'xxx' -Codec 'aac').Method -in (Get-CvVolumeMethods))
+Assert-Eq 'vol invalido -> default' 'loudnorm' (Resolve-CvVolumeMethod -Method 'xxx' -Codec 'aac').Method
+Assert-True 'vol invalido -> valido' ((Resolve-CvVolumeMethod -Method 'xxx' -Codec 'aac').Method -in (Get-CvVolumeMethodValues))
 # Get-CvAdelayFilter (ms enteros redondeados)
 Assert-Eq 'adelay 5s'     'adelay=5000:all=1' (Get-CvAdelayFilter 5.0)
 Assert-Eq 'adelay 0.005s' 'adelay=5:all=1'    (Get-CvAdelayFilter 0.005)

@@ -239,6 +239,47 @@ function Write-CvProgressLine {
     return $Text.Length
 }
 
+function Resolve-CvProgressSeconds {
+    <#
+        PURO. Segundos de video YA producidos, para el % y la ETA de la linea de progreso.
+
+        Fuente principal: el 'out_time' que da ffmpeg por '-progress' (-OutSeconds, con -HasOutTime
+        $true en cuanto ffmpeg llega a darlo). Si NO lo da, se ESTIMA con los frames ya codificados y
+        el fps de SALIDA: frames / fps. Esto pasa de verdad: ffmpeg calcula out_time como el MINIMO de
+        todas las pistas de salida, asi que basta con que una este VACIA (p. ej. un subtitulo sin un
+        solo cue, ver Test-CvSubtitleEmpty) para que emita 'out_time_us=N/A' durante TODA la ejecucion
+        y la barra se quede congelada en 0%. Sin fps conocido (<= 0) no hay estimacion posible -> 0.
+    #>
+    param(
+        [bool]$HasOutTime,
+        [double]$OutSeconds = 0,
+        [double]$Frames = 0,
+        [double]$Fps = 0
+    )
+    if ($HasOutTime) { return [double]$OutSeconds }
+    if ($Fps -gt 0 -and $Frames -gt 0) { return [double]($Frames / $Fps) }
+    return 0.0
+}
+
+function Resolve-CvProgressSpeed {
+    <#
+        PURO. Velocidad de codificacion (x tiempo real) para la ETA: la que da ffmpeg ('speed=1.8x')
+        o, si la da como 'N/A' (mismo caso que el out_time de Resolve-CvProgressSeconds), la MEDIA
+        calculada con los segundos ya producidos y el reloj de pared (-Elapsed). Devuelve 0 si no se
+        puede saber (el llamador omite entonces la ETA y la velocidad).
+    #>
+    param(
+        [string]$Speed = '',
+        [double]$Seconds = 0,
+        [double]$Elapsed = 0
+    )
+    $inv = [System.Globalization.CultureInfo]::InvariantCulture
+    $spd = 0.0
+    if ([double]::TryParse(($Speed -replace '[^0-9.]', ''), [System.Globalization.NumberStyles]::Float, $inv, [ref]$spd) -and $spd -gt 0) { return $spd }
+    if ($Seconds -gt 0 -and $Elapsed -gt 0) { return [double]($Seconds / $Elapsed) }
+    return 0.0
+}
+
 function Invoke-ToolProgress {
     <#
         Ejecuta ffmpeg INLINE (sin ventana aparte) capturando su salida '-progress' y mostrando una
@@ -249,6 +290,10 @@ function Invoke-ToolProgress {
         el codigo de salida. Inyecta '-nostats -progress pipe:1' (progreso legible por stdout; el resto
         del log de ffmpeg va a stderr, que se drena sin mostrar). TotalSeconds <= 0 -> no hay % ni ETA,
         solo tiempo transcurrido/velocidad. Pensada para los pasos largos (recodificacion de video/audio).
+
+        -Fps (fps de SALIDA, Get-CvOutputFps) = red de seguridad: si ffmpeg no da 'out_time'/'speed'
+        (los da como 'N/A'), el avance se estima con los frames codificados (Resolve-CvProgressSeconds)
+        en vez de dejar la barra clavada en 0%.
     #>
     param(
         [Parameter(Mandatory)][string]$Exe,
@@ -256,6 +301,7 @@ function Invoke-ToolProgress {
         [Parameter(Mandatory)]$Context,
         [string]$Label = 'Procesando...',
         [double]$TotalSeconds = 0,
+        [double]$Fps = 0,         # fps de salida: permite estimar el avance si ffmpeg no da out_time
         [switch]$ShowQ            # mostrar el cuantizador (q) del stream: util en video, no en audio
     )
     Write-CvDebug -Context $Context -Message ("RUN (progress) => `"{0}`" {1}" -f $Exe, (ConvertTo-ArgString $Arguments))
@@ -279,30 +325,38 @@ function Invoke-ToolProgress {
     $lastLen    = 0        # longitud del ultimo texto pintado (para borrar el sobrante del anterior)
     $speed      = ''
     $outSec     = 0.0
+    $hasOut     = $false  # $true en cuanto ffmpeg da un out_time numerico (si no, se estima por frames)
+    $frames     = 0.0     # 'frame=' del -progress (frames ya codificados)
     $bitrate    = ''      # 'bitrate=' del -progress (p. ej. '1234.5kbits/s' o 'N/A')
     $qv         = ''      # 'stream_X_X_q=' del -progress (cuantizador del stream; -1 si no aplica)
 
     while ($null -ne ($line = $reader.ReadLine())) {
-        if     ($line.StartsWith('out_time_us=')) { $n = 0L; if ([long]::TryParse($line.Substring(12), [ref]$n) -and $n -ge 0) { $outSec = $n / 1000000.0 } }
+        if     ($line.StartsWith('out_time_us=')) { $n = 0L; if ([long]::TryParse($line.Substring(12), [ref]$n) -and $n -ge 0) { $outSec = $n / 1000000.0; $hasOut = $true } }
+        elseif ($line.StartsWith('frame='))         { $fr = 0L; if ([long]::TryParse($line.Substring(6).Trim(), [ref]$fr) -and $fr -ge 0) { $frames = [double]$fr } }
         elseif ($line.StartsWith('speed='))        { $speed = $line.Substring(6).Trim() }
         elseif ($line.StartsWith('bitrate='))       { $bitrate = $line.Substring(8).Trim() }
         elseif ($line -match '^stream_\d+_\d+_q=')  { $qv = ($line -split '=', 2)[1].Trim() }
         elseif ($line.StartsWith('progress=')) {
             # Fin de bloque de progreso: renderizar (limitado a cambio de % o cada 2 s, para no
-            # inundar el transcript con cientos de lineas).
-            $curPct = if ($TotalSeconds -gt 0) { [int][math]::Floor($outSec / $TotalSeconds * 100) } else { -1 }
+            # inundar el transcript con cientos de lineas). Los segundos producidos y la velocidad
+            # salen de ffmpeg o, si los da como 'N/A', se estiman (Resolve-CvProgressSeconds/Speed).
+            $sec    = Resolve-CvProgressSeconds -HasOutTime $hasOut -OutSeconds $outSec -Frames $frames -Fps $Fps
+            $curPct = if ($TotalSeconds -gt 0) { [int][math]::Floor($sec / $TotalSeconds * 100) } else { -1 }
             if (($curPct -ne $lastPct) -or (($sw.Elapsed.TotalSeconds - $lastRender) -ge 2)) {
                 $pct = if ($TotalSeconds -gt 0) { [int][math]::Min(100, [math]::Max(0, $curPct)) } else { -1 }
-                $spd = 0.0; $hasSpd = [double]::TryParse(($speed -replace '[^0-9.]', ''), [System.Globalization.NumberStyles]::Float, $inv, [ref]$spd)
+                $spd = Resolve-CvProgressSpeed -Speed $speed -Seconds $sec -Elapsed $sw.Elapsed.TotalSeconds
+                $hasSpd = ($spd -gt 0)
                 $parts = " - $Label"
                 if ($pct -ge 0) {
                     $bar = Get-CvProgressBar -Percent $pct   # '' si console.progressBarWidth = 0
                     if ($bar) { $parts += "  $bar" }
                     $parts += ('  {0,3}%' -f $pct)
                 }
-                if ($pct -ge 0 -and $hasSpd -and $spd -gt 0) { $parts += ('  ETA {0}' -f (Format-CvEta (($TotalSeconds - $outSec) / $spd))) }
-                if ($hasSpd -and $spd -gt 0) { $parts += ('  {0}x' -f $spd.ToString($inv)) }
-                elseif ($pct -lt 0)          { $parts += ('  {0}' -f (Format-CvEta $outSec)) }   # sin total: tiempo transcurrido
+                # Resto acotado a >= 0: con el avance estimado por frames el total puede quedarse corto
+                # por decimas y un resto negativo pintaria 'ETA --:--' justo al acabar.
+                if ($pct -ge 0 -and $hasSpd) { $parts += ('  ETA {0}' -f (Format-CvEta ([math]::Max(0.0, [double]($TotalSeconds - $sec)) / $spd))) }
+                if ($hasSpd)        { $parts += ('  {0}x' -f ([math]::Round($spd, 2)).ToString($inv)) }
+                elseif ($pct -lt 0) { $parts += ('  {0}' -f (Format-CvEta $sec)) }   # sin total: tiempo transcurrido
                 # Bitrate (audio y video) y cuantizador q (solo si -ShowQ, p. ej. video). Se omiten
                 # mientras ffmpeg aun no da un valor util ('N/A' al arrancar; q negativo = no aplica).
                 if ($bitrate -and $bitrate -notmatch '(?i)n/?a') { $parts += ('  {0}' -f $bitrate) }

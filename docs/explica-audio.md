@@ -72,9 +72,11 @@ flowchart TD
 
 | Método | Qué hace | Pasadas sobre el audio |
 |---|---|---|
-| `peak` | Mide el pico (`volumedetect`) y **amplifica** hasta `encode.audio.volume.peakTarget` con el filtro `volume`. | 2 (análisis + encode), ambas ligeras |
-| `loudnorm` | Normalización de **sonoridad EBU R128** (I/TP/LRA) con el filtro `loudnorm`, en **1 pasada** dentro del encode. | 1 (encode), pero el filtro es pesado |
+| `loudnorm` **(por defecto)** | Normalización de **sonoridad EBU R128** (I/TP/LRA) con el filtro `loudnorm`, en **1 pasada** dentro del encode. | 1 (encode), pero el filtro es pesado |
+| `peak` **(legacy)** | Mide el pico (`volumedetect`) y **amplifica** hasta `encode.audio.volume.peakTarget` con el filtro `volume`. | 2 (análisis + encode), ambas ligeras |
 | `aacgain` | Codifica sin ajuste y aplica **ReplayGain** sobre el `.m4a` ya codificado, **sin recodificar**. | 1 encode + escaneo aacgain |
+
+> **`loudnorm` es el default desde v4.5.5** (antes lo era `peak`). El motivo: `peak` solo iguala el **pico**, que no dice nada del volumen **percibido** — dos archivos normalizados a pico 0 dBFS pueden sonar muy distintos —, mientras que `loudnorm` iguala la **sonoridad** (LUFS), que es lo que se nota al saltar de un archivo a otro. `peak` se mantiene por compatibilidad y para cuando prime la velocidad.
 
 ### Comparativa de tiempo
 
@@ -86,7 +88,7 @@ Medido sobre **5 minutos** de audio AC-3 5.1 → AAC (solo la fase de audio; el 
 | `aacgain` | ~18 s | ~1,3× | encode sin filtro + escaneo ReplayGain |
 | `loudnorm` | **~63 s** | **~4,5×** (más lento) | el filtro EBU R128 es pesado |
 
-> El método de volumen apenas mueve el **tiempo total** de la conversión: manda el encode de **vídeo**. Aun así, si procesas mucho audio, `peak` es el más rápido y `loudnorm` el más lento (su filtro hace análisis de sonoridad + true-peak). `loudnorm` da el volumen más uniforme entre archivos; `peak` solo iguala el pico; `aacgain` ajusta sin recodificar (reversible).
+> El método de volumen apenas mueve el **tiempo total** de la conversión: manda el encode de **vídeo**. Por eso el default es `loudnorm` pese a ser el más lento de los tres (su filtro hace análisis de sonoridad + true-peak): da el volumen más uniforme entre archivos y lo que cuesta se pierde en el ruido frente al vídeo. Si procesas **solo audio** y prima la velocidad, `peak` (legacy) sigue siendo el más rápido; `aacgain` ajusta sin recodificar (reversible).
 
 Los parámetros de cada método (`encode.audio.volume.peakTarget`, `encode.audio.volume.loudnormI/TP/LRA`) están en [ref-configuracion.md](ref-configuracion.md); los comandos exactos, en [ref-comandos.md](ref-comandos.md).
 
@@ -291,7 +293,7 @@ El audio recodificado se escribe primero en un temporal en `Proceso\`, que luego
 - **AAC → `.m4a`** (MP4): así sigue funcionando la normalización `aacgain`, que solo procesa AAC/MP3 en contenedor MP4.
 - **Resto → `.mka`** (Matroska): admite cualquier códec (ac3/eac3/mp3/flac/opus), a diferencia de `.m4a`, que solo acepta aac/ac3/alac.
 
-Por eso, si se elige un códec **distinto de AAC** y el método de volumen configurado es `aacgain`, se usa **`peak`** en su lugar (basado en filtro, válido para cualquier códec). `Invoke-Multiplex` toma el temporal que exista (`.m4a` o `.mka`) y `Remove-CvTemps` limpia ambos.
+Por eso, si se elige un códec **distinto de AAC** y el método de volumen configurado es `aacgain`, se usa en su lugar el **método por defecto de config** (`loudnorm`; basado en filtro, válido para cualquier códec) — hasta v4.5.5 caía al fijo `peak`. `Invoke-Multiplex` toma el temporal que exista (`.m4a` o `.mka`) y `Remove-CvTemps` limpia ambos.
 
 ### Cómo se elige en el builder custom
 

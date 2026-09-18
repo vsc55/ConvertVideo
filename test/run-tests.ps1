@@ -21,8 +21,8 @@ param(
     [ValidateSet('hevc_nvenc','h264_nvenc','libx265','libx264','copy')]
     [string]$Encoder = 'hevc_nvenc',
     [switch]$Keep,
-    # Ejecuta la bateria por la ruta de UNA SOLA PASADA (BETA): fuerza test.betaOnePass + volumen
-    # loudnorm (requisito de elegibilidad) en el config aislado. Misma verificacion de salidas.
+    # Ejecuta la bateria por la ruta de UNA SOLA PASADA (BETA): activa test.betaOnePass en el config
+    # aislado (el volumen por defecto, 'loudnorm', ya es elegible). Misma verificacion de salidas.
     [switch]$OnePass
 )
 
@@ -205,9 +205,9 @@ try {
     $cfg['behavior']['lockCloseButton'] = $false   # no tocar el boton X de la ventana
     $cfg['behavior']['log']             = $false   # sin transcript
     if ($OnePass) {
-        # Ruta de una sola pasada (BETA): activar el flag. Se usa el volumen POR DEFECTO ('peak'), que ya
-        # es elegible (mide con volumedetect en una pasada de analisis previa y aplica 'volume=XdB' en el
-        # filtergraph); asi el E2E ejercita el camino real de serie. syncAdelay ya es true por defecto.
+        # Ruta de una sola pasada (BETA): activar el flag. Se usa el volumen POR DEFECTO ('loudnorm'),
+        # que es elegible y va en el propio filtergraph (sin pasada de analisis previa, que solo hace
+        # falta con 'peak'); asi el E2E ejercita el camino real de serie. syncAdelay ya es true.
         $cfg['test']['betaOnePass'] = $true
     }
     Save-CvConfigFile -Path (Join-Path $tempRoot 'config.json') -Config $cfg

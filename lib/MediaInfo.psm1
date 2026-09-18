@@ -336,6 +336,29 @@ function Get-MediaDuration {
     return 0.0
 }
 
+function Get-CvFrameRate {
+    <#
+        PURO. Fps de una pista de video como [double] (0 si no se puede saber). Prefiere 'avg_frame_rate'
+        (media real del fichero) y cae a 'r_frame_rate' cuando el primero viene a 0 (ffprobe escribe
+        '0/0' en contenedores que no lo traen). El valor llega como fraccion ('24000/1001'), asi que se
+        divide en INVARIANTE: ni el texto ni el resultado pasan por el locale (ver docs\ref-gotchas.md).
+    #>
+    param($Stream)
+    if (-not $Stream) { return 0.0 }
+    $rate = if ($Stream.PSObject.Properties['avg_frame_rate'] -and "$($Stream.avg_frame_rate)" -notmatch '^0') { "$($Stream.avg_frame_rate)" } else { "$($Stream.r_frame_rate)" }
+    if ($rate -match '^(\d+)/(\d+)$' -and [int]$Matches[2] -ne 0) { return ([double]$Matches[1] / [double]$Matches[2]) }
+    $d = ConvertTo-InvDouble $rate
+    if ($null -ne $d -and $d -gt 0) { return [double]$d }
+    return 0.0
+}
+
+function Get-CvMediaFps {
+    <# Fps de la PRIMERA pista de video real del fichero (Get-CvFrameRate), 0 si no hay o no se sabe. #>
+    param([Parameter(Mandatory)]$Info)
+    $v = @(Get-VideoStreams -Info $Info) | Select-Object -First 1
+    return (Get-CvFrameRate $v)
+}
+
 function Get-SubtitleStreamPos {
     <#
         Posicion 0-based de una pista (por su indice absoluto) entre TODAS las de subtitulo,
@@ -381,7 +404,23 @@ function Get-CvSubtitleCueCount {
         '-v','error','-select_streams',"$Index",'-count_packets',
         '-show_entries','stream=nb_read_packets','-of','default=nw=1:nk=1', $File
     ) -Context $Context
-    if ([int]::TryParse("$($r.StdOut)".Trim(), [ref]$n)) { return $n }
+    return (ConvertTo-CvCueCount "$($r.StdOut)")
+}
+
+function ConvertTo-CvCueCount {
+    <#
+        PURO. Interpreta la salida de ffprobe '-count_packets -show_entries stream=nb_read_packets':
+          '1082' -> 1082
+          'N/A'  -> 0    (ffprobe YA demultiplexo el fichero entero y no encontro NI UN paquete: la
+                          pista esta VACIA; no se pone nb_read_packets, escribe 'N/A'. Es un CERO
+                          conocido, no un "no se sabe" -> ver Test-CvSubtitleEmpty)
+          ''/otro -> -1  (desconocido de verdad: ffprobe fallo o no devolvio nada)
+    #>
+    param([string]$Text)
+    $t = "$Text".Trim()
+    $n = 0
+    if ([int]::TryParse($t, [ref]$n)) { return $n }
+    if ($t -match '(?i)^n/?a$') { return 0 }
     return -1
 }
 
@@ -429,8 +468,8 @@ function Write-SourceSummary {
     if ($vids.Count -eq 0) { $lines += '  (ninguna)' }
     foreach ($v in $vids) {
         $fps = ''
-        $rate = if ($v.PSObject.Properties['avg_frame_rate'] -and $v.avg_frame_rate -notmatch '^0') { $v.avg_frame_rate } else { $v.r_frame_rate }
-        if ("$rate" -match '^(\d+)/(\d+)$' -and [int]$Matches[2] -ne 0) { $fps = "  {0:0.##} fps" -f ([double]$Matches[1] / [int]$Matches[2]) }
+        $rate = Get-CvFrameRate $v   # fuente unica del fps de una pista (0 = desconocido)
+        if ($rate -gt 0) { $fps = "  {0:0.##} fps" -f $rate }
         $lines += ("  [{0}] {1}  {2}x{3}{4}" -f [int]$v.index, $v.codec_name, [int]$v.width, [int]$v.height, $fps)
     }
 

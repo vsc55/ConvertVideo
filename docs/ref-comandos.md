@@ -141,14 +141,14 @@ ffmpeg -hide_banner -y -threads <N> -i <fuente> <VOLUMEN> -c:a <codec> [-aac_cod
 
 `<codec>` = `audioCodec` del perfil (`aac` por defecto; también `ac3`/`eac3`/`libmp3lame`/`flac`/`libopus`). `-aac_coder twoloop` **solo** con AAC; `-b:a` se omite en FLAC (sin pérdida); Opus fuerza `-ar 48000`. El temporal es `.m4a` para AAC y `.mka` (Matroska) para el resto. `<canales>` = `encode.audio.channels` (2 por defecto; 6 = 5.1, 8 = 7.1; downmix si la fuente tiene más). La parte `<VOLUMEN>` depende de `encode.audio.volume.method` (`$ctx.VolumeMethod`). Formatos soportados, especificaciones y el flujo del builder en [explica-audio.md](explica-audio.md):
 
-### peak (por defecto)
+### peak (LEGACY)
 Mide el pico y lo sube hasta el objetivo `encode.audio.volume.peakTarget` (0 dBFS por defecto; `-1` deja *headroom* contra el clipping inter-sample del AAC) con el filtro `volume`:
 ```
 -filter_complex "[<label>]volume=<gain>dB:precision=fixed[a]" -map "[a]"
 ```
 `<gain> = peakTarget - max_volume` (redondeado). Solo **amplifica**: si el pico ya alcanza o supera el objetivo, no se aplica filtro (no atenúa).
 
-### loudnorm (EBU R128)
+### loudnorm (EBU R128, por defecto)
 Normalización de sonoridad con `I`/`TP`/`LRA` de `config.encode.audio.volume.loudnorm`:
 ```
 -filter_complex "[<label>]loudnorm=I=<I>:TP=<TP>:LRA=<LRA>[a]" -map "[a]"

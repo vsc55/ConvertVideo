@@ -85,15 +85,20 @@ function Get-CvDownmixPan {
 function Resolve-CvVolumeMethod {
     <#
         Metodo de volumen final: si -Method no es valido (Get-CvVolumeMethods) cae al default de config
-        (encode.audio.volume.method). 'aacgain' solo aplica a AAC (ReplayGain sobre .m4a): con otro codec cae a
-        'peak' (filtro valido para cualquiera). Devuelve {Method; AacgainDowngraded} (=$true si se
-        cambio aacgain->peak por el codec, para avisar en el worker).
+        (encode.audio.volume.method). 'aacgain' solo aplica a AAC (ReplayGain sobre .m4a): con otro codec
+        cae TAMBIEN al default de config ('loudnorm', filtro valido para cualquier codec; antes caia al
+        fijo 'peak', hoy LEGACY). Devuelve {Method; AacgainDowngraded} (=$true si se cambio aacgain por
+        el codec, para avisar en el worker).
     #>
     param([string]$Method, [string]$Codec)
+    $def = "$((Get-CvConfigDefaults).encode.audio.volume.method)"
+    # Destino del degradado de aacgain: el default de config, salvo que el propio default fuera
+    # 'aacgain' (se caeria sobre si mismo) -> el 1o del catalogo, que nunca es aacgain.
+    $fb = if ($def -eq 'aacgain') { (Get-CvVolumeMethodValues)[0] } else { $def }
     $m = "$Method".ToLower()
-    if ($m -notin (Get-CvVolumeMethods)) { $m = "$((Get-CvConfigDefaults).encode.audio.volume.method)" }
+    if ($m -notin (Get-CvVolumeMethodValues)) { $m = $def }
     $downgraded = $false
-    if ($m -eq 'aacgain' -and "$Codec".ToLower() -ne 'aac') { $m = 'peak'; $downgraded = $true }
+    if ($m -eq 'aacgain' -and "$Codec".ToLower() -ne 'aac') { $m = $fb; $downgraded = $true }
     [pscustomobject]@{
         Method            = $m
         AacgainDowngraded = $downgraded
@@ -793,7 +798,7 @@ function Invoke-AudioRun {
     # Metodo de volumen (invalido->default; aacgain->peak si el codec no es AAC): Resolve-CvVolumeMethod.
     $vm     = Resolve-CvVolumeMethod -Method $Context.VolumeMethod -Codec $codec
     $method = $vm.Method
-    if ($vm.AacgainDowngraded) { Write-CvInfoStep $Context 'AUDIO' ("Volumen: aacgain no aplica a {0}; se usa 'peak'" -f $codec) }
+    if ($vm.AacgainDowngraded) { Write-CvInfoStep $Context 'AUDIO' ("Volumen: aacgain no aplica a {0}; se usa '{1}'" -f $codec, $vm.Method) }
 
     # Filtro principal de VOLUMEN (se encadenara con $syncFilter en una sola cadena de filtros).
     $mainFilter = ''

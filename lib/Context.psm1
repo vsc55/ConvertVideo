@@ -5,7 +5,7 @@
 
 function Get-CvVersion {
     <# Version del proyecto (fuente unica; la usan Convert.ps1 y setup.ps1). #>
-    '4.5.4'
+    '4.5.5'
 }
 
 function Get-CvAppName {
@@ -252,6 +252,8 @@ function New-CvContext {
         # Idioma por defecto del fallback de subtitulos (encode.subtitles.defaultLang); '' = mantener el
         # del subtitulo elegido. En minusculas.
         SubtitlesDefaultLang = "$(if ($cfg.encode.subtitles) { $cfg.encode.subtitles.defaultLang })".ToLower()
+        # Descartar al preparar las pistas de subtitulo vacias (encode.subtitles.dropEmpty).
+        SubtitlesDropEmpty = [bool]$cfg.encode.subtitles.dropEmpty
         # log: transcript de la ejecucion a logs\; el marcador 'no_log' lo desactiva.
         Log            = ([bool]$cfg.behavior.log -and -not (Test-Path (Join-Path $Root 'no_log')))
         # Postproceso: limpiar las etiquetas DURATION del MKV con mkvpropedit.

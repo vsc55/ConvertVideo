@@ -38,8 +38,8 @@ Esquema completo (tras la fusión con los defaults):
                               "tuning": { "presetNvenc": "slow", "presetX26x": "slow", "presetSvtav1": "6", "presetAv1Nvenc": "p6", "rcLookahead": 32, "refs": 4, "tier": "high" },
                               "border": { "start": 120, "duration": 120, "samples": 6, "autoAcceptPct": 60, "autoAcceptMinMargin": 2, "autoSamples": 3, "autoDuration": 5, "minCropPct": 2 } },
                    "audio": { "hz": 44100, "channels": 2, "encoder": "aac_coder", "codec": "aac", "bitrate": "192k", "downmixMode": "default", "downmixCoeffs": { "center": 0.5, "front": 0.35, "surround": 0.15 }, "syncAdelay": true, "multiAudio": true, "keepTitle": false, "syncThreshold": 2.0, "aacCoder": "twoloop",
-                              "volume": { "method": "peak", "peakTarget": 0, "loudnorm": { "I": -16, "TP": -1.5, "LRA": 11 } } },
-                   "subtitles": { "toSrt": ["webvtt"], "defaultLang": "" } } },
+                              "volume": { "method": "loudnorm", "peakTarget": 0, "loudnorm": { "I": -16, "TP": -1.5, "LRA": 11 } } },
+                   "subtitles": { "toSrt": ["webvtt"], "defaultLang": "", "dropEmpty": true } } },
   "customProfile": { "videoEncoder": "hevc_nvenc", "videoProfile": "main10", "videoLevel": "5.0", "qmin": 1, "qmax": 23, "crf": 21, "multipass": "off", "audioCodec": "aac", "audioBitrate": "192k" },
   "preview":     { "start": 0, "seconds": 0, "syncSeconds": 0, "subtitleEditor": "start", "subtitleEditorExe": "" },
   "postprocess": { "stripTags": true, "mkvpropedit": "", "attachments": { "keep": false, "fonts": true, "covers": false, "other": false } },
@@ -143,6 +143,7 @@ Las claves de vídeo van bajo **`encode.video`** y las de audio bajo **`encode.a
 | Clave | Default | Qué hace |
 |---|---|---|
 | `subtitles.toSrt` | `["webvtt"]` | **Lista de tipos de subtítulo (por codec) a convertir a SRT.** Un subtítulo **legible** cuyo codec esté en la lista se transcodifica a SubRip (`-c:s srt`) en el mismo comando. El **WEBVTT embebido** que ffmpeg **no puede leer** (el demuxer de Matroska lo marca `none`) se **rescata con `mkvextract`** a un temporal y se convierte a srt en la misma ejecución. Los subtítulos ilegibles **no** cubiertos por la lista (o en contenedor no-MKV) se **ignoran** con `[AVISO]` (copiarlos tumbaría la conversión). Lista **vacía** = no convertir nada. Añade p. ej. `"ass"`, `"mov_text"`. Necesita `mkvextract` (se descarga con mkvtoolnix). Detalle en [ref-gotchas.md](ref-gotchas.md). |
+| `subtitles.dropEmpty` | `true` | **Descarta al preparar las pistas de subtítulo VACÍAS** (sin un solo cue). Se detectan **sin demultiplexar**, por los tags de mkvmerge (`NUMBER_OF_FRAMES = 0` o `DURATION = 00:00:00`); **ante la duda (sin tags) no se descarta nada**. Además de evitar una pista muerta en la salida, impide que la **barra de progreso se congele**: ffmpeg calcula el `out_time` de `-progress` como el **mínimo de todas las pistas de salida**, así que una pista vacía lo deja en `N/A` toda la codificación. `false` = conservarlas. |
 | `subtitles.defaultLang` | `""` | **Idioma por defecto** de la pregunta de idioma del **fallback** de subtítulos (cuando ninguno es del idioma preferido). Con un código (p. ej. `"spa"`), ese es el valor que aplica **ENTER**/timeout: reetiqueta las pistas elegidas sin teclearlo cada vez (útil si siempre vienen mal etiquetadas igual). **`""` (por defecto)** = clásico: ENTER **mantiene** el idioma del subtítulo elegido. Se puede teclear otro código en el momento para sobreescribir. |
 
 Sobre `threads` (uso de CPU):
@@ -211,8 +212,8 @@ Normalización de volumen del audio de salida (ruta completa: **`encode.audio.vo
 
 | Clave | Valores | Uso |
 |---|---|---|
-| `method` | `peak` / `loudnorm` / `aacgain` | Método de normalización (ver "Audio" en [ref-comandos.md](ref-comandos.md)). |
-| `peakTarget` | `0` | Pico objetivo (dBFS) del método `peak`: `0` = máximo sin recorte; `-1` deja margen (*headroom*) contra el clipping inter-sample del AAC. Solo amplifica (si el pico ya supera el objetivo, no atenúa). Se limita a ≤ 0. |
+| `method` | **`loudnorm`** (por defecto) / `peak` (legacy) / `aacgain` | Método de normalización (ver "Audio" en [ref-comandos.md](ref-comandos.md)). **`loudnorm`** (EBU R128) iguala el volumen **percibido** entre archivos: es el recomendado y el **default desde v4.5.5**. **`peak` es LEGACY**: solo iguala el **pico**, así que archivos distintos siguen sonando a volúmenes distintos; se mantiene por compatibilidad y porque es el más rápido. `aacgain` solo aplica a AAC por etapas (con otro códec cae al default). |
+| `peakTarget` | `0` | Pico objetivo (dBFS) del método `peak` (**legacy**): `0` = máximo sin recorte; `-1` deja margen (*headroom*) contra el clipping inter-sample del AAC. Solo amplifica (si el pico ya supera el objetivo, no atenúa). Se limita a ≤ 0. |
 | `loudnorm.I` | ej. `-16` | Integrated loudness (LUFS) — solo `loudnorm`. |
 | `loudnorm.TP` | ej. `-1.5` | True peak (dBTP). |
 | `loudnorm.LRA` | ej. `11` | Loudness range (LU). |

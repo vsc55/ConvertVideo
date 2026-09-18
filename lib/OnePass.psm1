@@ -140,7 +140,9 @@ function Invoke-CvOnePass {
     param(
         [Parameter(Mandatory)]$Context, [Parameter(Mandatory)]$Prof,
         [Parameter(Mandatory)][string]$File, [Parameter(Mandatory)]$Info, [Parameter(Mandatory)]$Job,
-        [double]$Duration = 0
+        [double]$Duration = 0,
+        # Fps de SALIDA (Get-CvOutputFps): red de seguridad del progreso si ffmpeg no da out_time.
+        [double]$Fps = 0
     )
     $name = [System.IO.Path]::GetFileNameWithoutExtension($File)
     $out  = Get-OutputPath $Context $name
@@ -187,7 +189,7 @@ function Invoke-CvOnePass {
 
     $global:CvLastToolError = $null   # el modo progreso lo rellena; se vuelca al log si ffmpeg falla
     if ($Context.Progress -and -not $Context.Debug -and $total -gt 0) {
-        $code = Invoke-ToolProgress -Exe $Context.FFmpeg -Arguments $ff -Context $Context -Label 'Una sola pasada (video+audio)...' -TotalSeconds $total -ShowQ
+        $code = Invoke-ToolProgress -Exe $Context.FFmpeg -Arguments $ff -Context $Context -Label 'Una sola pasada (video+audio)...' -TotalSeconds $total -Fps $Fps -ShowQ
     } else {
         Start-CvStep $Context 'UNA-PASADA' 'Codificando en una sola pasada...'
         $code = Invoke-ToolShow -Exe $Context.FFmpeg -Arguments $ff -Context $Context

@@ -33,12 +33,32 @@ function Merge-CvConfig {
 }
 
 function Get-CvVolumeMethods {
-    <# FUENTE UNICA de los metodos de normalizacion de volumen validos (el 1o es el fallback). #>
+    <#
+        FUENTE UNICA de los metodos de normalizacion de volumen validos (el 1o es el DEFAULT/fallback).
+        Forma @{ Value; Text } como el resto de catalogos: el Text lo muestra el editor de setup.
+        'peak' se mantiene por compatibilidad (LEGACY): iguala el PICO, no el volumen percibido, asi
+        que entre archivos distintos el volumen sigue sonando desigual; 'loudnorm' (EBU R128) es el
+        recomendado y el default desde v4.5.5.
+    #>
     @(
-        'peak'
-        'loudnorm'
-        'aacgain'
+        @{
+            Value = 'loudnorm'
+            Text  = 'Sonoridad EBU R128 (I/TP/LRA): mismo volumen percibido entre archivos (recomendado)'
+        }
+        @{
+            Value = 'peak'
+            Text  = 'LEGACY: amplifica hasta el pico objetivo (peakTarget); rapido, pero no iguala el volumen percibido'
+        }
+        @{
+            Value = 'aacgain'
+            Text  = 'ReplayGain sobre el .m4a ya codificado (sin recodificar); solo AAC y solo por etapas'
+        }
     )
+}
+
+function Get-CvVolumeMethodValues {
+    <# Solo los VALORES de Get-CvVolumeMethods (para validar y para los textos de ayuda). #>
+    @(Get-CvVolumeMethods | ForEach-Object { $_.Value })
 }
 
 function Get-CvTonemapCurves {
@@ -401,10 +421,14 @@ function Get-CvConfigDefaults {
                 keepTitle     = $false
                 syncThreshold = 2.0
                 aacCoder      = 'twoloop'   # coder del encoder AAC nativo (twoloop = mayor calidad)
-                # volume: normalizacion de volumen. peakTarget = pico objetivo dBFS del metodo 'peak'
-                # (0 = maximo sin recorte; -1 deja headroom contra el clipping inter-sample del AAC).
+                # volume: normalizacion de volumen (metodos y textos en Get-CvVolumeMethods).
+                #   method = 'loudnorm' (por defecto desde v4.5.5): sonoridad EBU R128, iguala el
+                #     volumen PERCIBIDO entre archivos. 'peak' es LEGACY (solo iguala el pico) y
+                #     'aacgain' solo aplica a AAC por etapas.
+                #   peakTarget = pico objetivo dBFS del metodo 'peak' (0 = maximo sin recorte; -1 deja
+                #     headroom contra el clipping inter-sample del AAC).
                 volume = [ordered]@{
-                    method     = 'peak'
+                    method     = 'loudnorm'
                     peakTarget = 0
                     loudnorm   = [ordered]@{
                         I   = -16
@@ -423,9 +447,16 @@ function Get-CvConfigDefaults {
             # idioma del subtitulo elegido. Con un codigo (p. ej. 'spa') = ese es el default: ENTER/timeout
             # reetiqueta a ese idioma sin tener que teclearlo cada vez (util cuando siempre vienen mal
             # etiquetados igual). Se puede teclear otro codigo en el momento para sobreescribirlo.
+            # subtitles.dropEmpty: descarta al PREPARAR las pistas de subtitulo VACIAS (sin un solo cue;
+            # se detecta por los tags de mkvmerge, sin demultiplexar: ver Test-CvSubtitleEmpty). Ademas
+            # de no meter en el MKV final una pista que no muestra nada, evita que la barra de progreso
+            # se congele: ffmpeg calcula el 'out_time' del '-progress' como el MINIMO de todas las pistas
+            # de salida, asi que una pista vacia lo deja en 'N/A' durante toda la codificacion. false =
+            # conservarlas (comportamiento anterior).
             subtitles = [ordered]@{
                 toSrt       = @('webvtt')
                 defaultLang = ''
+                dropEmpty   = $true
             }
         }
         # customProfile: valores por DEFECTO del constructor de perfil CUSTOM interactivo (opcion 0
@@ -682,6 +713,7 @@ function Get-CvConfigHelp {
         'encode/audio/aacCoder'       = 'Coder del encoder AAC nativo (twoloop = mayor calidad)'
         'encode/subtitles/toSrt'      = 'Tipos de subtitulo (por codec) a convertir a SRT (p.ej. webvtt); el WEBVTT ilegible se rescata con mkvextract. Vacio = no convertir'
         'encode/subtitles/defaultLang' = 'Idioma por defecto de la pregunta de idioma del fallback de subtitulos (ENTER lo usa). Vacio = mantener el del subtitulo elegido'
+        'encode/subtitles/dropEmpty'  = 'Descartar las pistas de subtitulo VACIAS (sin cues); evitan una pista muerta en la salida y que se congele la barra de progreso'
 
         'customProfile'             = 'Valores por defecto del constructor de perfil CUSTOM (opcion 0 de USAR PERFIL); mismos campos que un profiles[]'
         'customProfile/videoEncoder'= 'Codec de video: libx264|h264_nvenc|libx265|hevc_nvenc|libsvtav1|av1_nvenc|copy|auto'
@@ -725,8 +757,8 @@ function Get-CvConfigHelp {
         'preview/subtitleEditorExe' = "Ruta al .exe para el modo 'external' de subtitleEditor (p. ej. Subtitle Edit, VS Code); ignorado en 'start'/'win'"
 
         'encode/audio/volume'             = 'Normalizacion de volumen del audio'
-        'encode/audio/volume/method'      = ('Metodo: {0}' -f ((Get-CvVolumeMethods) -join ' | '))
-        'encode/audio/volume/peakTarget'  = "Pico objetivo dBFS de 'peak' (0 = maximo; -1 deja headroom)"
+        'encode/audio/volume/method'      = ('Metodo: {0} (peak = legacy)' -f ((Get-CvVolumeMethodValues) -join ' | '))
+        'encode/audio/volume/peakTarget'  = "Pico objetivo dBFS de 'peak' (LEGACY; 0 = maximo; -1 deja headroom)"
         'encode/audio/volume/loudnorm'    = 'Parametros EBU R128 del metodo loudnorm'
         'encode/audio/volume/loudnorm/I'  = 'Loudness integrada objetivo (LUFS), ej -16'
         'encode/audio/volume/loudnorm/TP' = 'True Peak maximo (dBTP), ej -1.5'

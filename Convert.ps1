@@ -508,7 +508,7 @@ while ($didAny) {
             $onePass = Test-CvOnePassEligible -Context $jctx -Job $job -Prof $prof
             if ($onePass.Ok) {
                 Write-CvInfoStep $jctx 'WORKER' 'Modo una sola pasada [beta] (audio + video + multiplexado en un ffmpeg)'
-                $ok = Invoke-CvOnePass -Context $jctx -Prof $prof -File $f.FullName -Info $info -Job $job -Duration (Get-MediaDuration $info)
+                $ok = Invoke-CvOnePass -Context $jctx -Prof $prof -File $f.FullName -Info $info -Job $job -Duration (Get-MediaDuration $info) -Fps (Get-CvOutputFps -Context $jctx -Info $info)
                 if (-not $ok) { $failReason = 'fallo en la ejecucion unica' }
             }
             else {
@@ -558,7 +558,7 @@ while ($didAny) {
             # campo -> -1, y tanto Invoke-VideoRun como Invoke-Multiplex caen a '0:v:0' como antes.
             $vIdx = if ($null -ne $job.video.index) { [int]$job.video.index } else { -1 }
             if ($job.video.skip) { if ($jctx.Debug) { Write-CvLog 'VIDEO' '[SKIP] - se omite (copy)' } else { Write-Host ' - Video (copy)' } }
-            else { $videoOk = Invoke-VideoRun -Context $jctx -Prof $prof -File $f.FullName -Crop $job.video.crop -Resize $job.video.resize -Anim ([bool]$job.video.anim) -Index $vIdx -Hdr ([bool]$job.video.hdr) -Duration (Get-MediaDuration $info) }
+            else { $videoOk = Invoke-VideoRun -Context $jctx -Prof $prof -File $f.FullName -Crop $job.video.crop -Resize $job.video.resize -Anim ([bool]$job.video.anim) -Index $vIdx -Hdr ([bool]$job.video.hdr) -Duration (Get-MediaDuration $info) -Fps (Get-CvOutputFps -Context $jctx -Info $info) }
 
             # ---------- MULTIPLEX ----------
             if ((-not $audioOk) -or (-not $videoOk)) {

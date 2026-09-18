@@ -90,6 +90,28 @@ function Test-SubForced {
     return $false
 }
 
+function Test-CvSubtitleEmpty {
+    <#
+        PURO. $true si la pista de subtitulo esta VACIA (ni un solo cue), decidido SIN demultiplexar:
+        con los tags de estadisticas que escribe mkvmerge y con el nº de cues ya contado, si se tiene
+        (-Cues; -1 = desconocido, el valor por defecto).
+          1) -Cues >= 0 manda (es un conteo real, Get-CvSubtitleCueCount).
+          2) NUMBER_OF_FRAMES = 0 -> vacia.
+          3) DURATION = 00:00:00(.000...) -> vacia (caso real: pistas residuales de un remux).
+        Ante la duda (sin tags y sin conteo) devuelve $false: NUNCA se descarta una pista por no saber.
+
+        Importa porque una pista vacia MAPEADA a la salida deja el '-progress' de ffmpeg en
+        'out_time_us=N/A' TODA la ejecucion (out_time es el minimo de todas las pistas de salida) y la
+        barra de progreso se queda congelada en 0%; ademas escribiria en el MKV final una pista que no
+        muestra nada. Ver Resolve-CvProgressSeconds (la red de seguridad del otro lado).
+    #>
+    param([Parameter(Mandatory)]$Stream, [int]$Cues = -1)
+    if ($Cues -ge 0) { return ($Cues -eq 0) }
+    $n = 0
+    if ([int]::TryParse("$(Get-Tag $Stream 'NUMBER_OF_FRAMES')".Trim(), [ref]$n)) { return ($n -eq 0) }
+    return ("$(Get-Tag $Stream 'DURATION')".Trim() -match '^0+:0+:0+(\.0+)?$')
+}
+
 function Test-SubDefault {
     <# Lee el flag 'default' (pista predefinida) original del subtitulo. #>
     param([Parameter(Mandatory)]$Stream)
@@ -145,7 +167,9 @@ function Split-CvSubtitlesByRole {
         if ($known.Count -ge 1) {
             $max = ($known | Measure-Object -Maximum).Maximum
             if ($max -gt 0) {
-                $f = @($pref | Where-Object { $counts[[int]$_.index] -ge 0 -and $counts[[int]$_.index] -lt ($max * 0.5) })
+                # > 0, no >= 0: una pista de 0 cues (vacia) no es un "forzado pequeño"; se deja como
+                # completa para que no herede default+forced (normalmente ya la filtro Select-Subtitles).
+                $f = @($pref | Where-Object { $counts[[int]$_.index] -gt 0 -and $counts[[int]$_.index] -lt ($max * 0.5) })
                 return @{
                     Forced   = $f
                     Complete = @($pref | Where-Object { $f -notcontains $_ })
@@ -398,14 +422,21 @@ function Select-Subtitles {
     $actions = @{}
     $subs    = @()
     $discard = 0
+    $empty   = 0
     foreach ($s in @(Get-SubtitleStreams -Info $Info)) {
         $act = Resolve-CvSubtitleAction -Context $Context -Info $Info -Stream $s
         if ($act -eq 'discard') { $discard++; continue }
+        # Pistas VACIAS (sin un solo cue, Test-CvSubtitleEmpty): no aportan nada a la salida y ademas
+        # congelan la barra de progreso de ffmpeg. Se ignoran si encode.subtitles.dropEmpty.
+        if ($Context.SubtitlesDropEmpty -and (Test-CvSubtitleEmpty -Stream $s)) { $empty++; continue }
         $actions[[int]$s.index] = $act
         $subs += $s
     }
     if ($discard -gt 0) {
         Write-CvLog 'SUB' ("[AVISO] - {0} subtitulo(s) con codec ilegible se ignoran (no se pueden copiar; p.ej. WEBVTT sin 'webvtt' en encode.subtitles.toSrt, o contenedor no-MKV)." -f $discard) -Indent 3
+    }
+    if ($empty -gt 0) {
+        Write-CvLog 'SUB' ("[AVISO] - {0} subtitulo(s) VACIOS (sin cues) se ignoran; desactivable con encode.subtitles.dropEmpty." -f $empty) -Indent 3
     }
     if ($subs.Count -eq 0) { if ($Context.Debug) { Write-CvLog 'SUB' '[INFO] - El archivo no tiene subtitulos utilizables' }; return @() }
 

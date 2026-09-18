@@ -664,6 +664,23 @@ function Get-CvVideoFilterChain {
     return ,$vf
 }
 
+function Get-CvOutputFps {
+    <#
+        Fps que tendra la SALIDA: el forzado por config ('-r encode.video.fps') si encode.video.forceFps,
+        o el del ORIGEN si no (sin '-r' ffmpeg conserva el del fichero). Devuelve [double] (0 = no se
+        sabe). Lo usa la linea de progreso para estimar el avance por frames cuando ffmpeg no da
+        out_time (ver Resolve-CvProgressSeconds), asi que tiene que ser el fps de SALIDA: 'frame=' del
+        '-progress' cuenta frames YA codificados, no los leidos del origen.
+    #>
+    param([Parameter(Mandatory)]$Context, $Info = $null)
+    if ($Context.ForceFps) {
+        $f = ConvertTo-InvDouble "$($Context.Fps)"   # config: '23.976' (invariante, nunca coma)
+        if ($null -ne $f -and $f -gt 0) { return [double]$f }
+    }
+    if ($null -ne $Info) { return (Get-CvMediaFps -Info $Info) }
+    return 0.0
+}
+
 function Get-CvVideoRunArgs {
     <#
         Construye (PURO: sin ejecutar ni tocar disco) el array de argumentos ffmpeg de la codificacion de
@@ -703,7 +720,9 @@ function Invoke-VideoRun {
         [Parameter(Mandatory)][string]$File,
         [string]$Crop = '', [string]$Resize = '', [bool]$Anim = $false, [int]$Index = -1, [bool]$Hdr = $false,
         # Duracion del video en segundos (para el % y ETA del progreso). 0 = desconocida (sin %/ETA).
-        [double]$Duration = 0
+        [double]$Duration = 0,
+        # Fps de SALIDA (Get-CvOutputFps): red de seguridad del progreso si ffmpeg no da out_time.
+        [double]$Fps = 0
     )
     $name = [System.IO.Path]::GetFileNameWithoutExtension($File)
     $outTmp = (Get-CvTempPaths -Context $Context -Name $name).Video
@@ -727,7 +746,7 @@ function Invoke-VideoRun {
     $global:CvLastToolError = $null   # el modo progreso lo rellena; se vuelca al log si ffmpeg falla
     if ($Context.Progress -and -not $Context.Debug -and $Duration -gt 0) {
         $total = if ($Context.TestLimit -gt 0) { [math]::Min([double]$Duration, [double]$Context.TestLimit) } else { [double]$Duration }
-        $code = Invoke-ToolProgress -Exe $Context.FFmpeg -Arguments $ffArgs -Context $Context -Label 'Procesando Video...' -TotalSeconds $total -ShowQ
+        $code = Invoke-ToolProgress -Exe $Context.FFmpeg -Arguments $ffArgs -Context $Context -Label 'Procesando Video...' -TotalSeconds $total -Fps $Fps -ShowQ
     } else {
         Start-CvStep $Context 'VIDEO' 'Procesando Video...'
         $code = Invoke-ToolShow -Exe $Context.FFmpeg -Arguments $ffArgs -Context $Context
