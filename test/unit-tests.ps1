@@ -90,6 +90,17 @@ Assert-Eq 'negativo se recorta a 0'   0 (BarFull (Get-CvProgressBar -Percent -5)
 Assert-Eq 'width 0 -> vacia'         ''  (Get-CvProgressBar -Percent 50 -Width 0)
 Assert-Eq 'width 10, 30% -> len 10'  10 (Get-CvProgressBar -Percent 30 -Width 10).Length
 Assert-Eq 'width 10, 30% -> 3 llenos' 3 (BarFull (Get-CvProgressBar -Percent 30 -Width 10))
+# Los caracteres de la barra salen de su fuente unica y se construyen con [char]0xNNNN (nunca
+# literales en el .psm1: UTF-8 sin BOM + PS 5.1 = ANSI -> se corrompen; ver ref-gotchas.md).
+$barCh = Get-CvProgressBarChars
+Assert-Eq 'barra: caracter lleno' ([string]([char]0x2588)) $barCh.Full
+Assert-Eq 'barra: caracter vacio' ([string]([char]0x2591)) $barCh.Empty
+Assert-True 'barra usa esos caracteres' ((Get-CvProgressBar -Percent 50 -Width 4) -eq (($barCh.Full) * 2 + ($barCh.Empty) * 2))
+# La linea VIVA de progreso NO debe pasar por el host: si lo hiciera, el transcript de la sesion se
+# llenaria con cada repintado (llego a ser el 82% de un log). Se comprueba que no emite Information.
+$progRecs = @(Write-CvProgressLine -Text ' - Paso...' -PrevLen 0 6>&1 | Where-Object { $_ -is [System.Management.Automation.InformationRecord] })
+Assert-Eq 'progreso no pasa por el host' 0 $progRecs.Count
+Assert-Eq 'progreso devuelve la longitud' 10 (Write-CvProgressLine -Text ' - Paso...' -PrevLen 0)
 
 # ================================================================================================
 # Avance y velocidad de la linea de progreso: con el out_time de ffmpeg o, si lo da como 'N/A'
@@ -256,6 +267,30 @@ Assert-True 'help debug/enabled'         ((Get-CvConfigHelp).Contains('debug/ena
 Assert-True 'help debug/pausePerCommand' ((Get-CvConfigHelp).Contains('debug/pausePerCommand'))
 Assert-Eq 'behavior.debug ya no existe' $null (Get-CvConfigDefaultValue 'behavior/debug')
 Assert-Eq 'ruta inexistente -> null'    $null (Get-CvConfigDefaultValue 'no/existe/aqui')
+# Un default que es una LISTA debe llegar como lista, tambien con UN solo elemento: sin la coma
+# unaria PowerShell lo desenvolvia a escalar y toda lista de 1 elemento parecia editada en el editor.
+# OJO: se asigna a una variable, SIN envolver en @(). La funcion devuelve con coma unaria, asi que
+# un @() al llamar crearia un array ANIDADO y el recuento saldria 1 siempre (ver ref-gotchas.md).
+$dVerArgs = Get-CvConfigDefaultValue 'downloads/ffmpeg/versionArgs'
+$dFiles   = Get-CvConfigDefaultValue 'downloads/ffmpeg/files'
+Assert-Eq 'default lista 1 elem'  1 $dVerArgs.Count
+Assert-Eq 'default lista 1 valor' '-version' $dVerArgs[0]
+Assert-Eq 'default lista n elem'  3 $dFiles.Count
+Assert-Eq 'default lista n 1er'   'ffmpeg.exe' $dFiles[0]
+Assert-Eq 'default escalar igual' 'zip' (Get-CvConfigDefaultValue 'downloads/ffmpeg/type')
+
+# Test-CvCfgIsDefault: la MISMA regla que decide si una clave se escribe en config.json o se borra,
+# y la que usa el editor en ventana para resaltar lo editado.
+Assert-True 'IsDefault escalar igual'   (Test-CvCfgIsDefault -Value 'zip' -Default 'zip')
+Assert-Eq   'IsDefault escalar distinto' $false (Test-CvCfgIsDefault -Value '7z' -Default 'zip')
+Assert-True 'IsDefault numero igual'    (Test-CvCfgIsDefault -Value 2 -Default 2)
+Assert-True 'IsDefault bool igual'      (Test-CvCfgIsDefault -Value $true -Default $true)
+Assert-Eq   'IsDefault bool distinto'   $false (Test-CvCfgIsDefault -Value $false -Default $true)
+Assert-True 'IsDefault lista igual'     (Test-CvCfgIsDefault -Value @('a','b') -Default @('a','b'))
+Assert-Eq   'IsDefault lista orden'     $false (Test-CvCfgIsDefault -Value @('b','a') -Default @('a','b'))
+Assert-True 'IsDefault lista 1 elem'    (Test-CvCfgIsDefault -Value @('-version') -Default (Get-CvConfigDefaultValue 'downloads/ffmpeg/versionArgs'))
+Assert-Eq   'IsDefault sin default'     $false (Test-CvCfgIsDefault -Value 'algo' -Default $null)
+Assert-True 'IsDefault null vs null'    (Test-CvCfgIsDefault -Value $null -Default $null)
 
 # ================================================================================================
 Write-Host "`nMetodos de volumen y coeficientes (Config)" -ForegroundColor Cyan
@@ -338,7 +373,7 @@ Assert-Eq   'all sin duplicados'       $all.Count ($all | Select-Object -Unique)
 # ================================================================================================
 Write-Host "`nFuentes unicas (Context / Profile)" -ForegroundColor Cyan
 Assert-Eq 'Get-CvAppName' 'ConvertVideo' (Get-CvAppName)
-Assert-Eq 'Get-CvVersion' '4.5.5'        (Get-CvVersion)
+Assert-Eq 'Get-CvVersion' '4.6.0'        (Get-CvVersion)
 Assert-Eq 'perfiles de serie = 13' 13 ((Get-CvProfiles | ForEach-Object { $_.Profiles } | Measure-Object).Count)
 # Los perfiles de serie con changeSize '1920:-2' (RESIZE fijo) deben ser solo-reduce (NoUpscale).
 $rzProfs = @(Get-CvProfiles | ForEach-Object { $_.Profiles } | Where-Object { "$($_.ChangeSize)" -ne '' })

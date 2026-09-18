@@ -18,7 +18,18 @@
 param(
     # Fichero de configuracion a editar/gestionar (por defecto config.json junto al programa).
     # Admite ruta absoluta o relativa al directorio actual.
-    [string]$Config = ''
+    [string]$Config = '',
+    # Modo NO INTERACTIVO: ejecuta UNA accion y sale, en vez de abrir el menu. Lo usa la ventana
+    # (setup-gui.ps1) para las acciones LARGAS -instalar una herramienta, lanzar una bateria-, que
+    # se lanzan en su propia consola para ver el progreso en vivo sin bloquear la ventana; tambien
+    # sirve para automatizar setup desde un .cmd o CI.
+    #   -Task install -App ffmpeg -Version 7.1.1 [-SetDefault]
+    #   -Task tests   -Suite unit|features
+    [ValidateSet('', 'install', 'tests')][string]$Task = '',
+    [string]$App = '',          # -Task install: app del catalogo 'downloads'
+    [string]$Version = '',      # -Task install: version a instalar
+    [switch]$SetDefault,        # -Task install: fijar esa version como 'selected' (sin preguntar)
+    [string]$Suite = ''         # -Task tests: clave de la bateria (Get-CvSetupTestSuites)
 )
 
 $ErrorActionPreference = 'Stop'
@@ -39,6 +50,7 @@ $modules = @(
     'Tools'
     'Profile'
     'ConfigEditor'
+    'SetupCore'
 )
 foreach ($m in $modules) {
     Import-Module (Join-Path $Lib ("{0}.psm1" -f $m)) -Force
@@ -89,100 +101,74 @@ function Clear-Logs {
 # ===========================================================================
 #  Pruebas (baterias de test\)
 # ===========================================================================
-function Invoke-TestScript {
-    # Lanza un script de test (test\*.ps1) como PROCESO HIJO (no dot-source: termina con 'exit 0/1'
-    # y en el mismo proceso cerraria setup). El codigo de salida del hijo queda en $LASTEXITCODE.
-    param([Parameter(Mandatory)][string]$File, [Parameter(Mandatory)][string]$Label, [string]$Info = '')
+function Invoke-TestSuite {
+    # Lanza una bateria del catalogo (Get-CvSetupTestSuites) como PROCESO HIJO (no dot-source: termina
+    # con 'exit 0/1' y en el mismo proceso cerraria setup). El codigo de salida queda en $LASTEXITCODE.
+    param([Parameter(Mandatory)][string]$Suite)
     Clear-Host
-    $script = Join-Path $Root $File
+    $s = Get-CvSetupTestSuite -Suite $Suite
+    if (-not $s) { Write-CvLog 'SETUP' ("Bateria desconocida: {0}" -f $Suite); Wait-Setup; return }
+    $script = Join-Path $Root $s.File
     if (-not (Test-Path -LiteralPath $script)) {
-        Write-CvLog 'SETUP' ("No se encuentra {0} (no incluido en este paquete)." -f $File)
+        Write-CvLog 'SETUP' ("No se encuentra {0} (no incluido en este paquete)." -f $s.File)
         Wait-Setup; return
     }
-    Write-CvLog 'SETUP' ("Ejecutando {0}{1}..." -f $Label, $(if ($Info) { " ($Info)" } else { '' }))
+    Write-CvLog 'SETUP' ("Ejecutando {0}{1}..." -f $s.Text, $(if ($s.Info) { " ($($s.Info))" } else { '' }))
     Write-Host ''
-    & powershell -NoProfile -ExecutionPolicy Bypass -File $script
+    # -Sta: powershell.exe ya lo es por defecto, pero se fija explicito porque la bateria de setup
+    # abre ventanas WinForms (que exigen STA) y sin el se saltaria esos casos.
+    & powershell -NoProfile -ExecutionPolicy Bypass -Sta -File $script
     $code = $LASTEXITCODE
     Write-Host ''
-    if ($code -eq 0) { Write-CvLog 'SETUP' ("[OK] - {0}: todo en verde." -f $Label) }
-    else             { Write-CvLog 'SETUP' ("[ERROR] - {0}: fallo algun caso (codigo {1})." -f $Label, $code) }
+    if ($code -eq 0) { Write-CvLog 'SETUP' ("[OK] - {0}: todo en verde." -f $s.Text) }
+    else             { Write-CvLog 'SETUP' ("[ERROR] - {0}: fallo algun caso (codigo {1})." -f $s.Text, $code) }
     Wait-Setup
 }
-function Invoke-UnitTests    { Invoke-TestScript -File 'test\unit-tests.ps1'    -Label 'tests unitarios'    -Info 'funciones puras; sin GPU ni ffmpeg, < 1 s' }
-function Invoke-FeatureTests { Invoke-TestScript -File 'test\feature-tests.ps1' -Label 'bateria de features' -Info 'E2E; usa ffmpeg; los casos de GPU se saltan si no hay NVENC' }
 
 # ===========================================================================
 #  Gestion de herramientas (catalogo 'downloads')
 # ===========================================================================
-function Get-AppNames {
-    $apps = $ctx.Downloads
-    if ($apps -is [System.Collections.IDictionary]) { return @($apps.Keys) }
-    if ($apps) { return @($apps.PSObject.Properties.Name) }
-    return @()
-}
+# Los DATOS de cada pantalla salen de lib\SetupCore.psm1 (fuente unica, compartida con la ventana
+# de setup-gui.ps1); aqui solo se RENDERIZAN en consola (marcas, badges, alineacion).
+function Get-AppNames { Get-CvSetupAppNames -Context $ctx }
 function Get-App {
     param([string]$Name)
     Get-CvAppDescriptor -Context $ctx -Name $Name
 }
 function Remove-AppVersion {
-    # Borra la carpeta de una version concreta (tools\<app>\<version>\<plataforma>).
     param([string]$Name, [string]$Version)
-    if ([string]::IsNullOrWhiteSpace($Version)) { return }
-    $dir = Get-CvToolDir -Context $ctx -Name $Name -Version $Version
-    if (Test-Path -LiteralPath $dir) { Remove-Item -Recurse -Force -LiteralPath $dir -ErrorAction SilentlyContinue }
+    Remove-CvSetupAppVersion -Context $ctx -Name $Name -Version $Version
 }
 function Set-AppSelected {
-    # Fija downloads.<app>.selected en config.json (solo el override). Si config.json es
-    # minimo y la app o la seccion no estan, se crean con {selected} (el resto del descriptor
-    # sale de los defaults al fusionar).
     param([string]$Name, [string]$Version)
-    $cfg = Read-CvConfigFile -Path $CfgPath
-    if (-not $cfg.PSObject.Properties['downloads'] -or $null -eq $cfg.downloads) {
-        $cfg | Add-Member -NotePropertyName 'downloads' -NotePropertyValue ([pscustomobject]@{}) -Force
-    }
-    if (-not $cfg.downloads.PSObject.Properties[$Name]) {
-        $cfg.downloads | Add-Member -NotePropertyName $Name -NotePropertyValue ([pscustomobject]@{}) -Force
-    }
-    if ($cfg.downloads.$Name.PSObject.Properties['selected']) { $cfg.downloads.$Name.selected = $Version }
-    else { $cfg.downloads.$Name | Add-Member -NotePropertyName 'selected' -NotePropertyValue $Version -Force }
-    Save-CvConfigFile -Path $CfgPath -Config $cfg
-    return $true
+    Set-CvSetupAppSelected -CfgPath $CfgPath -Name $Name -Version $Version
 }
 function Show-Dirs {
-    # Checklist de las carpetas de trabajo; crea las que falten y pinta su estado.
+    # Checklist de las carpetas de trabajo (Get-CvSetupDirStatus crea las que falten).
     Write-Host ''
     Write-CvLog 'SETUP' 'Directorios de trabajo:'
-    foreach ($d in (Get-CvWorkDirs -Context $ctx)) {
-        $name = Split-Path $d -Leaf
-        if (Test-Path -LiteralPath $d) {
-            Write-CvLog 'SETUP' ("  {0,-12} {1}" -f $name, (Get-CvMark $true))
-        } else {
-            New-Item -ItemType Directory -Path $d -Force | Out-Null
-            Write-CvLog 'SETUP' ("  {0,-12} {1} (creada)" -f $name, (Get-CvMark $true))
-        }
+    foreach ($d in (Get-CvSetupDirStatus -Context $ctx)) {
+        $extra = if ($d.Created) { ' (creada)' } else { '' }
+        Write-CvLog 'SETUP' ("  {0,-12} {1}{2}" -f $d.Name, (Get-CvMark $d.Ok), $extra)
     }
 }
 
 function Show-Status {
     Write-Host ''
     Write-CvLog 'SETUP' 'Estado de las herramientas:'
-    foreach ($n in (Get-AppNames)) {
-        $app = Get-App $n
-        if (-not (Test-CvToolSupported -Context $ctx -Name $n)) {
-            Write-CvLog 'SETUP' ("  {0} {1,-10} [NO SOPORTADO en {2}]    por defecto: {3}" -f (Get-CvMark $false), $n, (Get-CvPlatform), "$($app.selected)")
+    foreach ($t in (Get-CvSetupToolStatus -Context $ctx)) {
+        if (-not $t.Supported) {
+            Write-CvLog 'SETUP' ("  {0} {1,-10} [NO SOPORTADO en {2}]    por defecto: {3}" -f (Get-CvMark $false), $t.Name, $t.Platform, $t.Selected)
             continue
         }
-        $plat = Get-CvAppPlatform -Context $ctx -Name $n
-        $inst = @(Get-CvInstalledVersions -Context $ctx -Name $n)
-        $instTxt = if ($inst.Count) { ($inst -join ', ') } else { 'ninguna' }
+        $instTxt = if (@($t.Installed).Count) { (@($t.Installed) -join ', ') } else { 'ninguna' }
         # Marca: la version 'selected' (la que usa el conversor) esta instalada?
-        $selOk = ($inst -contains "$($app.selected)")
-        Write-CvLog 'SETUP' ("  {0} {1,-10} [{2}] instaladas: {3,-22} por defecto (config): {4}" -f (Get-CvMark $selOk), $n, $plat, $instTxt, "$($app.selected)")
+        Write-CvLog 'SETUP' ("  {0} {1,-10} [{2}] instaladas: {3,-22} por defecto (config): {4}" -f (Get-CvMark $t.SelectedOk), $t.Name, $t.Platform, $instTxt, $t.Selected)
     }
     Write-Host ''
 }
 function Invoke-InstallApp {
-    param([string]$Name, [string]$Version, [switch]$Ask)
+    param([string]$Name, [string]$Version, [switch]$Ask, [switch]$SetDefault)
     if ([string]::IsNullOrWhiteSpace($Version)) { Write-CvLog 'SETUP' ("[ERR] - {0}: version no indicada" -f $Name); return $false }
     if (-not (Test-CvToolSupported -Context $ctx -Name $Name)) {
         Write-CvLog 'SETUP' ("[NO SOPORTADO] - {0} no tiene build para la plataforma de este equipo ({1})." -f $Name, (Get-CvPlatform))
@@ -199,10 +185,7 @@ function Invoke-InstallApp {
     # + verifica) y comprobando NVENC cada una, hasta dar con la primera compatible; esa se fija como
     # predeterminada. Si ninguna es compatible, se avisa (perfil CPU o actualizar driver).
     if ($Name -eq 'ffmpeg' -and -not $nvOk) {
-        $app = Get-App $Name
-        $catalog = @()
-        if ($app.versions -is [System.Collections.IDictionary]) { $catalog = @($app.versions.Keys) }
-        elseif ($app.versions) { $catalog = @($app.versions.PSObject.Properties.Name) }
+        $catalog = @(Get-CvSetupAppVersions -Context $ctx -Name $Name)
         $cands = @(Get-CvNvencFallbackCandidates -Failed $Version -Available $catalog)
         $chosen = ''
         foreach ($cv in $cands) {
@@ -219,11 +202,16 @@ function Invoke-InstallApp {
         return $true
     }
 
-    # -Ask: fijar como version por defecto (solo si es compatible; para ffmpeg incompatible ya se
-    # gestiono arriba con el fallback).
-    if ($Ask -and "$((Get-App $Name).selected)" -ne $Version) {
-        $a = (Read-Host ("   Fijar {0} como version por defecto de {1} en {2}? (S/n)" -f $Version, $Name, $CfgName)).Trim()
-        if ($a -eq '' -or $a -match '^[SsYy]') {
+    # Fijar como version por defecto (solo si es compatible; para ffmpeg incompatible ya se gestiono
+    # arriba con el fallback). -Ask PREGUNTA (menu de consola); -SetDefault lo hace SIN preguntar (lo
+    # usa el modo -Task, donde la ventana ya pregunto por su cuenta).
+    if (($Ask -or $SetDefault) -and "$((Get-App $Name).selected)" -ne $Version) {
+        $yes = $true
+        if ($Ask -and -not $SetDefault) {
+            $a = (Read-Host ("   Fijar {0} como version por defecto de {1} en {2}? (S/n)" -f $Version, $Name, $CfgName)).Trim()
+            $yes = ($a -eq '' -or $a -match '^[SsYy]')
+        }
+        if ($yes) {
             if (Set-AppSelected -Name $Name -Version $Version) { Write-CvLog 'SETUP' ("[OK] - {0}: {1}.selected = {2}" -f $CfgName, $Name, $Version) }
             else { Write-CvLog 'SETUP' ("[AVISO] - No se pudo actualizar {0}." -f $CfgName) }
         }
@@ -258,17 +246,15 @@ function Show-NvencCheck {
 # ===========================================================================
 function Clear-Proceso {
     param([ValidateSet('jobs','locks','temps','all')][string]$What)
-    $proc = $ctx.Proceso
-    if (-not (Test-Path -LiteralPath $proc)) { Write-CvLog 'SETUP' 'No existe la carpeta Proceso.'; return }
-    $patterns = Get-CvProcesoPatterns -What $What   # fuente unica de las convenciones (lib\Job.psm1)
-    $files = @(Get-CvFiles -Dir $proc -Filters $patterns -Exact)
+    if (-not (Test-Path -LiteralPath $ctx.Proceso)) { Write-CvLog 'SETUP' 'No existe la carpeta Proceso.'; return }
+    $files = @(Get-CvSetupCleanTargets -Context $ctx -What $What)   # que se borraria (aun sin borrar)
     if ($files.Count -eq 0) { Write-CvLog 'SETUP' 'Nada que eliminar.'; return }
 
     Write-CvLog 'SETUP' ("Se eliminaran {0} fichero(s):" -f $files.Count)
     $files | ForEach-Object { Write-Host ("   - {0}" -f $_.Name) }
     $a = (Read-Host 'Confirmar borrado? (s/N)').Trim()
     if ($a -match '^[SsYy]') {
-        $files | Remove-Item -Force -ErrorAction SilentlyContinue
+        [void](Remove-CvSetupFiles -Files $files)
         Write-CvLog 'SETUP' '[OK] - Eliminados.'
     } else {
         Write-CvLog 'SETUP' 'Cancelado.'
@@ -304,40 +290,32 @@ function Show-CleanMenu {
 function Show-Identity {
     # Identidad del entorno: version del programa y config.json en uso (por defecto o alterno -Config).
     Write-Host ''
-    Write-CvLog 'SETUP' ("{0} v{1}" -f $ctx.AppName, $ctx.Version)
-    $tag = if (-not [string]::IsNullOrWhiteSpace($Config)) { 'alterno (-Config)' } else { 'por defecto' }
-    $ex  = if (Test-Path -LiteralPath $CfgPath) { '' } else { '  (no existe -> se usan los valores por defecto)' }
-    Write-CvLog 'SETUP' ("  config: {0}  [{1}]{2}" -f $CfgPath, $tag, $ex)
+    $id = Get-CvSetupIdentity -Context $ctx -CfgPath $CfgPath -IsAlt (-not [string]::IsNullOrWhiteSpace($Config))
+    Write-CvLog 'SETUP' ("{0} v{1}" -f $id.AppName, $id.Version)
+    $tag = if ($id.IsAlt) { 'alterno (-Config)' } else { 'por defecto' }
+    $ex  = if ($id.Exists) { '' } else { '  (no existe -> se usan los valores por defecto)' }
+    Write-CvLog 'SETUP' ("  config: {0}  [{1}]{2}" -f $id.CfgPath, $tag, $ex)
 }
 
 function Show-ProcesoStatus {
     # Estado de Proceso\: jobs pendientes, bloqueos (marcando caducados/huerfanos) y temporales.
     Write-Host ''
     Write-CvLog 'SETUP' 'Carpeta Proceso:'
-    $proc = $ctx.Proceso
-    if (-not (Test-Path -LiteralPath $proc)) { Write-CvLog 'SETUP' '  (no existe)'; return }
-    $njob  = @(Get-ChildItem -LiteralPath $proc -Filter '*.job.json' -File -ErrorAction SilentlyContinue).Count
-    $locks = @(Get-ChildItem -LiteralPath $proc -Filter '*.lock' -File -ErrorAction SilentlyContinue)
-    $nstale = @($locks | Where-Object { Test-CvLockStale $_.FullName }).Count
-    $ntemp = 0
-    foreach ($p in (Get-CvProcesoPatterns -What temps)) { $ntemp += @(Get-ChildItem -LiteralPath $proc -Filter $p -File -ErrorAction SilentlyContinue).Count }
-    $staleTxt = if ($nstale -gt 0) { "  ({0} caducado(s)/huerfano(s))" -f $nstale } else { '' }
-    Write-CvLog 'SETUP' ("  jobs pendientes : {0}" -f $njob)
-    Write-CvLog 'SETUP' ("  bloqueos        : {0}{1}" -f $locks.Count, $staleTxt)
-    Write-CvLog 'SETUP' ("  temporales      : {0}" -f $ntemp)
+    $p = Get-CvSetupProcesoStatus -Context $ctx
+    if (-not $p.Exists) { Write-CvLog 'SETUP' '  (no existe)'; return }
+    $staleTxt = if ($p.Stale -gt 0) { "  ({0} caducado(s)/huerfano(s))" -f $p.Stale } else { '' }
+    Write-CvLog 'SETUP' ("  jobs pendientes : {0}" -f $p.Jobs)
+    Write-CvLog 'SETUP' ("  bloqueos        : {0}{1}" -f $p.Locks, $staleTxt)
+    Write-CvLog 'SETUP' ("  temporales      : {0}" -f $p.Temps)
 }
 
 function Show-Pending {
     # Trabajo pendiente: videos de entrada en Original\ vs convertidos (*_fix.<ext>) en Convertido\.
     Write-Host ''
     Write-CvLog 'SETUP' 'Trabajo:'
-    $nin = @(Get-CvFiles -Dir $ctx.Original -Filters $ctx.Extensions -Exact).Count
-    $nout = 0
-    if (Test-Path -LiteralPath $ctx.Convertido) {
-        $nout = @(Get-ChildItem -LiteralPath $ctx.Convertido -Filter ("*_fix.{0}" -f $ctx.OutExt) -File -ErrorAction SilentlyContinue).Count
-    }
-    Write-CvLog 'SETUP' ("  en Original     : {0} video(s) de entrada" -f $nin)
-    Write-CvLog 'SETUP' ("  en Convertido   : {0} convertido(s)" -f $nout)
+    $w = Get-CvSetupWorkStatus -Context $ctx
+    Write-CvLog 'SETUP' ("  en Original     : {0} video(s) de entrada" -f $w.Input)
+    Write-CvLog 'SETUP' ("  en Convertido   : {0} convertido(s)" -f $w.Converted)
 }
 
 function Show-GpuStatus {
@@ -346,23 +324,20 @@ function Show-GpuStatus {
     # (util para ver el estado real, p. ej. tras cambiar de GPU o de driver).
     Write-Host ''
     Write-CvLog 'SETUP' 'Codecs por GPU (NVENC) soportados por esta grafica (comprobacion en vivo):'
-    $gpu = Get-CvGpuName
-    Write-CvLog 'SETUP' ("  GPU: {0}" -f $(if ($gpu) { $gpu } else { '(no detectada)' }))
-    if ([string]::IsNullOrWhiteSpace("$($ctx.FFmpeg)") -or -not (Test-Path -LiteralPath $ctx.FFmpeg)) {
+    $g = Get-CvSetupGpuStatus -Context $ctx               # sondea en vivo (ignora la cache gpuCache)
+    Write-CvLog 'SETUP' ("  GPU: {0}" -f $(if ($g.Gpu) { $g.Gpu } else { '(no detectada)' }))
+    if (-not $g.Ready) {
         Write-CvLog 'SETUP' '  [AVISO] - ffmpeg no instalado: no se puede comprobar. Instala ffmpeg primero.'
         return
     }
-    Reset-CvGpuEncCache                                   # forzar sonda (sin cache)
-    foreach ($e in (Get-CvGpuEncoders)) {
-        $ok = Test-CvGpuEncoder -Context $ctx -Encoder $e
+    foreach ($e in $g.Encoders) {
         # Solo el estado va como BADGE con fondo de color (verde=soportado, rojo=no); el resto de la
         # linea en color normal. Write-CvBadge escribe inline (el llamador cierra el salto de linea).
-        Write-Host ("[SETUP]   {0} {1,-12} " -f (Get-CvMark $ok), $e) -NoNewline
-        if ($ok) { Write-CvBadge -Text 'soportado'    -Fg Black -Bg Green }
-        else     { Write-CvBadge -Text 'NO soportado' -Fg White -Bg Red }
+        Write-Host ("[SETUP]   {0} {1,-12} " -f (Get-CvMark $e.Ok), $e.Name) -NoNewline
+        if ($e.Ok) { Write-CvBadge -Text 'soportado'    -Fg Black -Bg Green }
+        else       { Write-CvBadge -Text 'NO soportado' -Fg White -Bg Red }
         Write-Host ''
     }
-    Reset-CvGpuEncCache                                   # no dejar la memoizacion "sucia"
 }
 
 function Show-Estado {
@@ -405,6 +380,26 @@ function Show-ToolsMenu {
 }
 
 # ===========================================================================
+#  Modo NO INTERACTIVO (-Task): una accion y salir, sin menu
+# ===========================================================================
+if ($Task -ne '') {
+    switch ($Task) {
+        'install' {
+            if ($App -eq '' -or $Version -eq '') {
+                Write-CvLog 'SETUP' '[ERR] - -Task install necesita -App y -Version.'
+            } else {
+                [void](Invoke-InstallApp -Name $App -Version $Version -SetDefault:$SetDefault)
+            }
+        }
+        'tests' {
+            Invoke-TestSuite -Suite $Suite   # pausa al terminar para poder leer el resultado
+        }
+    }
+    if ($logFile) { Stop-CvLog }
+    return
+}
+
+# ===========================================================================
 #  Menu principal
 # ===========================================================================
 $exit = $false
@@ -426,8 +421,13 @@ while (-not $exit) {
     $opts += 'Comprobar compatibilidad GPU (NVENC de ffmpeg)'
 
     $headers[$opts.Count] = 'Pruebas'
-    $opts += 'Ejecutar tests unitarios (funciones puras, sin GPU)'
-    $opts += 'Ejecutar bateria de features (E2E, usa ffmpeg)'
+    # Una entrada por bateria del catalogo (fuente unica Get-CvSetupTestSuites, compartida con la GUI).
+    $testOpts = @{}
+    foreach ($s in (Get-CvSetupTestSuites)) {
+        $lbl = ("Ejecutar {0} ({1})" -f "$($s.Text)".ToLower(), $s.Info)
+        $testOpts[$lbl] = $s.Value
+        $opts += $lbl
+    }
 
     $headers[$opts.Count] = 'Configuracion'
     $optEditCfg  = ("Editar configuracion ({0})" -f $CfgName)
@@ -467,11 +467,8 @@ while (-not $exit) {
     elseif ($choice -eq 'Comprobar compatibilidad GPU (NVENC de ffmpeg)') {
         Show-NvencCheck                      # limpia y pausa por su cuenta
     }
-    elseif ($choice -eq 'Ejecutar tests unitarios (funciones puras, sin GPU)') {
-        Invoke-UnitTests                     # limpia y pausa por su cuenta
-    }
-    elseif ($choice -eq 'Ejecutar bateria de features (E2E, usa ffmpeg)') {
-        Invoke-FeatureTests                  # limpia y pausa por su cuenta
+    elseif ($testOpts.ContainsKey($choice)) {
+        Invoke-TestSuite -Suite $testOpts[$choice]   # limpia y pausa por su cuenta
     }
 }
 

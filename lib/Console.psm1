@@ -59,7 +59,22 @@ function Get-CvProgressBar {
     $p    = [Math]::Min(100, [Math]::Max(0, $Percent))
     $fill = [int][math]::Round($w * $p / 100.0)
     if ($fill -gt $w) { $fill = $w }
-    ([string]([char]0x2588)) * $fill + ([string]([char]0x2591)) * ($w - $fill)
+    $ch = Get-CvProgressBarChars
+    ($ch.Full) * $fill + ($ch.Empty) * ($w - $fill)
+}
+
+function Get-CvProgressBarChars {
+    <#
+        FUENTE UNICA de los dos caracteres de la barra: U+2588 (lleno) y U+2591 (vacio). Se construyen
+        con [char]0xNNNN y NO se escriben literales en el fichero A PROPOSITO: los .psm1 van en UTF-8
+        SIN BOM y PowerShell 5.1 los lee como ANSI, asi que un glifo literal se corrompe (y segun los
+        bytes, hasta rompe el parseo). Mismo motivo que Get-CvMark (ver Log.psm1).
+        Lo usan Get-CvProgressBar al pintar y Test-CvLogProgressLine al reconocer un repintado en un log.
+    #>
+    @{
+        Full  = [string]([char]0x2588)
+        Empty = [string]([char]0x2591)
+    }
 }
 
 function Set-CvWindowSize {

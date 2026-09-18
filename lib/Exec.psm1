@@ -232,10 +232,18 @@ function Write-CvProgressLine {
         colocar el cursor JUSTO tras el texto (segundo \r + texto). Devuelve la longitud del texto
         (para pasarla como -PrevLen en la siguiente llamada). Asi el cursor no queda flotando a la
         derecha entre espacios.
+
+        Escribe con [Console]::Write y NO con Write-Host A PROPOSITO: el transcript de la sesion
+        registra lo que pasa por el host, asi que con Write-Host acababa en el log CADA repintado (y
+        ademas por duplicado, por el doble volcado del cursor). En un log real eran 4273 de 5181
+        lineas -el 82%- y la carpeta logs\ se iba a decenas de MB. La consola se ve igual; lo que si
+        queda registrado es el estado FINAL del paso, que el llamador escribe con Write-Host al
+        cerrarlo. Fail-soft: sin consola (salida redirigida) cae a Write-Host.
     #>
     param([string]$Text, [int]$PrevLen = 0)
     $clear = if ($PrevLen -gt $Text.Length) { ' ' * ($PrevLen - $Text.Length) } else { '' }
-    Write-Host ("`r{0}{1}`r{0}" -f $Text, $clear) -NoNewline
+    $out = ("`r{0}{1}`r{0}" -f $Text, $clear)
+    try { [Console]::Write($out) } catch { Write-Host $out -NoNewline }
     return $Text.Length
 }
 
@@ -377,8 +385,11 @@ function Invoke-ToolProgress {
     $global:CvLastToolError = $errTask.Result
 
     # Dejar la linea como la dejaria Start-CvStep (" - <Label>" sin salto, con el cursor JUSTO tras
-    # el texto): se borra el sobrante del ultimo % y se reescribe limpia. Stop-CvStep anade OK/ERROR.
-    [void](Write-CvProgressLine -Text (" - $Label") -PrevLen $lastLen)
+    # el texto): se BORRA de la consola el ultimo render (que no pasa por el transcript) y se reescribe
+    # ya con Write-Host, que SI queda en el log. Asi el log recibe UNA sola linea por paso -la que
+    # Stop-CvStep cierra con OK/ERROR-, igual que en el pipeline por etapas.
+    try { [Console]::Write("`r" + (' ' * [Math]::Max(0, $lastLen)) + "`r") } catch {}
+    Write-Host (" - $Label") -NoNewline
     return $p.ExitCode
 }
 

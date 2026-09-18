@@ -13,7 +13,7 @@ Documentación técnica y detallada del conversor. Para la visión general y la 
 | [ref-perfiles.md](ref-perfiles.md) | Perfiles de codificación de serie, los propios de `config.json` (sección `profiles`), el perfil custom y las preguntas por archivo (vídeo/audio/subs/bordes). |
 | [ref-configuracion.md](ref-configuracion.md) | Referencia completa de `config.json` (todas las secciones y claves). |
 | [ref-herramientas.md](ref-herramientas.md) | Sistema de herramientas versionadas (`tools\<app>\<version>\<plataforma>`), descargas, plataforma y versión por job. |
-| [ref-setup.md](ref-setup.md) | La utilidad `setup.ps1`/`setup.cmd`: menú (herramientas/estado/pruebas/limpieza), editor de `config.json`, config alterno `-Config`, lanzadores debug y fallback NVENC. |
+| [ref-setup.md](ref-setup.md) | La utilidad `setup.ps1`/`setup.cmd`: menú (herramientas/estado/pruebas/limpieza), editor de `config.json`, config alterno `-Config`, lanzadores debug y fallback NVENC. Incluye **setup en ventana** (`setup-gui.cmd`) y el modo no interactivo `-Task`. |
 | [ref-jobs.md](ref-jobs.md) | Formato del `.job.json`, el lock atómico y los ficheros temporales. |
 | [ref-pruebas.md](ref-pruebas.md) | Muestras de test (`test\`): qué prueba cada una, resultado esperado, cómo regenerarlas y las fuentes/licencias. |
 | [explica-audio.md](explica-audio.md) | Selección de la pista de audio (mejor por canales/códec/bitrate) con diagramas, y comparativa de tiempo de los métodos de volumen (peak/loudnorm/aacgain). |

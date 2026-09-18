@@ -658,7 +658,7 @@ function Get-CvConfigHelp {
         de Get-CvConfigDefaults son la version larga).
     #>
     @{
-        'downloads' = 'Catalogo de herramientas descargables (ffmpeg, aacgain, 7zr, mkvpropedit); se gestiona desde el menu Herramientas'
+        'downloads' = '[av] Catalogo de herramientas descargables (ffmpeg, aacgain, 7zr, mkvpropedit); se gestiona desde el menu Herramientas'
 
         'languages'          = "Idiomas preferidos (etiquetas que cuentan como 'espanol')"
         'languages/audio'    = 'Etiquetas de idioma preferidas al elegir la pista de audio'
@@ -687,7 +687,7 @@ function Get-CvConfigHelp {
         'encode/video/auto/qmin'    = 'Perfil Auto: Qmin de los encoders NVENC (control por QP)'
         'encode/video/auto/qmax'    = 'Perfil Auto: Qmax de los encoders NVENC (control por QP)'
         'encode/video/auto/level'   = 'Perfil Auto: -level:v de H.264/H.265 NVENC (AV1 no usa level)'
-        'encode/video/tuning'                = 'Tuning del encoder de video (preset por familia, lookahead, refs, tier)'
+        'encode/video/tuning'                = '[av] Tuning del encoder de video (preset por familia, lookahead, refs, tier)'
         'encode/video/tuning/presetNvenc'    = 'Preset de hevc_nvenc/h264_nvenc (p. ej. slow, o p1-p7)'
         'encode/video/tuning/presetX26x'     = 'Preset de libx264/libx265 (ultrafast..placebo; def slow)'
         'encode/video/tuning/presetSvtav1'   = 'Preset de libsvtav1 (0-13; menor = mas lento/mejor)'
@@ -702,7 +702,7 @@ function Get-CvConfigHelp {
         'encode/audio/codec'    = 'Codec de recodificacion por defecto: aac|ac3|eac3|libmp3lame|flac|libopus'
         'encode/audio/bitrate'  = "Bitrate de audio por defecto ('copy' = copiar la pista sin recodificar)"
         'encode/audio/downmixMode'    = 'Al bajar 5.1->estereo: default | dialogue (refuerza la voz)'
-        'encode/audio/downmixCoeffs'        = 'Pesos del downmix dialogue (voz reforzada); solo con downmixMode=dialogue'
+        'encode/audio/downmixCoeffs'        = '[av] Pesos del downmix dialogue (voz reforzada); solo con downmixMode=dialogue'
         'encode/audio/downmixCoeffs/center' = 'Peso del canal central (dialogos) en el downmix dialogue'
         'encode/audio/downmixCoeffs/front'  = 'Peso de los frontales L/R en el downmix dialogue'
         'encode/audio/downmixCoeffs/surround' = 'Peso de los surrounds en el downmix dialogue (el LFE se descarta)'
@@ -715,7 +715,7 @@ function Get-CvConfigHelp {
         'encode/subtitles/defaultLang' = 'Idioma por defecto de la pregunta de idioma del fallback de subtitulos (ENTER lo usa). Vacio = mantener el del subtitulo elegido'
         'encode/subtitles/dropEmpty'  = 'Descartar las pistas de subtitulo VACIAS (sin cues); evitan una pista muerta en la salida y que se congele la barra de progreso'
 
-        'customProfile'             = 'Valores por defecto del constructor de perfil CUSTOM (opcion 0 de USAR PERFIL); mismos campos que un profiles[]'
+        'customProfile'             = '[av] Valores por defecto del constructor de perfil CUSTOM (opcion 0 de USAR PERFIL); mismos campos que un profiles[]'
         'customProfile/videoEncoder'= 'Codec de video: libx264|h264_nvenc|libx265|hevc_nvenc|libsvtav1|av1_nvenc|copy|auto'
         'customProfile/videoProfile'= 'Perfil del codec (main|main10|...); se ignora si no aplica'
         'customProfile/videoLevel'  = 'Nivel del codec (4.0|4.1|5.0|...); se ignora si no aplica'
@@ -738,7 +738,7 @@ function Get-CvConfigHelp {
         'customProfile/downmixCoeffs/front'   = 'Peso de los frontales L/R en el downmix dialogue'
         'customProfile/downmixCoeffs/surround'= 'Peso de los surrounds en el downmix dialogue (el LFE se descarta)'
 
-        'encode/video/border'                    = 'Deteccion de bordes negros con cropdetect'
+        'encode/video/border'                    = '[av] Deteccion de bordes negros con cropdetect'
         'encode/video/border/start'              = 'Segundo del primer punto de escaneo'
         'encode/video/border/duration'           = 'Segundos que escanea CADA punto'
         'encode/video/border/samples'            = 'En cuantos puntos repartidos se escanea (1 = solo al inicio)'
@@ -759,7 +759,7 @@ function Get-CvConfigHelp {
         'encode/audio/volume'             = 'Normalizacion de volumen del audio'
         'encode/audio/volume/method'      = ('Metodo: {0} (peak = legacy)' -f ((Get-CvVolumeMethodValues) -join ' | '))
         'encode/audio/volume/peakTarget'  = "Pico objetivo dBFS de 'peak' (LEGACY; 0 = maximo; -1 deja headroom)"
-        'encode/audio/volume/loudnorm'    = 'Parametros EBU R128 del metodo loudnorm'
+        'encode/audio/volume/loudnorm'    = '[av] Parametros EBU R128 del metodo loudnorm'
         'encode/audio/volume/loudnorm/I'  = 'Loudness integrada objetivo (LUFS), ej -16'
         'encode/audio/volume/loudnorm/TP' = 'True Peak maximo (dBTP), ej -1.5'
         'encode/audio/volume/loudnorm/LRA'= 'Rango de loudness objetivo (LU), ej 11'
@@ -795,11 +795,11 @@ function Get-CvConfigHelp {
         'behavior/promptTimeout/subtitleLang' = 'Timeout de la pregunta de idioma de los subtitulos elegidos (al expirar mantiene el idioma detectado; 0 = sin timeout)'
         'behavior/promptTimeoutStopOnType'  = 'Al teclear algo se desactiva el auto (solo ENTER envia); false = clasico (al expirar envia lo tecleado)'
 
-        'debug'                 = 'Depuracion (log detallado; tambien se activa con el marcador debug_on)'
+        'debug'                 = '[av] Depuracion (log detallado; tambien se activa con el marcador debug_on)'
         'debug/enabled'         = 'Modo debug: log detallado (comandos ffmpeg, pasos internos) y codificacion en la ventana principal'
         'debug/pausePerCommand' = 'En debug, pedir ENTER antes de cada comando de ffmpeg; false = ejecutar sin pausar'
 
-        'test'            = 'Modo pruebas (codificacion parcial para validar ajustes)'
+        'test'            = '[av] Modo pruebas (codificacion parcial para validar ajustes)'
         'test/enabled'    = "Activar modo pruebas: cada archivo solo se codifica hasta 'minutes' min"
         'test/minutes'    = 'Minutos que se codifican por archivo en modo pruebas (>=1)'
         'test/betaDownmix'= 'BETA: activa el downmix dialogue (voz reforzada); sin el, dialogue = downmix estandar'
@@ -815,22 +815,29 @@ function Get-CvConfigHelp {
         'console/sepWidth'    = 'Ancho (caracteres) de los separadores de seccion === / --- de la UI'
         'console/progressBarWidth' = 'Ancho (caracteres) de la barra visual de progreso del worker; 0 = sin barra'
 
-        'paths'            = 'Carpetas de trabajo (vacio = junto al programa)'
+        'paths'            = '[av] Carpetas de trabajo (vacio = junto al programa)'
         'paths/original'   = 'Carpeta de entrada (videos a convertir)'
         'paths/proceso'    = 'Carpeta de temporales durante la conversion'
         'paths/convertido' = 'Carpeta de salida (videos ya convertidos)'
         'paths/logs'       = 'Carpeta de logs de sesion'
 
-        'profiles' = 'Perfiles propios (se anaden a los de serie); se editan a mano en el fichero de config'
+        'profiles' = '[av] Perfiles propios (se anaden a los de serie); se editan a mano en el fichero de config'
     }
 }
 
 function Get-CvHelpFor {
-    <# Ayuda de una opcion por su ruta ('seccion/clave'); '' si no hay entrada. #>
+    <#
+        Ayuda de una opcion por su ruta ('seccion/clave'); '' si no hay entrada. Quita el marcador de
+        opcion AVANZADA ('[av] ', ver Get-CvConfigAdvancedMark) si lo lleva: es metadato para el
+        editor, no parte del texto que se enseña.
+    #>
     param([string]$Path)
     $h = Get-CvConfigHelp
-    if ($h.ContainsKey($Path)) { return $h[$Path] }
-    return ''
+    if (-not $h.ContainsKey($Path)) { return '' }
+    $t = "$($h[$Path])"
+    $m = Get-CvConfigAdvancedMark
+    if ($t.StartsWith($m)) { $t = $t.Substring($m.Length) }
+    return $t
 }
 
 function Get-CvConfigDefaultValue {
@@ -846,7 +853,11 @@ function Get-CvConfigDefaultValue {
         if ($node -isnot [System.Collections.IDictionary] -or -not $node.Contains($seg)) { return $null }
         $node = $node[$seg]
     }
-    return $node
+    # Coma unaria: sin ella PowerShell DESENVUELVE un array de un solo elemento y el default de, por
+    # ejemplo, downloads/ffmpeg/versionArgs (['-version']) salia como la cadena '-version'. Eso hacia
+    # que toda lista de 1 elemento pareciera distinta del default (Test-CvCfgIsDefault compara la
+    # serializacion JSON). Para un escalar el comportamiento no cambia (la tuberia lo desenvuelve).
+    return ,$node
 }
 
 function ConvertTo-CvPromptTimeouts {
@@ -1011,6 +1022,46 @@ function Remove-CvChild {
     param($Node, [string]$Key)
     if ($Node -is [System.Collections.IDictionary]) { if ($Node.Contains($Key)) { $Node.Remove($Key) }; return }
     if ($Node.PSObject.Properties[$Key]) { $Node.PSObject.Properties.Remove($Key) }
+}
+
+function Get-CvConfigAdvancedMark {
+    <#
+        Marcador que declara una opcion como AVANZADA. Va al PRINCIPIO de su texto en el catalogo de
+        ayuda (Get-CvConfigHelp), que ya es el registro por-opcion: asi el nivel se define JUNTO a la
+        opcion y no hace falta una lista paralela de rutas que se desincronice al renombrar algo.
+        Get-CvHelpFor lo quita (nadie lo ve) y Test-CvConfigAdvanced lo lee.
+    #>
+    '[av] '
+}
+
+function Test-CvConfigAdvanced {
+    <#
+        $true si esa ruta del config esta marcada como AVANZADA en el catalogo de ayuda. Comparacion
+        EXACTA de la ruta: quien oculta el subarbol entero es el llamador (el editor), que al topar
+        con una rama avanzada no baja por ella.
+    #>
+    param([string]$Path)
+    $h = Get-CvConfigHelp
+    if (-not $h.ContainsKey("$Path")) { return $false }
+    return ("$($h["$Path"])").StartsWith((Get-CvConfigAdvancedMark))
+}
+
+function Get-CvConfigAdvancedPaths {
+    <# Rutas marcadas como avanzadas, DERIVADAS del catalogo de ayuda (no es una segunda lista: se
+       calcula). Util para documentar y para los tests. #>
+    @(Get-CvConfigHelp).Keys | Where-Object { Test-CvConfigAdvanced -Path $_ } | Sort-Object
+}
+
+function Test-CvCfgIsDefault {
+    <#
+        PURO. $true si el valor de una clave es EL DE FABRICA. Compara por serializacion JSON, la
+        MISMA regla con la que Update-CvConfigEdits decide si una clave se guarda en el fichero o se
+        borra de el: asi lo que el editor resalta como "editado" es exactamente lo que acabara
+        escrito en config.json, sin criterios paralelos que se desincronicen.
+        Un valor presente cuyo default es $null (clave que no existe de fabrica) cuenta como NO default.
+    #>
+    param($Value, $Default)
+    return ((ConvertTo-CvJson $Value 0) -eq (ConvertTo-CvJson $Default 0))
 }
 
 function Update-CvConfigEdits {

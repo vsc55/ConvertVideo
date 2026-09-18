@@ -18,12 +18,13 @@ Target runtime is **Windows PowerShell 5.1**, not PowerShell 7 — avoid 7-only 
   ```
 
 - **Unit tests** (pure functions, no ffmpeg, <1 s): `powershell -ExecutionPolicy Bypass -File test\unit-tests.ps1` (exit 0 pass / 1 fail). They are `Assert-*` calls in one script; there is no single-test flag — narrow the script to isolate.
+- **Setup battery** (`SetupCore` data + the WinForms config editor, driven without a mouse; no ffmpeg): `powershell -ExecutionPolicy Bypass -Sta -File test\gui-tests.ps1`. Needs `-Sta`; the window cases SKIP (not fail) without a GUI. Run it after touching `setup*.ps1`, `SetupCore.psm1` or `GuiSetup.psm1`.
 - **E2E battery** (runs the real `Convert.ps1` worker over `test\` fixtures and verifies each output with ffprobe):
   - `powershell -ExecutionPolicy Bypass -File test\run-tests.ps1` — GPU (`hevc_nvenc`)
   - `... -Encoder libx265` — CPU/portable (no NVENC)
   - `... -OnePass` — exercise the one-pass path
   - `... -Keep` — don't delete the isolated temp work area
-- **Run the app**: `Convert.cmd` (convert), `setup.cmd` (tools + config editor), `FixSyncSub.cmd` (`.srt` fixer). `*-Debug.cmd` variants use `config.debug.json`. Launchers accept `-Config <path>`.
+- **Run the app**: `Convert.cmd` (convert), `setup.cmd` (tools + config editor), `setup-gui.cmd` (the same setup in a window), `FixSyncSub.cmd` (`.srt` fixer). `*-Debug.cmd` variants use `config.debug.json`. Launchers accept `-Config <path>`. `setup.ps1` also runs one action headless: `-Task install -App <app> -Version <v> [-SetDefault]` / `-Task tests -Suite unit|features|gui`.
 
 Consider a change done only after verifying empirically: **AST-parse + unit-tests + the E2E battery for the path you touched** (staged and/or `-OnePass`). The batteries are the real safety net.
 
@@ -36,6 +37,8 @@ Consider a change done only after verifying empirically: **AST-parse + unit-test
 - **Single sources of truth.** `Get-CvConfigDefaults` (`Config.psm1`) is the one place for every config default; `config.json` only overrides. `New-CvContext` builds `$ctx` (a read-only settings bag) from the merged config and is passed almost everywhere. `Get-CvVersion` (`Context.psm1`) is the version (bump it and its unit test together). Enum catalogs (encoders/levels/modes) are functions returning `@{ Value; Text }` — reuse them, never inline the lists.
 
 - **Config shape.** Nested `encode.video` / `encode.audio` / `encode.subtitles` (plus root `threads`/`extensions`/`outputExtension`). Per-file choices live in the **job**, not in config. Filename prefixes drive behavior: `_` forces border detection; `TEST_` re-prepares from scratch (deletes its stale job at startup) except under `-WorkerOnly`.
+
+- **Setup has two faces, one data source.** `setup.ps1` (console menu) and `setup-gui.ps1` (WinForms window, `GuiSetup.psm1`) both read `SetupCore.psm1`, which returns **objects** — never colored text or prompts — so each UI renders and confirms its own way. Add an action (or a test battery, catalog `Get-CvSetupTestSuites`) once there and it shows up in both. Long actions (install, test batteries) are not run inside the window: it spawns `setup.ps1 -Task …` in its own console, because WinForms is single-threaded.
 
 - **Modules (`lib\*.psm1`).** Each does `Export-ModuleMember -Function *`; cross-module calls resolve at **call time**, so the load order in `Convert.ps1`/`setup.ps1`/the test runners doesn't gate references. Layering to respect: Config = base; Profile = pipeline (Profile may use Config, not the reverse); **Context is base and must not depend on Profile**.
 

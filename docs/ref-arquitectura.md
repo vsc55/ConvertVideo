@@ -7,9 +7,10 @@ ConvertVideo/
 ├── Convert.cmd                 Lanzador del conversor (ExecutionPolicy Bypass + UTF-8)
 ├── setup.cmd               Lanzador de la utilidad de gestión
 ├── Convert.ps1        Orquestador: clasificar / preparar / worker
-├── setup.ps1               Utilidad: herramientas + editor de config + limpieza
+├── setup.ps1               Utilidad: herramientas + editor de config + limpieza (menú de consola; también `-Task` no interactivo)
+├── setup-gui.ps1           La MISMA utilidad en VENTANA (WinForms); comparte los datos con setup.ps1 vía lib\SetupCore.psm1
 ├── FixSyncSub.ps1          Utilidad aparte: corregir/re-sincronizar subtítulos .srt (usa lib\SubtitleSRT.psm1)
-├── *.cmd                   Lanzadores por doble clic (Bypass): Convert.cmd / setup.cmd / FixSyncSub.cmd (arrastrar y soltar) + Convert-Debug.cmd / setup-Debug.cmd (cargan config.debug.json)
+├── *.cmd                   Lanzadores por doble clic (Bypass): Convert.cmd / setup.cmd / setup-gui.cmd / FixSyncSub.cmd (arrastrar y soltar) + Convert-Debug.cmd / setup-Debug.cmd (cargan config.debug.json)
 ├── config.json             Toda la configuración (se carga al arrancar)
 ├── config.debug.json       Config alterna para los lanzadores -Debug (-Config)
 ├── lib/
@@ -18,7 +19,9 @@ ConvertVideo/
 │   ├── ConfigEditor.psm1   Editor interactivo de config.json (solo lo usa setup.ps1)
 │   ├── Context.psm1        Contexto de ejecución ($ctx) + helpers (idiomas, números, tiempo, listado de ficheros)
 │   ├── Console.psm1        Apariencia de consola, ventana nativa, menús y prompts
-│   ├── Gui.psm1            Ventanas GUI (WinForms): visor de texto del subtítulo ('V N' modo win)
+│   ├── Gui.psm1            Ventanas GUI (WinForms) genéricas: visor de texto del subtítulo ('V N' modo win)
+│   ├── GuiSetup.psm1       Ventana de setup (WinForms): acciones, panel de salida y editor de config en árbol
+│   ├── SetupCore.psm1      DATOS de setup (estado, herramientas, limpieza, baterías); fuente única de consola y ventana
 │   ├── Exec.psm1           Ejecución de procesos externos (ffmpeg/ffprobe…)
 │   ├── Job.psm1            Cola: jobs JSON, lock atómico, temporales, ruta de salida
 │   ├── Tools.psm1          Apps/versiones/descargas (ffmpeg, aacgain, sevenzip, mkvtoolnix)

@@ -24,6 +24,8 @@ flowchart TD
     end
 ```
 
+> **Opciones avanzadas.** Cada opción declara su nivel en su propia entrada del catálogo de ayuda (`Get-CvConfigHelp`), con el marcador **`[av]`** al principio del texto. El editor **en ventana** (`setup-gui.cmd`) oculta esas ramas salvo que se marque *Mostrar opciones avanzadas*; el editor de consola las muestra siempre. Cuáles son y por qué, en [ref-setup.md](ref-setup.md).
+
 ## Estructura
 
 Esquema completo (tras la fusión con los defaults):
