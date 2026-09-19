@@ -34,11 +34,14 @@ $Root = Split-Path -Parent $PSScriptRoot
 $Lib  = Join-Path $Root 'lib'
 $modules = @(
     'Log'
+    'Io'
     'Config'
     'Context'
     'Console'
     'Gui'
     'GuiSetup'
+    'GuiConfig'
+    'GuiProfile'
     'Exec'
     'Job'
     'Tools'
@@ -118,6 +121,29 @@ Assert-Eq   'Tools: SelectedOk false' $false $ff.SelectedOk
 $vers = @(Get-CvSetupAppVersions -Context $ctx -Name 'ffmpeg')
 Assert-True 'Versiones del catalogo'  ($vers.Count -ge 1)
 Assert-True 'Catalogo trae la selected' ($vers -contains "$($ff.Selected)")
+
+# ================================================================================================
+Write-Host "`nSetupCore - usar una version ya instalada (sin reinstalar)" -ForegroundColor Cyan
+# Cambiar downloads.<app>.selected sin descargar nada. Solo vale si esa version ESTA instalada: un
+# 'selected' apuntando a una carpeta que no existe deja al conversor sin ffmpeg, y el error que sale
+# al final es un "no se puede encontrar el archivo especificado" que no explica nada (paso de verdad).
+$verFake = '9.9.9'
+$dirFake = Get-CvToolDir -Context $ctx -Name 'ffmpeg' -Version $verFake
+$rNo = Set-CvSetupVersionInUse -Context $ctx -CfgPath $tmpCfg -Name 'ffmpeg' -Version $verFake
+Assert-Eq   'Version en uso: no instalada -> no' $false $rNo.Ok
+Assert-True 'Version en uso: dice por que'       ($rNo.Reason -match 'no esta instalada')
+Assert-Eq   'Version en uso: sin version -> no'  $false (Set-CvSetupVersionInUse -Context $ctx -CfgPath $tmpCfg -Name 'ffmpeg').Ok
+# Se finge instalada creando sus ficheros (es lo que mira Test-CvToolInstalled).
+New-Item -ItemType Directory -Path $dirFake -Force | Out-Null
+foreach ($f in @((Get-CvAppDescriptor -Context $ctx -Name 'ffmpeg').files)) {
+    Set-Content -Path (Join-Path $dirFake $f) -Value 'x' -Encoding ASCII
+}
+$rSi = Set-CvSetupVersionInUse -Context $ctx -CfgPath $tmpCfg -Name 'ffmpeg' -Version $verFake
+Assert-True 'Version en uso: instalada -> si'    $rSi.Ok
+Assert-Eq   'Version en uso: queda en el config' $verFake "$((Read-CvConfigFile -Path $tmpCfg).downloads.ffmpeg.selected)"
+# Y el contexto recargado ya apunta a ella (que es el efecto que se busca).
+Assert-Eq   'Version en uso: la usa el contexto' $verFake "$((New-CvContext -Root $tmpRoot -ConfigPath $tmpCfg).FFmpegVersion)"
+Remove-Item -Recurse -Force -LiteralPath (Join-Path $ctx.Root 'tools\ffmpeg') -ErrorAction SilentlyContinue
 
 # ================================================================================================
 Write-Host "`nSetupCore - Proceso, trabajo y limpieza" -ForegroundColor Cyan
@@ -343,6 +369,23 @@ if (-not $sta) {
             $bDef  = $f.Controls.Find('cvDefault', $true)[0]
             $bSave = $f.Controls.Find('cvSave',    $true)[0]
             $chk   = $f.Controls.Find('cvAdvanced', $true)[0]
+            # El divisor arbol / detalle: se arrastra (y se ve, que es lo que lo hace descubrible).
+            $spCfg = @($f.Controls.Find('cvCfgSplit', $true))
+            $script:cfgSplitOk    = ($spCfg.Count -eq 1 -and -not $spCfg[0].IsSplitterFixed)
+            $script:cfgSplitAncho = $(if ($spCfg.Count -eq 1) { [int]$spCfg[0].SplitterWidth } else { 0 })
+            $script:cfgSplitGrip  = $(if ($spCfg.Count -eq 1) { "$($spCfg[0].AccessibleName)" } else { '' })
+            # El agarre va en el CENTRO del divisor: al cambiar el tamano de la ventana le toca otro
+            # sitio, y si nadie manda repintar se queda en el hueco viejo (o sea: desaparece). Se
+            # comprueba que redimensionar dispara el repintado del divisor.
+            $script:cfgSplitPinta = $false
+            if ($spCfg.Count -eq 1) {
+                $spCfg[0].Add_Paint({ $script:cfgSplitPinta = $true })
+                $script:cfgSplitPinta = $false
+                $f.Height = $f.Height - 40
+                [System.Windows.Forms.Application]::DoEvents()
+                Start-Sleep -Milliseconds 200
+                [System.Windows.Forms.Application]::DoEvents()
+            }
 
             # 0) AVANZADAS: sin marcar, 'downloads' no esta en el arbol; al marcar, aparece (y al
             #    desmarcar vuelve a irse). El resto del arbol sigue estando en los dos casos.
@@ -384,6 +427,9 @@ if (-not $sta) {
     $saved = Show-CvConfigWindow -Root $tmpRoot -CfgPath $tmpCfg -CfgName 'config.json'
 
     Assert-Eq   'Ventana sin excepciones' '' $script:guiErr
+    Assert-True 'Editor: el divisor se arrastra'   $script:cfgSplitOk
+    Assert-True 'Editor: y se ve (ancho + agarre)' ($script:cfgSplitAncho -ge 8 -and $script:cfgSplitGrip -eq 'cv-grip')
+    Assert-True 'Editor: el agarre se repinta al redimensionar' $script:cfgSplitPinta
     Assert-True 'Avanzadas ocultas por defecto'  $script:advOff
     Assert-True 'Lo normal se ve igualmente'     $script:advNorm
     Assert-True 'Al marcar aparece downloads'    $script:advOn
@@ -437,6 +483,382 @@ if (-not $sta) {
     })
     $pick2.Start()
     Assert-Eq 'Selector: cancelar -> vacio' '' (Show-CvSetupConfigChooser -Root $tmpRoot)
+}
+
+# ================================================================================================
+# DIALOGO DE VARIAS SALIDAS (Show-CvGuiChoice): lo que usa la cola para preguntar al cerrar con
+# workers vivos. Se abre de verdad y se pulsa un boton por su .Name, como el resto de la bateria.
+if (-not $sta) {
+    Write-Skip 'Dialogo de varias salidas' 'el host no es STA (usa -Sta)'
+} elseif (-not (Initialize-CvGui)) {
+    Write-Skip 'Dialogo de varias salidas' 'sin entorno grafico'
+} else {
+    Write-Host "`nGuiSetup - dialogo de varias salidas" -ForegroundColor Cyan
+    $opts = @(
+        @{ Value = 'a'; Text = 'Opcion A'; Hint = 'la primera' }
+        @{ Value = 'b'; Text = 'Opcion B' }
+    )
+    $tc = New-Object System.Windows.Forms.Timer
+    $tc.Interval = 500
+    $tc.Add_Tick({
+        $tc.Stop()
+        $d = @([System.Windows.Forms.Application]::OpenForms | Where-Object { $_.Name -eq 'cvTest' })
+        if ($d.Count -gt 0) {
+            $script:choiceBtns = @($d[0].Controls.Find('cvTest_a', $true)).Count + @($d[0].Controls.Find('cvTest_b', $true)).Count
+            $b = @($d[0].Controls.Find('cvTest_b', $true))
+            if ($b.Count -gt 0) { $b[0].PerformClick(); return }
+        }
+        foreach ($fm in @([System.Windows.Forms.Application]::OpenForms)) { $fm.Close() }
+    })
+    $script:choiceBtns = 0
+    $tc.Start()
+    Assert-Eq   'Dialogo: devuelve el boton pulsado' 'b' (Show-CvGuiChoice -Title 'Prueba' -Message 'Que hago?' -Options $opts -Name 'cvTest')
+    Assert-Eq   'Dialogo: un boton por opcion'        2  $script:choiceBtns
+    # Cerrarlo con la X no elige nada: quien llama decide que hacer con eso (en la cola, no cerrar).
+    $tc2 = New-Object System.Windows.Forms.Timer
+    $tc2.Interval = 500
+    $tc2.Add_Tick({
+        $tc2.Stop()
+        foreach ($fm in @([System.Windows.Forms.Application]::OpenForms)) { $fm.Close() }
+    })
+    $tc2.Start()
+    Assert-Eq   'Dialogo: cerrar con la X no elige' '' (Show-CvGuiChoice -Title 'Prueba' -Message 'Que hago?' -Options $opts -Name 'cvTest')
+}
+
+# ================================================================================================
+# ESTADO DE LAS VENTANAS: como quedaron (tamano, divisor, columnas) se apunta junto al config y se
+# vuelve a aplicar al abrir. Sin ventana: son ficheros y funciones puras.
+Write-Host "`nGuiSetup - tamanos recordados de las ventanas" -ForegroundColor Cyan
+
+Assert-Eq   'Layout: fichero junto al config' (Join-Path $tmpRoot 'config.gui.json') (Get-CvGuiLayoutPath -Context $ctx)
+Assert-Eq   'Layout: sin fichero no hay nada' $null (Get-CvGuiLayout -Context $ctx -Key 'cola')
+Assert-True 'Layout: se guarda' (Save-CvGuiLayout -Context $ctx -Key 'cola' -Layout ([ordered]@{
+    width     = 1400
+    height    = 900
+    maximized = $false
+    split     = 500
+    cols      = @(330, 90, 130, 70, 300, 80)
+}))
+$lay1 = Get-CvGuiLayout -Context $ctx -Key 'cola'
+Assert-Eq   'Layout: releido ancho'   1400 ([int]$lay1.width)
+Assert-Eq   'Layout: releido divisor'  500 ([int]$lay1.split)
+Assert-Eq   'Layout: releidas columnas' 6  (@($lay1.cols).Count)
+# Guardar OTRA ventana no se lleva por delante la primera (todo vive en el mismo fichero).
+[void](Save-CvGuiLayout -Context $ctx -Key 'setup' -Layout ([ordered]@{ width = 800; height = 600 }))
+Assert-Eq   'Layout: la otra ventana sigue' 1400 ([int](Get-CvGuiLayout -Context $ctx -Key 'cola').width)
+Assert-Eq   'Layout: y la nueva tambien'     800 ([int](Get-CvGuiLayout -Context $ctx -Key 'setup').width)
+Assert-Eq   'Layout: clave desconocida' $null (Get-CvGuiLayout -Context $ctx -Key 'noexiste')
+# Fichero corrupto: se ignora, no revienta (se llama al abrir la ventana).
+Set-Content -Path (Get-CvGuiLayoutPath -Context $ctx) -Value '{ esto no es json' -Encoding UTF8
+Assert-Eq   'Layout: json roto se ignora' $null (Get-CvGuiLayout -Context $ctx -Key 'cola')
+Remove-Item -LiteralPath (Get-CvGuiLayoutPath -Context $ctx) -Force
+
+Assert-Eq   'Layout: campo de hashtable' 10 (Get-CvGuiLayoutValue -Layout @{ split = 10 } -Name 'split')
+Assert-Eq   'Layout: campo de objeto'    10 (Get-CvGuiLayoutValue -Layout ([pscustomobject]@{ split = 10 }) -Name 'split')
+Assert-Eq   'Layout: campo que falta'     7 (Get-CvGuiLayoutValue -Layout @{} -Name 'split' -Default 7)
+Assert-Eq   'Layout: sin layout'          7 (Get-CvGuiLayoutValue -Layout $null -Name 'split' -Default 7)
+
+# Tamano de apertura: manda lo recordado, salvo que no quepa o sea absurdo.
+$szDef = Resolve-CvGuiWindowSize -Layout $null -DefaultWidth 1180 -DefaultHeight 760
+Assert-Eq   'Tamano: sin nada, el de config' '1180|760' (@($szDef.Width, $szDef.Height) -join '|')
+$szSave = Resolve-CvGuiWindowSize -Layout @{ width = 1400; height = 900 } -DefaultWidth 1180 -DefaultHeight 760
+Assert-Eq   'Tamano: manda el recordado' '1400|900' (@($szSave.Width, $szSave.Height) -join '|')
+$szMax = Resolve-CvGuiWindowSize -Layout @{ width = 5000; height = 4000 } -DefaultWidth 1180 -DefaultHeight 760 -MaxWidth 1920 -MaxHeight 1080
+Assert-Eq   'Tamano: no mayor que la pantalla' '1920|1080' (@($szMax.Width, $szMax.Height) -join '|')
+$szMin = Resolve-CvGuiWindowSize -Layout @{ width = 100; height = 50 } -DefaultWidth 1180 -DefaultHeight 760 -MinWidth 860 -MinHeight 560
+Assert-Eq   'Tamano: nunca bajo el minimo' '860|560' (@($szMin.Width, $szMin.Height) -join '|')
+$szBad = Resolve-CvGuiWindowSize -Layout @{ width = 'xx' } -DefaultWidth 1180 -DefaultHeight 760
+Assert-Eq   'Tamano: basura -> el de config' 1180 $szBad.Width
+Assert-True 'Tamano: maximizada se recuerda' (Resolve-CvGuiWindowSize -Layout @{ maximized = $true } -DefaultWidth 1180 -DefaultHeight 760).Maximized
+
+# Divisor: lo recordado si cabe; si no, el porcentaje de la config, siempre dentro de los minimos.
+Assert-Eq   'Divisor: sin nada, el porcentaje' 312 (Resolve-CvGuiSplitDistance -Height 600 -Percent 52 -Min1 120 -Min2 140 -SplitterWidth 10)
+Assert-Eq   'Divisor: manda el recordado'      400 (Resolve-CvGuiSplitDistance -Height 600 -Percent 52 -Saved 400 -Min1 120 -Min2 140 -SplitterWidth 10)
+Assert-Eq   'Divisor: recordado que ya no cabe' 450 (Resolve-CvGuiSplitDistance -Height 600 -Percent 52 -Saved 900 -Min1 120 -Min2 140 -SplitterWidth 10)
+Assert-Eq   'Divisor: nunca bajo el minimo'     120 (Resolve-CvGuiSplitDistance -Height 600 -Percent 1 -Min1 120 -Min2 140 -SplitterWidth 10)
+Assert-Eq   'Divisor: ventana minuscula'        100 (Resolve-CvGuiSplitDistance -Height 200 -Percent 52 -Min1 120 -Min2 140 -SplitterWidth 10)
+
+# ================================================================================================
+# PERFILES PROPIOS en ventana (GuiProfile): la lista sale del config y los botones estan.
+# No se pulsa 'Borrar' aqui: pide confirmacion MODAL y dejaria la bateria colgada (ver la regla de
+# la cabecera). El borrado se prueba en los tests unitarios, sobre la funcion.
+Write-Host "`nGuiProfile - perfiles propios en ventana" -ForegroundColor Cyan
+$cfgProf = Join-Path $tmpRoot 'config.perfiles.json'
+[void](Save-CvTextFile -Path $cfgProf -Text '{ "behavior": { "workers": 1 } }')
+[void](Save-CvConfigProfile -Path $cfgProf -Prof (New-CvProfile -VideoEncoder 'libx265' -Crf 22) -Label 'Series CPU')
+[void](Save-CvConfigProfile -Path $cfgProf -Prof (New-CvProfile -VideoEncoder 'copy' -AudioEncoder 'copy') -Label 'Solo contenedor')
+$ctxProf = New-CvContext -Root $tmpRoot -ConfigPath $cfgProf
+Assert-Eq 'Perfiles: dos guardados' 2 (@(Get-CvConfigProfileRows -Path $cfgProf)).Count
+Assert-True 'Perfiles: el texto del panel los lista' ((Get-CvSetupProfilesText -CfgPath $cfgProf) -match 'Series CPU')
+Assert-True 'Perfiles: sin ninguno, el panel lo explica' ((Get-CvSetupProfilesText -CfgPath (Join-Path $tmpRoot 'no-existe.json')) -match 'No hay perfiles propios')
+if (-not $sta) {
+    Write-Skip 'Ventana de perfiles propios' 'el host no es STA (usa -Sta)'
+} elseif (-not (Initialize-CvGui)) {
+    Write-Skip 'Ventana de perfiles propios' 'sin entorno grafico'
+} else {
+    $tpw = New-Object System.Windows.Forms.Timer
+    $tpw.Interval = 400
+    $script:pwErr   = ''
+    $script:pwRows  = ''
+    $script:pwBtns  = 0
+    $script:pwInfo  = ''
+    $script:pwWaits = 0
+    $tpw.Add_Tick({
+        try {
+            $f = @([System.Windows.Forms.Application]::OpenForms | Where-Object { $_.Name -eq 'cvProfiles' })
+            if ($f.Count -eq 0) {
+                $script:pwWaits++
+                if ($script:pwWaits -gt 50) { $tpw.Stop(); $script:pwErr = 'no se abrio la ventana' }
+                return
+            }
+            $lvp = @($f[0].Controls.Find('cvProfilesList', $true))
+            if ($lvp.Count -eq 0 -or $lvp[0].Items.Count -eq 0) { $script:pwWaits++; return }
+            $tpw.Stop()
+            $script:pwRows = (@($lvp[0].Items | ForEach-Object { "{0}|{1}={2}" -f $_.Text, $_.SubItems[1].Text, $_.SubItems[2].Text }) -join ',')
+            # Marcar uno DE SERIE: se puede duplicar, pero no editar ni borrar.
+            $lvp[0].Items[$lvp[0].Items.Count - 1].Selected = $true
+            $script:pwSerieDup  = [bool]$f[0].Controls.Find('cvProfilesDup', $true)[0].Enabled
+            $script:pwSerieEdit = [bool]$f[0].Controls.Find('cvProfilesEdit', $true)[0].Enabled
+            $script:pwSerieDel  = [bool]$f[0].Controls.Find('cvProfilesDel', $true)[0].Enabled
+            # Y uno PROPIO: los tres.
+            $lvp[0].Items[0].Selected = $true
+            $script:pwPropEdit = [bool]$f[0].Controls.Find('cvProfilesEdit', $true)[0].Enabled
+            $script:pwPropDel  = [bool]$f[0].Controls.Find('cvProfilesDel', $true)[0].Enabled
+            foreach ($n in @('cvProfilesNew', 'cvProfilesDup', 'cvProfilesEdit', 'cvProfilesDel', 'cvProfilesDef', 'cvProfilesClose')) {
+                $script:pwBtns += @($f[0].Controls.Find($n, $true)).Count
+            }
+            # Marcar como PREDETERMINADO el primero (propio): se guarda en el config y se ve el '*'.
+            $lvp[0].Items[0].Selected = $true
+            $f[0].Controls.Find('cvProfilesDef', $true)[0].PerformClick()
+            $script:pwDefCfg  = "$(Get-CvConfigDefaultProfile -Path $cfgProf)"
+            $script:pwDefMark = "$($lvp[0].Items[0].Text)"
+            $script:pwDefBtn  = "$($f[0].Controls.Find('cvProfilesDef', $true)[0].Text)"
+            # Y quitarlo: vuelve a ser Auto (lo de fabrica).
+            $f[0].Controls.Find('cvProfilesDef', $true)[0].PerformClick()
+            $script:pwDefFuera = "$(Get-CvConfigDefaultProfile -Path $cfgProf)"
+            $script:pwInfo = "$($f[0].Controls.Find('cvProfilesInfo', $true)[0].Text)"
+            $f[0].Close()
+        } catch {
+            $tpw.Stop(); $script:pwErr = "$_"
+            foreach ($fm in @([System.Windows.Forms.Application]::OpenForms)) { $fm.Close() }
+        }
+    })
+    $tpw.Start()
+    [void](Show-CvProfilesWindow -Context $ctxProf -CfgPath $cfgProf)
+    $tpw.Stop()
+    Assert-Eq   'Ventana perfiles: sin excepciones' '' $script:pwErr
+    Assert-True 'Ventana perfiles: lista los dos'   ($script:pwRows -match 'Series CPU' -and $script:pwRows -match 'Solo contenedor')
+    Assert-True 'Ventana perfiles: con su etiqueta' ($script:pwRows -match 'CRF22')
+    Assert-Eq   'Ventana perfiles: los seis botones' 6 $script:pwBtns
+    Assert-Eq   'Ventana perfiles: marca el predeterminado' 'Series CPU' $script:pwDefCfg
+    Assert-True 'Ventana perfiles: y lo senala con *'  ($script:pwDefMark -match '^\*')
+    Assert-Eq   'Ventana perfiles: el boton pasa a quitarlo' 'Quitar predet.' $script:pwDefBtn
+    Assert-Eq   'Ventana perfiles: quitarlo deja Auto' 'Auto' $script:pwDefFuera
+    Assert-True 'Ventana perfiles: dice cuantos hay' ($script:pwInfo -match '2 propios')
+    Assert-True 'Ventana perfiles: tambien los de serie' ($script:pwRows -match 'de serie')
+    Assert-True 'Ventana perfiles: los propios se marcan' ($script:pwRows -match 'Series CPU\|propio')
+    Assert-Eq   'Ventana perfiles: un de serie se duplica' $true  $script:pwSerieDup
+    Assert-Eq   'Ventana perfiles: pero no se edita'       $false $script:pwSerieEdit
+    Assert-Eq   'Ventana perfiles: ni se borra'            $false $script:pwSerieDel
+    Assert-Eq   'Ventana perfiles: un propio si se edita'  $true  $script:pwPropEdit
+    Assert-Eq   'Ventana perfiles: y se borra'             $true  $script:pwPropDel
+}
+
+# ================================================================================================
+# PIEZAS COMUNES de las ventanas (Gui.psm1), con controles de verdad: el desplegable de catalogo y
+# el panel que sigue un log. Las usan la cola, setup y los perfiles; aqui se prueban una sola vez.
+Write-Host "`nGui - desplegable de catalogo y panel de log" -ForegroundColor Cyan
+if (-not $sta) {
+    Write-Skip 'Piezas comunes de ventana' 'el host no es STA (usa -Sta)'
+} elseif (-not (Initialize-CvGui)) {
+    Write-Skip 'Piezas comunes de ventana' 'sin entorno grafico'
+} else {
+    # --- Combo de catalogo: el valor elegido sale con su TIPO, no como texto ---
+    $catal = @(
+        @{ Value = 2; Text = 'estereo' }
+        @{ Value = 6; Text = '5.1' }
+    )
+    $cbT = New-CvGuiCatalogCombo -Items $catal -Current 6 -Name 'cvTestCombo'
+    Assert-Eq   'Combo: una entrada por valor'   2 $cbT.Items.Count
+    Assert-Eq   'Combo: deja elegido el actual'  6 (Get-CvGuiComboValue -Combo $cbT)
+    Assert-True 'Combo: el valor conserva el tipo' ((Get-CvGuiComboValue -Combo $cbT) -is [int])
+    # Un valor que NO esta en el catalogo se anade y se deja elegido (el fallo del perfil 'auto'
+    # resuelto, que caia en la primera entrada y convertia el job a copy).
+    $cbRaro = New-CvGuiCatalogCombo -Items $catal -Current 7
+    Assert-Eq   'Combo: el valor de fuera se anade'   3 $cbRaro.Items.Count
+    Assert-Eq   'Combo: y queda elegido'              '7' "$(Get-CvGuiComboValue -Combo $cbRaro)"
+    # Entrada vacia = "usa el global".
+    $cbVacio = New-CvGuiCatalogCombo -Items $catal -EmptyText '(el global)'
+    Assert-Eq   'Combo: con entrada vacia delante'    3 $cbVacio.Items.Count
+    Assert-Eq   'Combo: vacia elegida por defecto'    '' "$(Get-CvGuiComboValue -Combo $cbVacio)"
+    Assert-Eq   'Combo: sin catalogo no revienta'     '' "$(Get-CvGuiComboValue -Combo (New-CvGuiCatalogCombo -Items @()))"
+    foreach ($c in @($cbT, $cbRaro, $cbVacio)) { $c.Dispose() }
+
+    # --- Panel de log: solo relee si el fichero cambio, solo repinta si el texto es otro ---
+    $lgFile = Join-Path $ctx.Logs 'Convert_20260919_praba_1234.log'
+    [void](Save-CvTextFile -Path $lgFile -Text "[GLOBAL] - primera linea`r`n[WORKER] - segunda")
+    $tb = New-Object System.Windows.Forms.TextBox
+    $tb.Multiline = $true
+    $stLog = @{}
+    Assert-Eq   'Log: la primera vez pinta'      $true  (Update-CvGuiLogView -TextBox $tb -State $stLog -Path $lgFile)
+    Assert-True 'Log: y sale el contenido'       ($tb.Text -match 'primera linea')
+    Assert-Eq   'Log: sin cambios no repinta'    $false (Update-CvGuiLogView -TextBox $tb -State $stLog -Path $lgFile)
+    Start-Sleep -Milliseconds 20
+    [void](Save-CvTextFile -Path $lgFile -Text "[GLOBAL] - primera linea`r`n[WORKER] - segunda`r`n[WORKER] - tercera")
+    Assert-Eq   'Log: si cambia, repinta'        $true  (Update-CvGuiLogView -TextBox $tb -State $stLog -Path $lgFile)
+    Assert-True 'Log: con lo nuevo'              ($tb.Text -match 'tercera')
+    Assert-True 'Log: y sigue el final'          ($tb.SelectionStart -eq $tb.TextLength)
+    # Sin log que seguir: se dice, y no se deja lo de antes pintado.
+    Assert-Eq   'Log: sin ruta pone el aviso'    $true  (Update-CvGuiLogView -TextBox $tb -State $stLog -Path '' -EmptyText 'Este worker no dejo log.')
+    Assert-Eq   'Log: y es lo unico que queda'   'Este worker no dejo log.' $tb.Text
+    $tb.Dispose()
+    Remove-Item -LiteralPath $lgFile -Force -ErrorAction SilentlyContinue
+}
+
+# ================================================================================================
+# EL TEMA aplicado a una ventana de verdad: que cada tipo de control coja sus colores, que un aviso
+# conserve SU color (rojo sigue rojo) y que al volver a claro se deshaga.
+Write-Host "`nGui - tema oscuro sobre una ventana" -ForegroundColor Cyan
+if (-not $sta) {
+    Write-Skip 'Tema de ventana' 'el host no es STA (usa -Sta)'
+} elseif (-not (Initialize-CvGui)) {
+    Write-Skip 'Tema de ventana' 'sin entorno grafico'
+} else {
+    $fT = New-Object System.Windows.Forms.Form
+    $tbT = New-Object System.Windows.Forms.TextBox
+    $fT.Controls.Add($tbT)
+    $lvT = New-Object System.Windows.Forms.ListView
+    [void]$lvT.Columns.Add('Archivo', 100)
+    $fT.Controls.Add($lvT)
+    $cbT = New-Object System.Windows.Forms.ComboBox
+    $fT.Controls.Add($cbT)
+    $btT = New-Object System.Windows.Forms.Button
+    $fT.Controls.Add($btT)
+    $lbT = New-Object System.Windows.Forms.Label       # un aviso en ROJO
+    $fT.Controls.Add($lbT)
+    $tabT = New-CvGuiTabs -Name 'cvTabsPrueba'
+    $tpT = Add-CvGuiTab -Tabs $tabT -Text 'Una pestana'
+    $fT.Controls.Add($tabT)
+    $sepT = New-CvGuiSeparator
+    $fT.Controls.Add($sepT)
+    $spT = New-Object System.Windows.Forms.SplitContainer
+    $spT.Orientation = 'Vertical'
+    $fT.Controls.Add($spT)
+    [void](Set-CvGuiSplitGrip -Split $spT -Tooltip 'de prueba')
+    $menuT = New-Object System.Windows.Forms.ContextMenuStrip
+    [void]$menuT.Items.Add('Una opcion')
+    $lvT.ContextMenuStrip = $menuT
+
+    # --- La paleta en si (necesita System.Drawing, por eso vive aqui y no en los unitarios) ---
+    # La paleta: los dos temas definen LOS MISMOS roles (si no, una ventana se quedaria sin color).
+    $palL = Get-CvGuiPalette -Theme 'light'
+    $palD = Get-CvGuiPalette -Theme 'dark'
+    foreach ($rol in @('Back', 'Panel', 'Fore', 'Muted', 'Border', 'Accent', 'Ok', 'Warn', 'Error', 'Edited')) {
+        Assert-True ("Paleta: claro tiene {0}" -f $rol)  ($null -ne $palL[$rol])
+        Assert-True ("Paleta: oscuro tiene {0}" -f $rol) ($null -ne $palD[$rol])
+    }
+    Assert-Eq   'Paleta: se identifica'     'dark' "$($palD.Name)"
+    # En oscuro el fondo es OSCURO y el texto CLARO (y al reves en claro): parece obvio, pero es lo que
+    # se rompe al tocar un color a mano.
+    $claridad = { param($c) (0.299 * $c.R + 0.587 * $c.G + 0.114 * $c.B) }
+    Assert-True 'Paleta: oscuro tiene el fondo oscuro' ((& $claridad $palD.Back) -lt 90)
+    Assert-True 'Paleta: oscuro tiene el texto claro'  ((& $claridad $palD.Fore) -gt 180)
+    Assert-True 'Paleta: claro tiene el texto oscuro'  ((& $claridad $palL.Fore) -lt 90)
+    # El texto apagado se distingue del normal pero se sigue leyendo sobre el fondo.
+    Assert-True 'Paleta: apagado != texto normal' ("$($palD.Muted)" -ne "$($palD.Fore)")
+    Assert-True 'Paleta: apagado legible en oscuro' ((& $claridad $palD.Muted) -gt (& $claridad $palD.Back) + 40)
+    # Los tres estados son distintos entre si en los dos temas (si no, un error parece un aviso).
+    foreach ($pal in @($palL, $palD)) {
+        $tres = @("$($pal.Ok)", "$($pal.Warn)", "$($pal.Error)")
+        Assert-Eq ("Paleta {0}: ok/aviso/error distintos" -f $pal.Name) 3 (@($tres | Select-Object -Unique)).Count
+    }
+    # Y en oscuro los tres se leen (el Firebrick de siempre sobre casi negro no).
+    foreach ($rol in @('Ok', 'Warn', 'Error')) {
+        Assert-True ("Paleta: {0} legible en oscuro" -f $rol) ((& $claridad $palD[$rol]) -gt (& $claridad $palD.Back) + 60)
+    }
+    # El resaltado de lo EDITADO (arbol del editor de config) es un rol mas: el azul oscuro de tema
+    # claro sobre el fondo casi negro del oscuro no se leia.
+    Assert-True 'Paleta: editado legible en oscuro' ((& $claridad $palD.Edited) -gt (& $claridad $palD.Back) + 60)
+    Assert-True 'Paleta: editado legible en claro'  ((& $claridad $palL.Edited) -lt (& $claridad $palL.Back) - 60)
+    Assert-True 'Paleta: editado se distingue del texto normal' ("$($palD.Edited)" -ne "$($palD.Fore)")
+    Assert-Eq   'Rol: editado' "$($palD.Edited)" "$(Get-CvGuiRoleColor -Palette $palD -Role 'edited')"
+    # Rol -> color.
+    Assert-Eq 'Rol: error'  "$($palD.Error)" "$(Get-CvGuiRoleColor -Palette $palD -Role 'error')"
+    Assert-Eq 'Rol: muted'  "$($palD.Muted)" "$(Get-CvGuiRoleColor -Palette $palD -Role 'muted')"
+    Assert-Eq 'Rol: lo que no existe -> texto normal' "$($palD.Fore)" "$(Get-CvGuiRoleColor -Palette $palD -Role 'loquesea')"
+    # Iconos: en oscuro se aclaran (si no, el verde oscuro del play se pierde contra el fondo).
+    $rgb = @(46, 125, 50)
+    Assert-Eq   'Icono: en claro no se toca' '46,125,50' ((Get-CvGuiIconRgb -Rgb $rgb -Light $false) -join ',')
+    $claro = @(Get-CvGuiIconRgb -Rgb $rgb -Light $true)
+    Assert-True 'Icono: en oscuro se aclara'  ($claro[0] -gt 46 -and $claro[1] -gt 125 -and $claro[2] -gt 50)
+    Assert-True 'Icono: sin pasarse de 255'   ((@($claro | Where-Object { $_ -gt 255 })).Count -eq 0)
+
+    $palD = Get-CvGuiPalette -Theme 'dark'
+    [void](Set-CvGuiRole -Control $lbT -Role 'error' -Palette $palD)
+    $devuelta = Set-CvGuiTheme -Form $fT -Theme 'dark'
+    Assert-Eq   'Tema: devuelve la paleta aplicada' 'dark' "$($devuelta.Name)"
+    Assert-Eq   'Tema: el fondo de la ventana'  "$($palD.Back)"  "$($fT.BackColor)"
+    Assert-Eq   'Tema: el cuadro de texto'      "$($palD.Panel)" "$($tbT.BackColor)"
+    Assert-Eq   'Tema: la lista'                "$($palD.Panel)" "$($lvT.BackColor)"
+    Assert-Eq   'Tema: el desplegable es plano' 'Flat' "$($cbT.FlatStyle)"
+    Assert-Eq   'Tema: el boton es plano'       'Flat' "$($btT.FlatStyle)"
+    Assert-Eq   'Pestanas: la tira es nuestra'  "$($palD.Back)" "$($tabT.Tag.Strip.BackColor)"
+    Assert-Eq   'Pestanas: la primera queda puesta' 0 ([int]$tabT.Tag.Index)
+    # OJO: no se mira .Visible -con la ventana sin mostrar siempre es falso, porque es la visibilidad
+    # EFECTIVA-, sino cual es la pagina activa (en una ventana de verdad si se ve, ver el banco).
+    Assert-Eq   'Pestanas: y su pagina es la activa' $true ((Get-CvGuiTabPage -Tabs $tabT) -eq $tpT)
+    $tpT2 = Add-CvGuiTab -Tabs $tabT -Text 'Otra'
+    $avisos = @{ N = 0 }
+    [void](Add-CvGuiTabChanged -Tabs $tabT -Action ({ $avisos.N++ }.GetNewClosure()))
+    [void](Select-CvGuiTab -Tabs $tabT -Page $tpT2)
+    Assert-Eq   'Pestanas: al cambiar pasa a la otra' $true ((Get-CvGuiTabPage -Tabs $tabT) -eq $tpT2)
+    Assert-Eq   'Pestanas: y se esconde la primera' $false ([bool]$tpT.Visible)
+    Assert-Eq   'Pestanas: cual esta activa'    'Otra' "$(Get-CvGuiTabPage -Tabs $tabT | ForEach-Object { @($tabT.Tag.Texts)[[int]$tabT.Tag.Index] })"
+    Assert-Eq   'Pestanas: avisa del cambio'    1 ([int]$avisos.N)
+    Assert-Eq   'Tema: el menu sin degradados'  'System' "$($menuT.RenderMode)"
+    Assert-Eq   'Tema: el menu oscuro'          "$($palD.Panel)" "$($menuT.BackColor)"
+    # Lo importante: el aviso NO se pinta del color del texto normal.
+    Assert-Eq   'Tema: el aviso conserva su rojo' "$($palD.Error)" "$($lbT.ForeColor)"
+    Assert-True 'Tema: y no es el texto normal'   ("$($lbT.ForeColor)" -ne "$($palD.Fore)")
+    # Las listas se pintan enteras (cabecera y filas), TAMBIEN las que llevan casillas: ahi el
+    # cuadradito lo dibuja el propio pintor (si no, con OwnerDraw no lo pinta nadie).
+    Assert-Eq   'Tema: la lista se pinta entera' $true ([bool]$lvT.OwnerDraw)
+    $lvChk = New-Object System.Windows.Forms.ListView
+    $lvChk.CheckBoxes = $true
+    [void]$lvChk.Columns.Add('Pista', 100)
+    $fT.Controls.Add($lvChk)
+    [void](Set-CvGuiTheme -Form $fT -Theme 'dark')
+    Assert-Eq   'Tema: la lista con casillas tambien' $true ([bool]$lvChk.OwnerDraw)
+    # El separador de la barra tiene que seguir VIENDOSE tras aplicar el tema DOS veces (se aplica al
+    # montar la ventana y otra vez en 'Shown'): cuando se reconocia por su color, la segunda pasada
+    # lo pintaba del color del fondo y las lineas de la barra desaparecian.
+    Assert-Eq   'Separador: del color del borde'  "$($palD.Border)" "$($sepT.BackColor)"
+    [void](Set-CvGuiTheme -Form $fT -Theme 'dark')
+    Assert-Eq   'Separador: y sigue tras repetir el tema' "$($palD.Border)" "$($sepT.BackColor)"
+    Assert-True 'Separador: no se confunde con el fondo' ("$($sepT.BackColor)" -ne "$($palD.Back)")
+    # El desplegable plano deja una flecha fantasma al estirarse si no se repinta.
+    Assert-Eq   'Combo: se repinta al cambiar de tamano' 'cv-repaint' "$($cbT.AccessibleName)"
+    # El divisor: ancho para poder pincharlo y con su agarre pintado.
+    Assert-True 'Divisor: ancho para agarrarlo'   ($spT.SplitterWidth -ge 8)
+    Assert-Eq   'Divisor: lleva agarre'           'cv-grip' "$($spT.AccessibleName)"
+    Assert-Eq   'Divisor: se puede arrastrar'     $false ([bool]$spT.IsSplitterFixed)
+
+    # REGRESION: cambiar el tema tiene que valer para las ventanas que se abran DESPUES. Antes cada
+    # ventana aplicaba el tema del CONTEXTO cargado al arrancar, asi que al cambiarlo en la cola las
+    # demas (editor de jobs, perfiles, setup) seguian abriendose con el color viejo.
+    $fNueva = New-Object System.Windows.Forms.Form
+    [void](Set-CvGuiTheme -Form $fNueva)        # sin -Theme: el de la sesion
+    Assert-Eq   'Tema: una ventana nueva hereda el de la sesion' "$($palD.Back)" "$($fNueva.BackColor)"
+    $fNueva.Dispose()
+
+    # Volver a claro deshace lo que se pueda deshacer.
+    $palL = Set-CvGuiTheme -Form $fT -Theme 'light'
+    Assert-Eq   'Tema: vuelta a claro'          'light' "$($palL.Name)"
+    Assert-Eq   'Tema: fondo claro otra vez'    "$($palL.Back)"  "$($fT.BackColor)"
+    Assert-Eq   'Tema: el aviso sigue en rojo (el claro)' "$($palL.Error)" "$($lbT.ForeColor)"
+    $fT.Dispose()
+    # El tema de la SESION queda fijado por la ultima llamada (lo usan los dialogos sin contexto).
+    Assert-Eq   'Tema: la sesion recuerda el ultimo' 'light' (Get-CvGuiThemeName)
 }
 
 } finally {

@@ -77,7 +77,30 @@ La sección `profiles` de `config.json` permite definir perfiles **adicionales**
 
 - `label` (opcional): texto que se muestra en el menú. Si se omite, se genera un resumen automático a partir de sus valores (p. ej. `A: 192K, V: h265[NV]/M10/L5/Q(1-20)/DETECT BORDE`). Es la **misma** función (`Format-CvProfileLabel`) que genera las etiquetas de los perfiles de serie en el menú, así que no hay una lista de texto duplicada que mantener.
 - El resto de campos son los de la tabla de abajo pero en `camelCase`: `videoEncoder`, `videoProfile`, `videoLevel`, `qmin`, `qmax`, `crf`, `detectBorder`, `changeSize`, `noUpscale`, `maxWidth`, `multipass`, `audioEncoder`, `audioCodec`, `audioBitrate`, `audioHz`, `audioChannels`, `downmixMode`, `downmixCoeffs`.
-- Se editan **a mano** en el JSON (el editor navegable de `setup` los muestra pero remite aquí, para no corromper el array de objetos). Se cargan al arrancar (`$ctx.Profiles`) y se pasan a `Select-Profile -Extra`.
+- Se cargan al arrancar (`$ctx.Profiles`) y se pasan a `Select-Profile -Extra`. El editor navegable de `config.json` los **muestra** pero no los edita (es un array de objetos); para crearlos y mantenerlos está lo de abajo.
+
+### Crearlos desde el programa (sin tocar el JSON)
+
+Hasta 4.7.0 estos perfiles había que **escribirlos a mano** en el fichero. Ahora hay tres sitios, y los tres escriben por las mismas funciones de `lib\Profile.psm1` (`ConvertTo-CvProfileConfig` → `Test-CvProfileName` → `Save-CvConfigProfile`), así que el resultado es idéntico:
+
+| Dónde | Cómo |
+|---|---|
+| **Al elegir perfil** (ventana de la cola) | `Ajustar...` abre el editor con una caja **Nombre** y el botón **Guardar como perfil**: guarda y además lo usa en ese lote. `Nuevo...` hace lo mismo partiendo de cero, y `Borrar` quita el marcado (solo los `[config]`). |
+| **setup en ventana** | *Configuración → Perfiles...*: lista con **Nuevo / Duplicar / Editar / Borrar** (`Show-CvProfilesWindow`). Debajo de los propios salen los **de serie**, en gris y en solo lectura (viven en el código, no en el config): no se editan ni se borran, pero **se duplican**, que es la forma cómoda de hacerse uno partiendo de algo que ya funciona. |
+| **setup en consola** | *Configuración → Perfiles*: el mismo menú, con el builder interactivo de siempre (`New-CustomProfile`) como editor; *Duplicar* lista también los de serie. |
+
+**El perfil predeterminado** —el que sale ya marcado, con un `*` delante, en el diálogo de perfil y en el menú de consola (donde se acepta con ENTER)— se elige aquí mismo: *Predeterminado* en la ventana (el mismo botón lo quita, y entonces vuelve a serlo *Auto*) y *Elegir el perfil predeterminado* en consola. Vale cualquiera de los tres: uno propio, uno de serie o *Auto*. Se guarda en la clave [`defaultProfile`](ref-configuracion.md#defaultprofile--el-perfil-que-sale-marcado-al-preparar) y se resuelve con `Get-CvDefaultProfileKey` (pura y con tests), que devuelve la clave del menú y cae en *Auto* si lo apuntado ya no existe.
+
+Las filas salen de una fuente única para las dos caras: `Get-CvConfigProfileRows` (los propios), `Get-CvBuiltinProfileRows` (los de serie, numerados **igual que en el menú de perfiles**) y `Get-CvProfileManagerRows`, que las junta en ese orden.
+
+Además, el **perfil Custom de consola** (opción `0` del menú de perfiles) ofrece guardarlo al terminar: *"¿Guardar este perfil en el config para reutilizarlo?"* (por defecto **no**, así que quien siempre pulsa ENTER no nota el cambio).
+
+Detalles que importan:
+
+- **El nombre es la identidad.** Guardar con un nombre que ya existe **sustituye** ese perfil (así se edita); si el nombre está repetido con OTRO perfil, se avisa y no se guarda nada. No distingue mayúsculas: dos nombres que solo se diferencian en eso no se distinguen en el menú.
+- **Solo se escribe lo que tiene valor.** Un campo vacío no se guarda, y un campo ausente significa "usa el global de `encode.*`": así un perfil guardado **sigue** al config si mañana cambias el bitrate o el downmix globales, en vez de quedarse congelado. `detectBorder: false` tampoco se escribe (es el valor de fábrica).
+- **Lo guardado aparece al momento**: la lista de perfiles se relee del **fichero**, no del contexto cargado al abrir la aplicación.
+- **Un perfil escrito a mano sin `label`** se puede usar pero no borrar desde la interfaz (no hay nombre con el que identificarlo); ponle uno.
 
 ## Campos de un perfil
 
@@ -121,6 +144,7 @@ Construcción interactiva:
 3. **Salida de audio**: `copy` (no recodificar) o códec (`aac`/`ac3`/`eac3`/`libmp3lame`/`flac`/`libopus`); si recodifica, **bitrate** apropiado al códec.
 4. Si recodifica: **canales de salida** (`estéreo`/`5.1`/`7.1`) y, si sale **estéreo**, **downmix 5.1→estéreo** (`default` / `dialogue` beta). Por defecto = los globales (`encode.audio.channels`/`downmixMode`). Los **coeficientes** del downmix no se preguntan aquí (usan el global; para afinarlos por perfil, edita `downmixCoeffs` en `config.json`).
 5. **Resumen** + confirmación: `[ENTER]` usar / `[R]` rehacer.
+6. **¿Guardarlo como perfil propio?** (por defecto **no**). Si dices que sí, pide el nombre y lo escribe en la sección `profiles` del config en uso: a partir de ahí sale en el menú como uno más. Ver [§ Crearlos desde el programa](#crearlos-desde-el-programa-sin-tocar-el-json).
 
 En cada uno de esos menús, **`[ENTER]` acepta el valor por defecto** (marcado con `<= por defecto` / mostrado entre corchetes en el prompt), o se teclea otra opción. Los valores por defecto son **configurables** en la sección [`customProfile`](ref-configuracion.md) de `config.json` (encoder, perfil, level, qmin/qmax, crf y bitrate de audio); de fábrica: `hevc_nvenc` / `main10` / `5.0` / `1`–`23` / `192k`.
 

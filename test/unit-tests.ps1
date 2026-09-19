@@ -21,12 +21,15 @@ $Root = Split-Path -Parent $PSScriptRoot
 $Lib  = Join-Path $Root 'lib'
 $modules = @(
     'Log'
+    'Io'
     'Config'
     'Context'
     'Console'
     'Gui'
     'Exec'
     'Job'
+    'JobCore'
+    'WorkerCore'
     'Tools'
     'MediaInfo'
     'Profile'
@@ -165,10 +168,18 @@ Assert-Eq 'sin mapa -> 0'             0 (Get-CvPromptTimeout ([pscustomobject]@{
 Write-Host "`nGet-CvConfigDefaultValue (Config)" -ForegroundColor Cyan
 Assert-Eq 'console/sepWidth = 64'         64  (Get-CvConfigDefaultValue 'console/sepWidth')
 Assert-Eq 'console/progressBarWidth = 20' 20  (Get-CvConfigDefaultValue 'console/progressBarWidth')
+Assert-Eq 'gui/rememberLayout = true'   $true (Get-CvConfigDefaultValue 'gui/rememberLayout')
+Assert-Eq 'gui/queueWidth = 1320'        1320 (Get-CvConfigDefaultValue 'gui/queueWidth')
+Assert-Eq 'gui/queueHeight = 760'         760 (Get-CvConfigDefaultValue 'gui/queueHeight')
+Assert-Eq 'gui/queueSplitPercent = 52'     52 (Get-CvConfigDefaultValue 'gui/queueSplitPercent')
+Assert-Eq 'gui/confirmCloseWithWorkers = true' $true (Get-CvConfigDefaultValue 'gui/confirmCloseWithWorkers')
 Assert-Eq 'console/windowWidth = 150'    150  (Get-CvConfigDefaultValue 'console/windowWidth')
 Assert-Eq 'console/asciiMarks def false' $false (Get-CvConfigDefaultValue 'console/asciiMarks')
 Assert-Eq 'behavior/asciiMarks ya no existe' $null (Get-CvConfigDefaultValue 'behavior/asciiMarks')
 Assert-True 'help console/asciiMarks'    ((Get-CvConfigHelp).Contains('console/asciiMarks'))
+Assert-True 'help gui/rememberLayout'    ((Get-CvConfigHelp).Contains('gui/rememberLayout'))
+Assert-True 'help gui/queueSplitPercent' ((Get-CvConfigHelp).Contains('gui/queueSplitPercent'))
+Assert-True 'help gui/confirmCloseWithWorkers' ((Get-CvConfigHelp).Contains('gui/confirmCloseWithWorkers'))
 Assert-Eq 'behavior/promptTimeoutStopOnType def true' $true (Get-CvConfigDefaultValue 'behavior/promptTimeoutStopOnType')
 Assert-True 'help promptTimeoutStopOnType' ((Get-CvConfigHelp).Contains('behavior/promptTimeoutStopOnType'))
 Assert-Eq 'encode/video/anamorphic def square' 'square' (Get-CvConfigDefaultValue 'encode/video/anamorphic')
@@ -254,6 +265,11 @@ Assert-Eq 'customProfile/audioChannels def' 2           (Get-CvConfigDefaultValu
 Assert-Eq 'customProfile/downmixMode def'  'default'    (Get-CvConfigDefaultValue 'customProfile/downmixMode')
 Assert-Eq 'customProfile/downmixCoeffs/center def' 0.5  (Get-CvConfigDefaultValue 'customProfile/downmixCoeffs/center')
 Assert-True 'help customProfile/detectBorder' ((Get-CvConfigHelp).Contains('customProfile/detectBorder'))
+Assert-Eq 'border/autoSamples def'   3 (Get-CvConfigDefaultValue 'encode/video/border/autoSamples')
+# 15 s por punto, no 5: con ventanas cortas cropdetect se queda con la caja de un plano oscuro.
+Assert-Eq 'border/autoDuration def'  15 (Get-CvConfigDefaultValue 'encode/video/border/autoDuration')
+Assert-Eq 'border/autoMaxCropPct def' 40 (Get-CvConfigDefaultValue 'encode/video/border/autoMaxCropPct')
+Assert-True 'help border/autoMaxCropPct' ((Get-CvConfigHelp).Contains('encode/video/border/autoMaxCropPct'))
 Assert-True 'help customProfile/audioHz'      ((Get-CvConfigHelp).Contains('customProfile/audioHz'))
 # Paridad estricta: customProfile debe traer TODOS los campos que acepta un perfil de profiles[].
 $cpKeys = @((Get-CvConfigDefaults).customProfile.Keys)
@@ -362,7 +378,9 @@ Assert-Eq 'todos dados: surround' 0.2 $cc2.Surround
 # ================================================================================================
 Write-Host "`nGet-CvProcesoPatterns (Job)" -ForegroundColor Cyan
 Assert-True 'jobs incluye *.job.json'  ((Get-CvProcesoPatterns -What jobs)  -contains '*.job.json')
-Assert-Eq   'locks = *.lock'  @('*.lock') (Get-CvProcesoPatterns -What locks)
+# 'locks' = ficheros de CONTROL de los workers (el bloqueo, el estado que publican y la bandera de
+# parada): lo detallan los casos de WorkerCore mas abajo.
+Assert-True 'locks incluye *.lock'     ((Get-CvProcesoPatterns -What locks) -contains '*.lock')
 Assert-True 'temps incluye *.mkv'      ((Get-CvProcesoPatterns -What temps) -contains '*.mkv')
 Assert-True 'temps incluye *.m4a'      ((Get-CvProcesoPatterns -What temps) -contains '*.m4a')
 $all = Get-CvProcesoPatterns -What all
@@ -373,13 +391,35 @@ Assert-Eq   'all sin duplicados'       $all.Count ($all | Select-Object -Unique)
 # ================================================================================================
 Write-Host "`nFuentes unicas (Context / Profile)" -ForegroundColor Cyan
 Assert-Eq 'Get-CvAppName' 'ConvertVideo' (Get-CvAppName)
-Assert-Eq 'Get-CvVersion' '4.6.0'        (Get-CvVersion)
+Assert-Eq 'Get-CvVersion' '4.7.0'        (Get-CvVersion)
 Assert-Eq 'perfiles de serie = 13' 13 ((Get-CvProfiles | ForEach-Object { $_.Profiles } | Measure-Object).Count)
 # Los perfiles de serie con changeSize '1920:-2' (RESIZE fijo) deben ser solo-reduce (NoUpscale).
 $rzProfs = @(Get-CvProfiles | ForEach-Object { $_.Profiles } | Where-Object { "$($_.ChangeSize)" -ne '' })
 Assert-Eq 'perfiles con changeSize = 2' 2 $rzProfs.Count
 Assert-True 'perfiles changeSize NoUpscale' (@($rzProfs | Where-Object { -not [bool]$_.NoUpscale }).Count -eq 0)
+Assert-Eq 'Tamano: vacio si no hay'  ''       (Format-CvSize -Kb 0)
+Assert-Eq 'Tamano: vacio sin bytes'  ''       (Format-CvSize -Bytes 0)
+Assert-Eq 'Tamano: KB -> MB'         '800 MB' (Format-CvSize -Kb (800 * 1024))
+Assert-Eq 'Tamano: bytes -> MB'      '800 MB' (Format-CvSize -Bytes (800 * 1024 * 1024))
+Assert-True 'Tamano: pasa a GB'      ((Format-CvSize -Kb (3 * 1024 * 1024)) -match 'GB')
+
 Assert-Eq 'encode.subtitles.dropEmpty def' $true (Get-CvConfigDefaultValue 'encode/subtitles/dropEmpty')
+# Los codecs de subtitulo y sus extensiones viven en la CONFIG (se amplian sin tocar codigo).
+Assert-True 'subtitles/textCodecs trae subrip' ((Get-CvConfigDefaults).encode.subtitles.textCodecs -contains 'subrip')
+Assert-Eq   'subtitles/imageExtensions PGS' '.sup' "$((Get-CvConfigDefaults).encode.subtitles.imageExtensions['hdmv_pgs_subtitle'])"
+Assert-True 'help encode/subtitles/textCodecs'      ((Get-CvConfigHelp).Contains('encode/subtitles/textCodecs'))
+Assert-True 'help encode/subtitles/imageExtensions' ((Get-CvConfigHelp).Contains('encode/subtitles/imageExtensions'))
+# El mapa se normaliza: da igual como se escriba en config.json.
+$mNorm = ConvertTo-CvSubtitleExtMap -Source ([pscustomobject]@{ PGSSUB = 'sup'; ' dvb_subtitle ' = '.DVB' })
+Assert-Eq   'Mapa: codec a minusculas' '.sup' "$($mNorm['pgssub'])"
+Assert-Eq   'Mapa: pone el punto'      '.dvb' "$($mNorm['dvb_subtitle'])"
+Assert-Eq   'Mapa: vacio sin fuente'   0      (@((ConvertTo-CvSubtitleExtMap -Source $null).Keys)).Count
+# Y lo que se anada en config.json se SUMA a lo de serie (no lo sustituye).
+$cfgSub = Get-CvConfigDefaults
+Merge-CvConfig -Default $cfgSub -Override (ConvertFrom-Json '{ "encode": { "subtitles": { "imageExtensions": { "dvb_subtitle": ".dvb" } } } }')
+$mMerged = ConvertTo-CvSubtitleExtMap -Source $cfgSub.encode.subtitles.imageExtensions
+Assert-Eq   'Mapa: el nuevo entra'     '.dvb' "$($mMerged['dvb_subtitle'])"
+Assert-Eq   'Mapa: y sigue el de serie' '.sup' "$($mMerged['hdmv_pgs_subtitle'])"
 Assert-True 'help encode/subtitles/dropEmpty' ((Get-CvConfigHelp).Contains('encode/subtitles/dropEmpty'))
 
 # ================================================================================================
@@ -953,6 +993,265 @@ Assert-True 'codecOptions hevc main10' (@((Get-CvCodecOptions 'hevc_nvenc').Prof
 Assert-True 'bitrates ac3 hasta 640k' (@(Get-CvAudioBitrates 'ac3' | ForEach-Object { $_.Value }) -contains '640k')
 
 # ================================================================================================
+Write-Host "`nPerfiles propios (guardar en config.json)" -ForegroundColor Cyan
+# ConvertTo-CvProfileConfig es el INVERSO de ConvertTo-CvProfile: lo que se guarda en 'profiles'.
+$pGuard = New-CvProfile -VideoEncoder 'hevc_nvenc' -VideoProfile 'main10' -VideoLevel '5' -Qmin 1 -Qmax 23 `
+    -DetectBorder 'auto' -ChangeSize '1920:-2' -NoUpscale $true -AudioCodec 'ac3' -AudioBitrate '448k'
+$eGuard = ConvertTo-CvProfileConfig -Prof $pGuard -Label 'Serie 1080p'
+Assert-Eq   'ProfileConfig label'        'Serie 1080p' $eGuard.label
+Assert-Eq   'ProfileConfig encoder'      'hevc_nvenc'  $eGuard.videoEncoder
+Assert-Eq   'ProfileConfig detectBorder' 'auto'        $eGuard.detectBorder
+Assert-Eq   'ProfileConfig noUpscale'    $true         $eGuard.noUpscale
+Assert-Eq   'ProfileConfig qmax'         23            $eGuard.qmax
+# Lo que NO tiene valor no se escribe: un campo ausente significa "usa el global de encode.*", que
+# es como lo lee ConvertTo-CvProfile (asi el perfil sigue al config si manana cambia el global).
+Assert-Eq   'ProfileConfig sin crf'      $null ($eGuard.PSObject.Properties['crf'])
+Assert-Eq   'ProfileConfig sin maxWidth' $null ($eGuard.PSObject.Properties['maxWidth'])
+Assert-Eq   'ProfileConfig detectBorder false no se escribe' $null `
+    ((ConvertTo-CvProfileConfig -Prof (New-CvProfile -VideoEncoder 'libx265' -Crf 22) -Label 'x').PSObject.Properties['detectBorder'])
+# IDA Y VUELTA: guardar y volver a leer tiene que dar el MISMO perfil (es lo que garantiza que un
+# perfil guardado se comporte igual que el que se acaba de ajustar).
+$pBack = ConvertTo-CvProfile $eGuard
+foreach ($k in @('VideoEncoder', 'VideoProfile', 'VideoLevel', 'Qmin', 'Qmax', 'Crf', 'DetectBorder', 'ChangeSize', 'NoUpscale', 'MaxWidth', 'Multipass', 'AudioEncoder', 'AudioCodec', 'AudioBitrate', 'AudioHz', 'AudioChannels', 'DownmixMode')) {
+    Assert-Eq ("ProfileConfig ida y vuelta: {0}" -f $k) "$($pGuard.$k)" "$($pBack.$k)"
+}
+Assert-Eq 'ProfileConfig ida y vuelta: copy' 'copy' (ConvertTo-CvProfile (ConvertTo-CvProfileConfig -Prof (New-CvProfile -VideoEncoder 'copy' -AudioEncoder 'copy') -Label 'c')).VideoEncoder
+# Nombre: obligatorio, sin duplicados (sin distinguir mayusculas) y renombrarse a si mismo vale.
+$exist = @(
+    [pscustomobject]@{ label = 'Serie 1080p'; videoEncoder = 'libx265' }
+    [pscustomobject]@{ label = 'Peliculas';   videoEncoder = 'libx265' }
+)
+Assert-Eq   'Nombre vacio no vale'     $false (Test-CvProfileName -Name '   ' -Existing $exist).Ok
+Assert-Eq   'Nombre nuevo vale'        $true  (Test-CvProfileName -Name 'Anime' -Existing $exist).Ok
+Assert-Eq   'Nombre duplicado no vale' $false (Test-CvProfileName -Name 'serie 1080p' -Existing $exist).Ok
+Assert-Eq   'Renombrarse a si mismo'   $true  (Test-CvProfileName -Name 'Serie 1080p' -Existing $exist -Allow 'Serie 1080p').Ok
+Assert-True 'Nombre duplicado lo dice' ((Test-CvProfileName -Name 'Peliculas' -Existing $exist).Error -match 'Peliculas')
+# Lista: anadir al final, sustituir por nombre y renombrar (-Replace) sin cambiar de sitio.
+$lAdd = @(Set-CvProfileInList -List $exist -Entry ([pscustomobject]@{ label = 'Anime'; videoEncoder = 'libx264' }))
+Assert-Eq   'Lista: anade al final'    'Serie 1080p|Peliculas|Anime' ((@($lAdd | ForEach-Object { Get-CvProfileLabel $_ }) -join '|'))
+$lRep = @(Set-CvProfileInList -List $exist -Entry ([pscustomobject]@{ label = 'Serie 1080p'; videoEncoder = 'libx264' }))
+Assert-Eq   'Lista: sustituye, no duplica' 2 $lRep.Count
+Assert-Eq   'Lista: sustituye en su sitio' 'libx264' $lRep[0].videoEncoder
+$lRen = @(Set-CvProfileInList -List $exist -Entry ([pscustomobject]@{ label = 'Series HD'; videoEncoder = 'libx265' }) -Replace 'Serie 1080p')
+Assert-Eq   'Lista: renombra en su sitio'  'Series HD|Peliculas' ((@($lRen | ForEach-Object { Get-CvProfileLabel $_ }) -join '|'))
+Assert-Eq   'Lista: borra por nombre'      'Peliculas' ((@(Remove-CvProfileFromList -List $exist -Label 'Serie 1080p') | ForEach-Object { Get-CvProfileLabel $_ }) -join '|')
+Assert-Eq   'Lista: borrar lo que no esta no toca nada' 2 (@(Remove-CvProfileFromList -List $exist -Label 'No existe')).Count
+# Seccion 'profiles' ausente: array VACIO, no un elemento fantasma (@($null) cuenta 1 y acabaria
+# escrito como 'null' en el fichero).
+Assert-Eq   'Lista de un config sin profiles' 0 (@(Get-CvProfileList ([pscustomobject]@{ encode = @{} }))).Count
+
+# Sobre un config.json de verdad (en temporal): guardar, releer, renombrar y borrar.
+# Perfiles DE SERIE: se listan para poder DUPLICARLOS (no se editan: viven en el codigo).
+$serie = @(Get-CvBuiltinProfileRows)
+Assert-True 'Perfiles de serie: hay varios'      ($serie.Count -ge 10)
+Assert-Eq   'Perfiles de serie: numeracion desde 1' 1 ([int]$serie[0].Num)
+Assert-Eq   'Perfiles de serie: numeracion seguida' $serie.Count ([int]$serie[-1].Num)
+Assert-Eq   'Perfiles de serie: etiquetas distintas' $serie.Count (@($serie | ForEach-Object { $_.Label } | Select-Object -Unique)).Count
+Assert-Eq   'Perfiles de serie: se marcan como tales' 0 (@($serie | Where-Object { "$($_.Kind)" -ne 'serie' })).Count
+Assert-True 'Perfiles de serie: cada uno dice que hace' ((@($serie | Where-Object { "$($_.Text)".Trim() -eq '' })).Count -eq 0)
+Assert-True 'Perfiles de serie: se puede partir de ellos' ($null -ne $serie[0].Prof.VideoEncoder)
+# Perfil PREDETERMINADO: que clave de menu le toca (la misma numeracion en ventana y consola).
+# pscustomobject, que es lo que devuelve leer el config (un hashtable no expone sus claves como
+# propiedades y Get-CvProfileProp no las veria).
+$exProf = @(
+    [pscustomobject]@{ label = 'Series CPU'; videoEncoder = 'libx265' }
+    [pscustomobject]@{ label = 'Peliculas';  videoEncoder = 'hevc_nvenc' }
+)
+Assert-Eq 'Predeterminado: de fabrica es Auto' 'Auto' "$((Get-CvConfigDefaults).defaultProfile)"
+Assert-Eq 'Predeterminado: vacio -> Auto'      'A' (Get-CvDefaultProfileKey -Default '' -Extra $exProf)
+Assert-Eq 'Predeterminado: Auto -> Auto'       'A' (Get-CvDefaultProfileKey -Default 'auto' -Extra $exProf)
+Assert-Eq 'Predeterminado: uno de serie'       '3' (Get-CvDefaultProfileKey -Default 'Perfil 3' -Extra $exProf)
+Assert-Eq 'Predeterminado: da igual como se escriba' '3' (Get-CvDefaultProfileKey -Default '  PERFIL 3 ' -Extra $exProf)
+Assert-Eq 'Predeterminado: uno propio va detras' "$($serie.Count + 1)" (Get-CvDefaultProfileKey -Default 'Series CPU' -Extra $exProf)
+Assert-Eq 'Predeterminado: el segundo propio'       "$($serie.Count + 2)" (Get-CvDefaultProfileKey -Default 'Peliculas' -Extra $exProf)
+# Lo que ya no existe (un perfil borrado, o un numero que se fue) no puede dejar la cosa colgada.
+Assert-Eq 'Predeterminado: nombre que ya no esta -> Auto' 'A' (Get-CvDefaultProfileKey -Default 'Lo que sea' -Extra $exProf)
+Assert-Eq 'Predeterminado: numero fuera de rango -> Auto' 'A' (Get-CvDefaultProfileKey -Default 'Perfil 99' -Extra $exProf)
+
+$profDir = Join-Path ([System.IO.Path]::GetTempPath()) ("cv_prof_" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+New-Item -ItemType Directory -Path $profDir -Force | Out-Null
+$profCfg = Join-Path $profDir 'config.json'
+[void](Save-CvTextFile -Path $profCfg -Text '{ "encode": { "video": { "fps": "25" } } }')
+$rSave = Save-CvConfigProfile -Path $profCfg -Prof $pGuard -Label 'Serie 1080p'
+Assert-Eq   'Guardar: ok'              $true  $rSave.Ok
+Assert-Eq   'Guardar: uno en config'   1      (@(Get-CvConfigProfiles -Path $profCfg)).Count
+Assert-Eq   'Guardar: con su nombre'   'Serie 1080p' (Get-CvProfileLabel (@(Get-CvConfigProfiles -Path $profCfg)[0]))
+Assert-Eq   'Guardar: no toca el resto' '25' "$((Read-CvConfigFile -Path $profCfg).encode.video.fps)"
+# El perfil guardado vuelve IGUAL al pasar por el catalogo del menu (que es como se usa).
+$leido = ConvertTo-CvProfile (@(Get-CvConfigProfiles -Path $profCfg)[0])
+Assert-Eq   'Guardar: mismo encoder'   'hevc_nvenc' $leido.VideoEncoder
+Assert-Eq   'Guardar: misma etiqueta'  (Format-CvProfileLabel $pGuard) (Format-CvProfileLabel $leido)
+# Mismo nombre otra vez = EDITAR (sustituye), no duplicar.
+$rEdit = Save-CvConfigProfile -Path $profCfg -Prof (New-CvProfile -VideoEncoder 'libx265' -Crf 22) -Label 'Serie 1080p'
+Assert-Eq   'Editar: ok'               $true  $rEdit.Ok
+Assert-Eq   'Editar: sigue habiendo 1' 1      (@(Get-CvConfigProfiles -Path $profCfg)).Count
+Assert-Eq   'Editar: con el valor nuevo' 'libx265' "$((@(Get-CvConfigProfiles -Path $profCfg)[0]).videoEncoder)"
+# Un nombre que ya usa OTRO perfil se rechaza (y no se escribe nada).
+[void](Save-CvConfigProfile -Path $profCfg -Prof (New-CvProfile -VideoEncoder 'libx264') -Label 'Peliculas')
+$rDup = Save-CvConfigProfile -Path $profCfg -Prof (New-CvProfile -VideoEncoder 'libx264') -Label 'serie 1080p' -Replace 'Peliculas'
+Assert-Eq   'Duplicado: rechazado'     $false $rDup.Ok
+Assert-Eq   'Duplicado: no se guarda'  2      (@(Get-CvConfigProfiles -Path $profCfg)).Count
+# Renombrar conserva el sitio y no duplica.
+$rRen = Save-CvConfigProfile -Path $profCfg -Prof (New-CvProfile -VideoEncoder 'libx265' -Crf 22) -Label 'Series HD' -Replace 'Serie 1080p'
+Assert-Eq   'Renombrar: ok'            $true  $rRen.Ok
+Assert-Eq   'Renombrar: nombres'       'Series HD|Peliculas' ((@(Get-CvConfigProfiles -Path $profCfg) | ForEach-Object { Get-CvProfileLabel $_ }) -join '|')
+# Borrar.
+Assert-Eq   'Borrar: ok'               $true  (Remove-CvConfigProfile -Path $profCfg -Label 'Peliculas').Ok
+Assert-Eq   'Borrar: queda uno'        1      (@(Get-CvConfigProfiles -Path $profCfg)).Count
+Assert-Eq   'Borrar: el que no esta'   $false (Remove-CvConfigProfile -Path $profCfg -Label 'No existe').Ok
+# Config sin la seccion 'profiles': se crea al guardar el primero.
+$profCfg2 = Join-Path $profDir 'config2.json'
+[void](Save-CvTextFile -Path $profCfg2 -Text '{ "behavior": { "workers": 2 } }')
+Assert-Eq   'Sin seccion: no hay perfiles' 0 (@(Get-CvConfigProfiles -Path $profCfg2)).Count
+Assert-Eq   'Sin seccion: se crea'         $true (Save-CvConfigProfile -Path $profCfg2 -Prof (New-CvProfile -VideoEncoder 'copy') -Label 'Solo contenedor').Ok
+Assert-Eq   'Sin seccion: y queda uno'     1 (@(Get-CvConfigProfiles -Path $profCfg2)).Count
+Assert-Eq   'Sin seccion: no toca lo suyo' 2 ([int]((Read-CvConfigFile -Path $profCfg2).behavior.workers))
+Remove-Item -LiteralPath $profDir -Recurse -Force -ErrorAction SilentlyContinue
+
+# ================================================================================================
+Write-Host "`nGuardar un valor suelto del config" -ForegroundColor Cyan
+# Lo que necesita una ventana para recordar una preferencia (el tema) sin montar el editor entero.
+# Guardar el predeterminado: escribe SOLO esa clave y se relee del fichero (no del contexto).
+$dpDir = Join-Path ([System.IO.Path]::GetTempPath()) ("cv_defprof_" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+New-Item -ItemType Directory -Path $dpDir -Force | Out-Null
+$dpCfg = Join-Path $dpDir 'config.json'
+[void](Save-CvTextFile -Path $dpCfg -Text '{ "behavior": { "workers": 3 } }')
+Assert-Eq   'Predeterminado: sin nada puesto es Auto' 'Auto' (Get-CvConfigDefaultProfile -Path $dpCfg)
+Assert-Eq   'Predeterminado: fichero que no existe'   'Auto' (Get-CvConfigDefaultProfile -Path (Join-Path $dpDir 'no.json'))
+Assert-True 'Predeterminado: se guarda'  (Save-CvConfigDefaultProfile -Path $dpCfg -Label 'Series CPU').Ok
+Assert-Eq   'Predeterminado: y se relee' 'Series CPU' (Get-CvConfigDefaultProfile -Path $dpCfg)
+Assert-Eq   'Predeterminado: no toca el resto del config' 3 ([int](Read-CvConfigFile -Path $dpCfg).behavior.workers)
+Assert-True 'Predeterminado: vacio vuelve a Auto' (Save-CvConfigDefaultProfile -Path $dpCfg -Label '').Ok
+Assert-Eq   'Predeterminado: queda Auto'  'Auto' (Get-CvConfigDefaultProfile -Path $dpCfg)
+Remove-Item -Recurse -Force -LiteralPath $dpDir -ErrorAction SilentlyContinue
+
+$svDir = Join-Path ([System.IO.Path]::GetTempPath()) ("cv_setval_" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+New-Item -ItemType Directory -Path $svDir -Force | Out-Null
+$svCfg = Join-Path $svDir 'config.json'
+[void](Save-CvTextFile -Path $svCfg -Text '{ "behavior": { "workers": 3 }, "gui": { "queueWidth": 1000 } }')
+Assert-Eq   'SetValue: ok'                $true (Set-CvConfigValue -Path $svCfg -Key 'gui/theme' -Value 'dark').Ok
+Assert-Eq   'SetValue: lo guarda'         'dark' "$((Read-CvConfigFile -Path $svCfg).gui.theme)"
+Assert-Eq   'SetValue: no toca lo de al lado' 1000 ([int](Read-CvConfigFile -Path $svCfg).gui.queueWidth)
+Assert-Eq   'SetValue: ni otras secciones'    3    ([int](Read-CvConfigFile -Path $svCfg).behavior.workers)
+Assert-Eq   'SetValue: sobrescribe'       'light' $(
+    [void](Set-CvConfigValue -Path $svCfg -Key 'gui/theme' -Value 'light')
+    "$((Read-CvConfigFile -Path $svCfg).gui.theme)")
+# Una seccion que no existe se crea (un config minimo puede no tener 'gui').
+$svCfg2 = Join-Path $svDir 'config2.json'
+[void](Save-CvTextFile -Path $svCfg2 -Text '{ "behavior": { "workers": 1 } }')
+Assert-Eq   'SetValue: crea la seccion'   $true  (Set-CvConfigValue -Path $svCfg2 -Key 'gui/theme' -Value 'dark').Ok
+Assert-Eq   'SetValue: y queda escrita'   'dark' "$((Read-CvConfigFile -Path $svCfg2).gui.theme)"
+Assert-Eq   'SetValue: clave vacia no vale' $false (Set-CvConfigValue -Path $svCfg2 -Key '' -Value 'x').Ok
+Remove-Item -LiteralPath $svDir -Recurse -Force -ErrorAction SilentlyContinue
+
+# ================================================================================================
+Write-Host "`nTema de las ventanas (claro / oscuro)" -ForegroundColor Cyan
+# Que tema toca: 'system' sigue a Windows (el dato se pasa aparte para poder probarlo sin registro).
+# REGRESION DE ARRANQUE: la paleta usa tipos de System.Drawing, asi que tiene que cargarlo ella
+# sola. Con -Config (como arranca el .cmd) nadie habia llamado a Initialize-CvGui todavia y el
+# lanzador moria con 'No se encuentra el tipo [System.Drawing.Color]' ANTES de abrir la ventana.
+Assert-True 'Arranque: la paleta carga lo que necesita' ($null -ne (Get-CvGuiPalette -Theme 'dark').Back)
+Assert-True 'Arranque: el tema de sesion tambien'       (@('light', 'dark') -contains (Set-CvGuiThemeDefault -Theme 'system'))
+Assert-Eq 'Tema: dark es dark'          'dark'  (Resolve-CvGuiTheme -Theme 'dark')
+Assert-Eq 'Tema: light es light'        'light' (Resolve-CvGuiTheme -Theme 'light')
+Assert-Eq 'Tema: system con Windows oscuro' 'dark'  (Resolve-CvGuiTheme -Theme 'system' -SystemDark $true)
+Assert-Eq 'Tema: system con Windows claro'  'light' (Resolve-CvGuiTheme -Theme 'system' -SystemDark $false)
+Assert-Eq 'Tema: cualquier cosa rara -> claro' 'light' (Resolve-CvGuiTheme -Theme 'azul')
+Assert-Eq 'Config: tema por defecto'    'system' "$((Get-CvConfigDefaults).gui.theme)"
+Assert-Eq 'Catalogo de temas'           3       (@(Get-CvGuiThemes)).Count
+# Las pestanas son PROPIAS (el TabControl de WinForms no se puede oscurecer): el reparto de la fila
+# y el saber donde se ha pinchado son puros, asi que se prueban aqui, sin ventana.
+$tl = @(Get-CvGuiTabLayout -Widths @(100, 40) -PadX 12 -Gap 2 -Start 2)
+Assert-Eq   'Pestanas: cuantas salen'       2   $tl.Count
+Assert-Eq   'Pestanas: la primera empieza'  2   ([int]$tl[0].X)
+Assert-Eq   'Pestanas: ancho = rotulo + margenes' 124 ([int]$tl[0].Width)
+Assert-Eq   'Pestanas: la siguiente va detras'   128 ([int]$tl[1].X)
+Assert-Eq   'Pestanas: pinchar en la primera'  0  (Get-CvGuiTabHit -Rects $tl -X 60)
+Assert-Eq   'Pestanas: pinchar en la segunda'  1  (Get-CvGuiTabHit -Rects $tl -X 130)
+Assert-Eq   'Pestanas: pinchar en el hueco'   -1  (Get-CvGuiTabHit -Rects $tl -X 127)
+Assert-Eq   'Pestanas: pinchar mas alla'      -1  (Get-CvGuiTabHit -Rects $tl -X 900)
+Assert-Eq   'Pestanas: sin pestanas no hay nada' -1 (Get-CvGuiTabHit -Rects @() -X 10)
+# La columna que se come el hueco sobrante (y con el, el trozo de cabecera que no es de ninguna
+# columna, que el sistema pinta claro y no hay forma de oscurecer).
+Assert-Eq   'Columna elastica: lo que sobra'     400 (Get-CvGuiFillColumnWidth -ClientWidth 800 -OtherWidths 400)
+Assert-Eq   'Columna elastica: nunca por debajo del minimo' 120 (Get-CvGuiFillColumnWidth -ClientWidth 300 -OtherWidths 400)
+Assert-Eq   'Columna elastica: minimo a medida' 250 (Get-CvGuiFillColumnWidth -ClientWidth 300 -OtherWidths 400 -Min 250)
+# ================================================================================================
+Write-Host "`nPiezas comunes de las ventanas" -ForegroundColor Cyan
+# HUELLA de un fichero: es lo que evita repintar un panel (o re-leer un json) cuando nada ha cambiado.
+$hDir = Join-Path ([System.IO.Path]::GetTempPath()) ("cv_huella_" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+New-Item -ItemType Directory -Path $hDir -Force | Out-Null
+$hFile = Join-Path $hDir 'log.txt'
+[void](Save-CvTextFile -Path $hFile -Text 'uno')
+$h1 = Get-CvFileStamp -Path $hFile
+Assert-Eq   'Huella: estable si no cambia'  $h1 (Get-CvFileStamp -Path $hFile)
+Assert-True 'Huella: lleva la ruta'         ($h1 -like "$hFile|*")
+[void](Save-CvTextFile -Path $hFile -Text 'uno y dos')
+Assert-True 'Huella: cambia si cambia'      ((Get-CvFileStamp -Path $hFile) -ne $h1)
+Assert-Eq   'Huella: fichero que no esta'   ((Join-Path $hDir 'no.txt') + '|?') (Get-CvFileStamp -Path (Join-Path $hDir 'no.txt'))
+Assert-Eq   'Huella: ruta vacia'            '' (Get-CvFileStamp -Path '')
+Remove-Item -LiteralPath $hDir -Recurse -Force -ErrorAction SilentlyContinue
+# ABRIR algo con Windows: la decision, sin lanzar nada.
+$oFile = 'D:\Videos\Serie_1x01.mkv'
+$oSel = Get-CvOpenCommand -Path $oFile -Select
+Assert-Eq   'Abrir: marcar en el explorador' 'explorer.exe' "$($oSel.Exe)"
+Assert-True 'Abrir: usa /select'             ((@($oSel.Args) -join ' ') -match '/select,')
+Assert-Eq   'Abrir: carpeta'                 'explorer.exe' (Get-CvOpenCommand -Path 'D:\Videos' -Folder).Exe
+Assert-True 'Abrir: la carpeta entrecomillada' ((@((Get-CvOpenCommand -Path 'D:\Videos' -Folder).Args) -join ' ') -match '^"D:')
+$oDef = Get-CvOpenCommand -Path $oFile
+Assert-Eq   'Abrir: fichero -> el asociado'  $oFile "$($oDef.Exe)"
+Assert-Eq   'Abrir: y por la shell'          $true  ([bool]$oDef.Shell)
+Assert-Eq   'Abrir: ruta vacia no abre nada' $false (Open-CvGuiPath -Path '' -Quiet)
+
+# ================================================================================================
+Write-Host "`nReproducir un video (original / convertido)" -ForegroundColor Cyan
+# Con que se abre un video para VERLO entero. Es una decision pura (Get-CvPlayerCommand): que
+# ejecutable y con que argumentos, o si lo abre el asociado de Windows.
+$plDir = Join-Path ([System.IO.Path]::GetTempPath()) ("cv_play_" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+New-Item -ItemType Directory -Path $plDir -Force | Out-Null
+$plFF   = Join-Path $plDir 'ffplay.exe'      # de mentira: solo hace falta que EXISTA
+$plExe  = Join-Path $plDir 'reproductor.exe'
+$plFile = Join-Path $plDir 'Serie_1x01.mkv'
+foreach ($f in @($plFF, $plExe, $plFile)) { [void](Save-CvTextFile -Path $f -Text 'x') }
+$plNoExe = Join-Path $plDir 'no-existe.exe'
+
+# 'start' (el de fabrica): lo abre el programa asociado de Windows, sin argumentos.
+$c1 = Get-CvPlayerCommand -Mode 'start' -FFplay $plFF -File $plFile
+Assert-Eq   'Player start: modo'     'start'  "$($c1.Mode)"
+Assert-Eq   'Player start: shell'    $true    ([bool]$c1.Shell)
+Assert-Eq   'Player start: el propio archivo' $plFile "$($c1.Exe)"
+# 'ffplay': el de tools, con el nombre del archivo como titulo de la ventana.
+$c2 = Get-CvPlayerCommand -Mode 'ffplay' -FFplay $plFF -File $plFile
+Assert-Eq   'Player ffplay: modo'    'ffplay' "$($c2.Mode)"
+Assert-Eq   'Player ffplay: exe'     $plFF    "$($c2.Exe)"
+Assert-Eq   'Player ffplay: sin shell' $false ([bool]$c2.Shell)
+Assert-True 'Player ffplay: el archivo va al final' ((@($c2.Args)[-1]) -eq $plFile)
+Assert-True 'Player ffplay: pone titulo' ((@($c2.Args) -join ' ') -match 'window_title')
+# Sin ffplay instalado no se inventa nada: se cae al asociado.
+$c3 = Get-CvPlayerCommand -Mode 'ffplay' -FFplay (Join-Path $plDir 'no-hay.exe') -File $plFile
+Assert-Eq   'Player ffplay ausente -> start' 'start' "$($c3.Mode)"
+# 'external': el reproductor configurado, con el archivo como argumento.
+$c4 = Get-CvPlayerCommand -Mode 'external' -Exe $plExe -FFplay $plFF -File $plFile
+Assert-Eq   'Player external: exe'   $plExe   "$($c4.Exe)"
+Assert-Eq   'Player external: le pasa el archivo' $plFile ((@($c4.Args) -join '|'))
+# Un external que NO existe no se lanza a ciegas: ffplay, y si tampoco, el asociado.
+Assert-Eq   'Player external ausente -> ffplay' 'ffplay' (Get-CvPlayerCommand -Mode 'external' -Exe $plNoExe -FFplay $plFF -File $plFile).Mode
+Assert-Eq   'Player external ausente y sin ffplay -> start' 'start' (Get-CvPlayerCommand -Mode 'external' -Exe $plNoExe -FFplay '' -File $plFile).Mode
+Assert-Eq   'Player modo vacio -> start' 'start' (Get-CvPlayerCommand -Mode '' -FFplay $plFF -File $plFile).Mode
+Assert-Eq   'Player modo raro -> start'  'start' (Get-CvPlayerCommand -Mode 'loquesea' -FFplay $plFF -File $plFile).Mode
+# Un archivo que no esta no abre nada (y no lanza).
+$plCtx = [pscustomobject]@{ PreviewPlayer = 'start'; PreviewPlayerExe = ''; FFplay = $plFF }
+$rNo = Start-CvVideoPlayer -Context $plCtx -File (Join-Path $plDir 'no-existe.mkv')
+Assert-Eq   'Player: archivo que no esta' $false ([bool]$rNo.Ok)
+Assert-True 'Player: y lo explica'        ("$($rNo.Error)" -match 'No existe')
+Remove-Item -LiteralPath $plDir -Recurse -Force -ErrorAction SilentlyContinue
+# Config: el modo por defecto y su catalogo.
+Assert-Eq   'Config: player por defecto' 'start' "$((Get-CvConfigDefaults).preview.player)"
+Assert-Eq   'Config: playerExe vacio'    ''      "$((Get-CvConfigDefaults).preview.playerExe)"
+Assert-Eq   'Catalogo de reproductores'  3       (@(Get-CvPlayerModes)).Count
+Assert-Eq   'Catalogo: el 1o es start'   'start' (@(Get-CvPlayerModes)[0].Value)
+
+# ================================================================================================
 Write-Host "`nVideo args / Config" -ForegroundColor Cyan
 $ctxV = [pscustomobject]@{
     Fps       = '23.976'
@@ -1458,6 +1757,389 @@ Assert-True 'GpuCache ffmpeg distinto -> null'  ($null -eq (Read-CvGpuCache -Cfg
 Assert-True 'GpuCache gpu distinta -> null'     ($null -eq (Read-CvGpuCache -CfgPath $gpuTmp -Ffmpeg '7.1.1' -Gpu 'GPU-Y'))
 Assert-True 'GpuName es string'                 ((Get-CvGpuName) -is [string])
 Remove-Item $gpuTmp -Force -ErrorAction SilentlyContinue
+
+# ================================================================================================
+Write-Host "`nWorkerCore - estados de la cola" -ForegroundColor Cyan
+# El ORDEN de las reglas es lo que se prueba aqui: quien esta trabajando el archivo manda sobre que
+# exista la salida, porque el fichero de salida EXISTE mientras se escribe (la ruta de una sola
+# pasada escribe directamente en Convertido\) y marcaba 'Hecho' con el worker aun codificando.
+Assert-Eq 'Cola: reclamado por un worker' 'working' (Resolve-CvQueueState -HasJob $true -Claimed $true)
+Assert-Eq 'Cola: bloqueo vivo'           'working' (Resolve-CvQueueState -Locked $true -HasJob $true)
+Assert-Eq 'Cola: salida a medio escribir' 'working' (Resolve-CvQueueState -Done $true -Locked $true -HasJob $true)
+Assert-Eq 'Cola: salida a medio escribir (reclamado)' 'working' (Resolve-CvQueueState -Done $true -Claimed $true)
+# 'Hecho' de verdad = hay salida y YA NO queda job: el worker borra el job solo cuando acaba bien.
+# Si la salida esta pero el job sigue, la conversion se corto a medias (cancelada): 'partial'. Importa
+# porque el worker SALTA los archivos que ya tienen salida, asi que ese resto bloquea el reintento.
+Assert-Eq 'Cola: salida + job = sin terminar' 'partial' (Resolve-CvQueueState -Done $true -HasJob $true)
+Assert-Eq 'Cola: hecho (salida sin job)'      'done'    (Resolve-CvQueueState -Done $true)
+Assert-Eq 'Cola: hecho con bloqueo caducado'  'done'    (Resolve-CvQueueState -Done $true -Locked $true -Stale $true)
+Assert-Eq 'Cola: bloqueo caducado'       'stale'   (Resolve-CvQueueState -Locked $true -Stale $true -HasJob $true)
+Assert-Eq 'Cola: con job, en cola'       'queued'  (Resolve-CvQueueState -HasJob $true)
+Assert-Eq 'Cola: sin job, sin preparar'  'pending' (Resolve-CvQueueState)
+# Catalogo de estados: fuente unica del texto que ensenan consola y ventana.
+$qs = @(Get-CvQueueStates)
+Assert-Eq   'Cola: 6 estados en el catalogo' 6 $qs.Count
+Assert-True 'Cola: todos con texto'      (@($qs | Where-Object { [string]::IsNullOrWhiteSpace($_.Text) }).Count -eq 0)
+foreach ($q in $qs) { Assert-Eq ("Cola: texto de {0}" -f $q.Value) $q.Text (Get-CvQueueStateText -State $q.Value) }
+Assert-Eq 'Cola: estado desconocido tal cual' 'loquesea' (Get-CvQueueStateText -State 'loquesea')
+# Recuento por estado (lo que resume la ventana bajo la lista).
+$fakeRows = @(
+    [pscustomobject]@{ State = 'done' }
+    [pscustomobject]@{ State = 'partial' }
+    [pscustomobject]@{ State = 'working' }
+    [pscustomobject]@{ State = 'queued' }
+    [pscustomobject]@{ State = 'pending' }
+    [pscustomobject]@{ State = 'stale' }
+)
+$tot = Get-CvQueueTotals -Rows $fakeRows
+Assert-Eq 'Totales: total'   6 $tot.Total
+Assert-Eq 'Totales: hechos'  1 $tot.Done
+Assert-Eq 'Totales: sin terminar' 1 $tot.Partial
+Assert-Eq 'Totales: en curso' 1 $tot.Working
+Assert-Eq 'Totales: en cola' 1 $tot.Queued
+Assert-Eq 'Totales: sin preparar' 1 $tot.Pending
+Assert-Eq 'Totales: huerfanos' 1 $tot.Stale
+$totVacio = Get-CvQueueTotals -Rows @()
+Assert-Eq 'Totales: cola vacia' 0 $totVacio.Total
+# Argumentos con los que la ventana abre un worker (puro: se comprueba sin abrir procesos).
+$wa = @(Get-CvConvertWorkerArgs -Root 'D:\cv')
+Assert-True 'Worker args: sin perfil ni config'  (($wa -join ' ') -eq '-NoProfile -ExecutionPolicy Bypass -File "D:\cv\Convert.ps1" -WorkerOnly -Unattended')
+$wc = @(Get-CvConvertWorkerArgs -Root 'D:\cv' -CfgPath 'D:\cv\config.debug.json')
+Assert-True 'Worker args: con -Config'           (($wc -join ' ').Contains('-Config "D:\cv\config.debug.json"'))
+# -Only: solo esos archivos. Va entrecomillado y separado por comas, que es como lo entiende el
+# parser de PowerShell como lista (y 'powershell -File' no expande nada, asi que van literales).
+$wo = @(Get-CvConvertWorkerArgs -Root 'D:\cv' -Only @('Serie_1x01', 'Serie 1x05', 'Peli_[2024]'))
+Assert-True 'Worker args: pasa -Only'            (($wo -join ' ').Contains('-Only "Serie_1x01","Serie 1x05","Peli_[2024]"'))
+Assert-Eq   'Worker args: sin -Only si esta vacio' 0 @(@(Get-CvConvertWorkerArgs -Root 'D:\cv' -Only @()) | Where-Object { $_ -eq '-Only' }).Count
+Assert-Eq   'Worker args: ignora nombres vacios'   0 @(@(Get-CvConvertWorkerArgs -Root 'D:\cv' -Only @('', '   ')) | Where-Object { $_ -eq '-Only' }).Count
+
+# Los ficheros de control de los workers se limpian con los bloqueos (misma fuente unica que usa
+# setup para limpiar Proceso\): si no, un estado o una bandera huerfana se quedarian ahi para siempre.
+$pl = @(Get-CvProcesoPatterns -What locks)
+Assert-True 'Patrones: bloqueos'   ($pl -contains '*.lock')
+Assert-True 'Patrones: estado de workers' ($pl -contains '*.worker.json')
+Assert-True 'Patrones: bandera de parada' ($pl -contains 'stop.flag')
+Assert-True 'Patrones: all incluye el estado' ((Get-CvProcesoPatterns -What all) -contains '*.worker.json')
+
+# ================================================================================================
+Write-Host "`nSubtitulos: codecs de texto y pistas vacias en las opciones del job" -ForegroundColor Cyan
+Assert-True 'Texto: subrip'      (Test-CvSubtitleTextCodec -Codec 'subrip')
+Assert-True 'Texto: ass'         (Test-CvSubtitleTextCodec -Codec 'ASS')
+Assert-True 'Texto: mov_text'    (Test-CvSubtitleTextCodec -Codec 'mov_text')
+Assert-Eq   'Imagen: PGS'        $false (Test-CvSubtitleTextCodec -Codec 'hdmv_pgs_subtitle')
+Assert-Eq   'Imagen: VobSub'     $false (Test-CvSubtitleTextCodec -Codec 'dvd_subtitle')
+Assert-Eq   'Codec vacio'        $false (Test-CvSubtitleTextCodec -Codec '')
+# Nº de lineas (cues) por el TAG de mkvmerge: instantaneo y sin demultiplexar. -1 = no se sabe, y
+# entonces quien lo use (el resumen de la cola) NO debe inventarse nada.
+$stTag = [pscustomobject]@{ index = 4; tags = [pscustomobject]@{ NUMBER_OF_FRAMES = '1082' } }
+$stCero = [pscustomobject]@{ index = 5; tags = [pscustomobject]@{ NUMBER_OF_FRAMES = '0' } }
+$stSin = [pscustomobject]@{ index = 6; tags = [pscustomobject]@{ language = 'spa' } }
+Assert-Eq 'Cues por tag'            1082 (Get-CvSubtitleCueTag -Stream $stTag)
+Assert-Eq 'Cues por tag: cero'      0    (Get-CvSubtitleCueTag -Stream $stCero)
+Assert-Eq 'Cues por tag: sin tag'   -1   (Get-CvSubtitleCueTag -Stream $stSin)
+
+# El SubSel puede llevar el recuento ya hecho (se guarda en el job y el resumen no lo recuenta).
+$sPgs = [pscustomobject]@{ index = 4; codec_name = 'subrip'; disposition = [pscustomobject]@{ default = 0; forced = 0 }; tags = [pscustomobject]@{ language = 'spa' } }
+Assert-Eq 'SubSel: sin recuento -> -1' -1  (ConvertTo-SubSel $sPgs).Cues
+Assert-Eq 'SubSel: guarda el recuento' 842 (ConvertTo-SubSel $sPgs -Cues 842).Cues
+
+# A que fichero se saca cada pista para abrirla fuera: texto a .srt (transcodificado) y las de
+# IMAGEN a su formato tal cual, que es lo unico que se puede hacer con ellas (no hay texto).
+Assert-Eq   'Fichero: subrip -> .srt'  '.srt' (Get-CvSubtitleFileExt -Codec 'subrip')
+Assert-Eq   'Fichero: ass -> .srt'     '.srt' (Get-CvSubtitleFileExt -Codec 'ass')
+Assert-Eq   'Fichero: PGS -> .sup'     '.sup' (Get-CvSubtitleFileExt -Codec 'hdmv_pgs_subtitle')
+Assert-Eq   'Fichero: VobSub -> .idx'  '.idx' (Get-CvSubtitleFileExt -Codec 'dvd_subtitle')
+Assert-Eq   'Fichero: codec raro'      ''     (Get-CvSubtitleFileExt -Codec 'loquesea')
+Assert-Eq   'Fichero: sin codec'       ''     (Get-CvSubtitleFileExt -Codec '')
+# Con contexto mandan sus listas (las de config.json): asi se anade un codec nuevo sin tocar codigo.
+$ctxSub = [pscustomobject]@{
+    SubtitleTextCodecs = @('subrip', 'miformato')
+    SubtitleFileExts   = @{ 'dvb_subtitle' = '.dvb' }
+}
+Assert-Eq   'Fichero: codec nuevo de config' '.dvb' (Get-CvSubtitleFileExt -Codec 'DVB_SUBTITLE' -Context $ctxSub)
+Assert-Eq   'Fichero: texto nuevo de config' '.srt' (Get-CvSubtitleFileExt -Codec 'miformato' -Context $ctxSub)
+Assert-True 'Texto: la lista sale del contexto' (Test-CvSubtitleTextCodec -Codec 'miformato' -Context $ctxSub)
+Assert-Eq   'Texto: y lo que no esta, no'  $false (Test-CvSubtitleTextCodec -Codec 'ass' -Context $ctxSub)
+
+# REGRESION: una pista de subtitulo VACIA (0 cues) NO puede venir marcada para conservar. Es el caso
+# real de 4.5.5: mapearla deja el '-progress' de ffmpeg en N/A y la barra congelada en 0%. La consola
+# la descarta (Select-Subtitles con encode.subtitles.dropEmpty) y las opciones del editor en ventana
+# tienen que hacer lo MISMO: se ensena (marcada como VACIO) pero no se auto-selecciona.
+# Contexto y streams sinteticos: con el tag NUMBER_OF_FRAMES no hace falta ffprobe.
+$subCtx = [pscustomobject]@{
+    SubtitlesToSrt     = @()
+    SubLangs           = @('spa')
+    SubtitlesDropEmpty = $true
+    FFprobe            = ''
+}
+$subInfo = [pscustomobject]@{
+    format  = [pscustomobject]@{ format_name = 'matroska,webm'; filename = 'x.mkv' }
+    streams = @(
+        [pscustomobject]@{
+            index = 4; codec_type = 'subtitle'; codec_name = 'hdmv_pgs_subtitle'
+            disposition = [pscustomobject]@{ default = 0; forced = 0 }
+            tags = [pscustomobject]@{ language = 'spa'; NUMBER_OF_FRAMES = '0' }
+        }
+        [pscustomobject]@{
+            index = 5; codec_type = 'subtitle'; codec_name = 'hdmv_pgs_subtitle'
+            disposition = [pscustomobject]@{ default = 0; forced = 0 }
+            tags = [pscustomobject]@{ language = 'spa'; NUMBER_OF_FRAMES = '1082' }
+        }
+    )
+}
+$so = @(Get-CvJobSubtitleOptions -Context $subCtx -Info $subInfo)
+Assert-Eq   'Subs: se ensenan las dos'      2 $so.Count
+$so0 = $so | Where-Object { $_.Index -eq 4 } | Select-Object -First 1
+$so1 = $so | Where-Object { $_.Index -eq 5 } | Select-Object -First 1
+Assert-True 'Subs: la de 0 cues sale VACIA' $so0.Empty
+Assert-Eq   'Subs: la vacia NO se marca'    $false $so0.Auto
+Assert-True 'Subs: la buena si se marca'    $so1.Auto
+Assert-Eq   'Subs: la buena no es forzada'  $false $so1.AutoForced
+Assert-Eq   'Subs: PGS no es texto'         $false $so1.IsText
+Assert-True 'Subs: las dos son utilizables' ($so0.Usable -and $so1.Usable)
+# Con dropEmpty = false (el comportamiento antiguo) la vacia vuelve a entrar, como en consola.
+$subCtx2 = [pscustomobject]@{
+    SubtitlesToSrt     = @()
+    SubLangs           = @('spa')
+    SubtitlesDropEmpty = $false
+    FFprobe            = ''
+}
+$so2 = @(Get-CvJobSubtitleOptions -Context $subCtx2 -Info $subInfo)
+Assert-True 'Subs: sin dropEmpty entra la vacia' (@($so2 | Where-Object { $_.Index -eq 4 })[0].Auto)
+
+# ================================================================================================
+Write-Host "`nTest-CvCropSignificant (barras de verdad vs ruido de borde)" -ForegroundColor Cyan
+# Un recorte es BARRA si reduce al menos minCropPct; cropdetect casi siempre quita unos pixeles.
+Assert-Eq   'Crop: barras 21:9 en 1080p' $true  (Test-CvCropSignificant -Crop '1920:800:0:140' -Width 1920 -Height 1080 -MinPct 2)
+Assert-Eq   'Crop: 8px de ruido no es barra' $false (Test-CvCropSignificant -Crop '1912:1072:4:4' -Width 1920 -Height 1080 -MinPct 2)
+Assert-Eq   'Crop: sin recorte'          $false (Test-CvCropSignificant -Crop '1920:1080:0:0' -Width 1920 -Height 1080 -MinPct 2)
+Assert-Eq   'Crop: recorte lateral'      $true  (Test-CvCropSignificant -Crop '1440:1080:240:0' -Width 1920 -Height 1080 -MinPct 2)
+# Con el umbral a 0 cualquier reduccion cuenta; sin dimensiones o con basura, $false (no revienta).
+Assert-Eq   'Crop: umbral 0'             $true  (Test-CvCropSignificant -Crop '1912:1080:4:0' -Width 1920 -Height 1080 -MinPct 0)
+Assert-Eq   'Crop: sin dimensiones'      $false (Test-CvCropSignificant -Crop '1920:800:0:140' -Width 0 -Height 0 -MinPct 2)
+Assert-Eq   'Crop: texto no valido'      $false (Test-CvCropSignificant -Crop 'nada' -Width 1920 -Height 1080 -MinPct 2)
+
+# ================================================================================================
+Write-Host "`nGet-CvOutputSize / Format-CvCropCut (que tamano queda y que se quita)" -ForegroundColor Cyan
+# Lo que ensena el resumen debajo de la pista: de que se parte, que se recorta y con que se queda.
+$g1 = Get-CvOutputSize -Width 1920 -Height 1080 -Crop '1920:960:0:60'
+Assert-Eq   'Tamano: recorte 2:1'        '1920x960' ("{0}x{1}" -f $g1.Width, $g1.Height)
+Assert-Eq   'Tamano: 60px arriba'        60 $g1.Top
+Assert-Eq   'Tamano: 60px abajo'         60 $g1.Bottom
+Assert-Eq   'Tamano: nada a los lados'   0  ($g1.Left + $g1.Right)
+Assert-True 'Tamano: se recorta'         $g1.Cropped
+# Escalado automatico: '-2' conserva el aspecto y deja el lado en par.
+$g2 = Get-CvOutputSize -Width 1920 -Height 1080 -Resize '1280:-2'
+Assert-Eq   'Escalado: 1280:-2'          '1280x720' ("{0}x{1}" -f $g2.Width, $g2.Height)
+# '-2' redondea al par MAS CERCANO, como hace ffmpeg (800*1280/1920 = 533,3 -> 534, no 532).
+$g3 = Get-CvOutputSize -Width 1920 -Height 800 -Resize '1280:-2'
+Assert-Eq   'Escalado: alto par'         '1280x534' ("{0}x{1}" -f $g3.Width, $g3.Height)
+$g4 = Get-CvOutputSize -Width 1920 -Height 1080 -Resize '-2:480'
+Assert-Eq   'Escalado: ancho automatico' '854x480'  ("{0}x{1}" -f $g4.Width, $g4.Height)
+Assert-Eq   'Escalado: -1 sin paridad'   '853x480'  ("{0}x{1}" -f ((Get-CvOutputSize -Width 1920 -Height 1080 -Resize '-1:480')).Width, ((Get-CvOutputSize -Width 1920 -Height 1080 -Resize '-1:480')).Height)
+# Recorte Y escalado, en ese orden (es el del filtro).
+$g5 = Get-CvOutputSize -Width 1920 -Height 1080 -Crop '1920:960:0:60' -Resize '1280:-2'
+Assert-Eq   'Tamano: recorte + escalado' '1280x640' ("{0}x{1}" -f $g5.Width, $g5.Height)
+# Un escalado que no cambia nada se detecta (el resumen lo dice: 'no cambia el tamano').
+$g6 = Get-CvOutputSize -Width 1920 -Height 1080 -Crop '1920:960:0:60' -Resize '1920:-2'
+Assert-Eq   'Tamano: escalado que no cambia' '1920x960' ("{0}x{1}" -f $g6.Width, $g6.Height)
+Assert-Eq   'Tamano: setsar se ignora'   '1920x800' (("{0}x{1}" -f ((Get-CvOutputSize -Width 1920 -Height 1080 -Resize '1920:800,setsar=1')).Width, ((Get-CvOutputSize -Width 1920 -Height 1080 -Resize '1920:800,setsar=1')).Height))
+Assert-Eq   'Tamano: sin datos de origen' 0 (Get-CvOutputSize -Width 0 -Height 0 -Crop '1920:960:0:60').Width
+Assert-Eq   'Tamano: recorte imposible'  '1920x1080' ("{0}x{1}" -f ((Get-CvOutputSize -Width 1920 -Height 1080 -Crop '4000:4000:0:0')).Width, ((Get-CvOutputSize -Width 1920 -Height 1080 -Crop '4000:4000:0:0')).Height)
+
+Assert-Eq   'Corte: barras horizontales' 'quita 60px arriba y abajo (barras horizontales)' (Format-CvCropCut -Top 60 -Bottom 60)
+Assert-Eq   'Corte: barras verticales'   'quita 240px a cada lado (barras verticales)'     (Format-CvCropCut -Left 240 -Right 240)
+Assert-Eq   'Corte: asimetrico'          'quita 60px arriba y 4px a la derecha'            (Format-CvCropCut -Top 60 -Right 4)
+Assert-Eq   'Corte: sin recorte'         ''                                                (Format-CvCropCut)
+
+# La celda de BORDES del recorrido de 'Preparar pendientes': un vistazo por archivo.
+Assert-Eq 'Celda: con barras'    '[x] 1920x960'   (Format-CvJobBorderCell -Crop '1920:960:0:60' -Width 1920 -Height 1080 -Detect $true)
+Assert-Eq 'Celda: con escalado'  '[x] 1280x640'   (Format-CvJobBorderCell -Crop '1920:960:0:60' -Resize '1280:-2' -Width 1920 -Height 1080 -Detect $true)
+Assert-Eq 'Celda: sin barras'    '[ ] sin barras' (Format-CvJobBorderCell -Width 1920 -Height 1080 -Detect $true)
+Assert-Eq 'Celda: solo escalado' '1280x720'       (Format-CvJobBorderCell -Resize '1280:-2' -Width 1920 -Height 1080 -Detect $false)
+Assert-Eq 'Celda: nada que decir' ''              (Format-CvJobBorderCell -Width 1920 -Height 1080 -Detect $false)
+Assert-Eq 'Celda: sin datos'      ''              (Format-CvJobBorderCell -Detect $false)
+
+# Nombre corto del encoder para ensenarlo: sale del catalogo del menu, no de una lista aparte.
+Assert-Eq   'Encoder: hevc_nvenc' 'h265 (GPU)' (Get-CvEncoderShortName -Encoder 'hevc_nvenc')
+Assert-Eq   'Encoder: libx265'    'h265 (CPU)' (Get-CvEncoderShortName -Encoder 'libx265')
+Assert-Eq   'Encoder: libsvtav1'  'AV1 (CPU)'  (Get-CvEncoderShortName -Encoder 'libsvtav1')
+Assert-Eq   'Encoder: copy'       'se copia'   (Get-CvEncoderShortName -Encoder 'copy')
+Assert-Eq   'Encoder: desconocido' 'raro'      (Get-CvEncoderShortName -Encoder 'RARO')
+Assert-Eq   'Encoder: vacio'      ''           (Get-CvEncoderShortName -Encoder '')
+
+# ================================================================================================
+Write-Host "`nMerge-CvCropBoxes / Resolve-CvCropAutoDecision (la decision del modo 'auto')" -ForegroundColor Cyan
+# Los puntos NO se votan: se COMBINAN (union + simetria + ruido por eje). Los casos con numeros
+# raros son cajas REALES medidas con ffmpeg sobre tres archivos distintos.
+$decAuto = {
+    param($Boxes, [int]$W, [int]$H, [int]$Max = 40)
+    Resolve-CvCropAutoDecision -Groups @($Boxes | ForEach-Object { @{ Crop = $_; Count = 1 } }) `
+        -Width $W -Height $H -MinCropPct 2 -MaxCropPct $Max
+}
+# --- La combinacion, paso a paso ---
+Assert-Eq 'Union: dos cajas' '1920:960:0:60' (Merge-CvCropBoxes -Boxes @('1920:960:0:60', '1600:960:160:60') -Width 1920 -Height 1080 -MinPct 2)
+# Simetria: 94px a un lado y 2px al otro no son barra; se queda el menor, y 2px es ruido -> no recorta ese eje.
+Assert-Eq 'Union: simetriza y limpia' '1920:960:0:60' (Merge-CvCropBoxes -Boxes @('1824:960:94:60') -Width 1920 -Height 1080 -MinPct 2)
+Assert-Eq 'Union: solo ruido -> vacio' '' (Merge-CvCropBoxes -Boxes @('1916:1076:2:2') -Width 1920 -Height 1080 -MinPct 2)
+Assert-Eq 'Union: pillarbox' '1440:1080:240:0' (Merge-CvCropBoxes -Boxes @('1440:1080:240:0') -Width 1920 -Height 1080 -MinPct 2)
+Assert-Eq 'Union: caja imposible se ignora' '' (Merge-CvCropBoxes -Boxes @('4000:4000:0:0') -Width 1920 -Height 1080 -MinPct 2)
+Assert-Eq 'Union: sin cajas' '' (Merge-CvCropBoxes -Boxes @() -Width 1920 -Height 1080 -MinPct 2)
+Assert-Eq 'Union: sin tamano de origen' '' (Merge-CvCropBoxes -Boxes @('1920:960:0:60') -Width 0 -Height 0 -MinPct 2)
+
+# --- REGRESION (archivo real): 3 puntos de 5s, NINGUNO da las barras buenas y dos son planos
+# oscuros. Con votos no se recortaba nada; combinando, salen las barras de verdad.
+$d204 = & $decAuto @('1168:640:366:174', '1824:960:94:60', '528:672:694:196') 1920 1080
+Assert-Eq 'Auto: barras que antes se escapaban' 'crop' $d204.Decision
+Assert-Eq 'Auto: el recorte es el bueno'        '1920:960:0:60' $d204.Crop
+# --- REGRESION (otro archivo real): barras 2:1 + una escena oscura.
+$dReal = & $decAuto @('1920:960:0:60', '224:608:818:228') 1920 1080
+Assert-Eq 'Auto: barras 2:1 se recortan'   'crop' $dReal.Decision
+Assert-Eq 'Auto: no se lo come la oscura'  '1920:960:0:60' $dReal.Crop
+# --- REGRESION (tercer archivo real): SIN barras, solo 2-4px de borde sucio.
+$dNone = & $decAuto @('1424:1072:2:4', '1168:704:238:264') 1428 1080
+Assert-Eq 'Auto: sin barras no recorta' 'none' $dNone.Decision
+Assert-Eq 'Auto: y no propone recorte'  ''     $dNone.Crop
+# Un punto ve el fotograma ENTERO: eso manda (la union no recorta nada).
+Assert-Eq 'Auto: un punto a pantalla completa manda' 'none' (& $decAuto @('1920:800:0:140', '1920:1080:0:0') 1920 1080).Decision
+Assert-Eq 'Auto: unanime'          'crop' (& $decAuto @('1920:800:0:140', '1920:800:0:140') 1920 1080).Decision
+Assert-Eq 'Auto: sin candidatos'   'none' (& $decAuto @() 1920 1080).Decision
+# Un recorte desproporcionado no se aplica solo: se propone y se confirma.
+$dBig = & $decAuto @('1200:500:360:290') 1920 1080
+Assert-Eq 'Auto: recorte enorme -> a mano' 'manual' $dBig.Decision
+Assert-True 'Auto: dice cuanto quitaria'   ($dBig.Reason -match '% de alto')
+Assert-Eq 'Auto: con tope alto, se aplica' 'crop' (& $decAuto @('1200:500:360:290') 1920 1080 90).Decision
+
+# ================================================================================================
+Write-Host "`nIo - ficheros (JSON atomico, UTF-8 sin BOM) y helpers genericos" -ForegroundColor Cyan
+# Un solo sitio para escribir y leer: lo usan el job, el estado de los workers, config.json y el
+# tamano recordado de las ventanas.
+$ioDir = Join-Path ([System.IO.Path]::GetTempPath()) ("cv_io_" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+New-Item -ItemType Directory -Path $ioDir -Force | Out-Null
+try {
+    $ioJson = Join-Path $ioDir 'x.json'
+    Assert-True 'Io: guarda json'      (Save-CvJsonFile -Path $ioJson -Object ([pscustomobject]@{ a = 1; b = 'dos' }))
+    Assert-Eq   'Io: releido'          'dos' "$((Read-CvJsonFile -Path $ioJson).b)"
+    Assert-True 'Io: sin .tmp de sobra' (-not (Test-Path -LiteralPath "$ioJson.tmp"))
+    # UTF-8 SIN BOM: con BOM, ffmpeg y media herramienta se atragantan.
+    $ioBytes = [System.IO.File]::ReadAllBytes($ioJson)
+    Assert-True 'Io: sin BOM'          (-not ($ioBytes[0] -eq 0xEF -and $ioBytes[1] -eq 0xBB))
+    Assert-Eq   'Io: no existe -> null' $null (Read-CvJsonFile -Path (Join-Path $ioDir 'no-hay.json') -Quiet)
+    Set-Content -Path (Join-Path $ioDir 'roto.json') -Value '{ esto no es json' -Encoding UTF8
+    Assert-Eq   'Io: roto -> null'      $null (Read-CvJsonFile -Path (Join-Path $ioDir 'roto.json') -Quiet)
+    Assert-Eq   'Io: escribe texto'     'hola' (Get-Content -Raw -LiteralPath (Save-CvTextFile -Path (Join-Path $ioDir 't.txt') -Text 'hola')).Trim()
+
+    # REGRESION: escribir mientras OTRO proceso tiene el fichero abierto leyendo. Pasaba de verdad
+    # -la ventana de la cola relee los estados de los workers cada segundo y el worker se llevaba un
+    # 'el proceso no puede obtener acceso al archivo porque esta siendo utilizado en otro proceso'-.
+    # Se arregla por los dos lados: el lector comparte (ReadWrite+Delete) y el escritor reintenta.
+    $ioOcup = Join-Path $ioDir 'ocupado.json'
+    [void](Save-CvJsonFile -Path $ioOcup -Object ([pscustomobject]@{ a = 1 }))
+    $fsOcup = [System.IO.File]::Open($ioOcup, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read,
+        ([System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete))
+    try {
+        Assert-True 'Io: se escribe aunque otro lea' (Save-CvJsonFile -Path $ioOcup -Object ([pscustomobject]@{ a = 2 }) -Quiet)
+    } finally { $fsOcup.Dispose() }
+    Assert-Eq   'Io: y queda el valor nuevo'  2 ([int](Read-CvJsonFile -Path $ioOcup).a)
+    # Y al reves: leer NO impide que el duenyo reemplace el fichero (el lector comparte el borrado).
+    $fsLee = $null
+    try {
+        $ioTxt = Join-Path $ioDir 'leyendo.txt'
+        [void](Save-CvTextFile -Path $ioTxt -Text 'uno')
+        $fsLee = [System.IO.File]::Open($ioTxt, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read,
+            ([System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete))
+        Assert-Eq 'Io: lectura compartida' 'uno' (Read-CvTextFileShared -Path $ioTxt).Trim()
+    } finally { if ($null -ne $fsLee) { $fsLee.Dispose() } }
+    # Con un lector que NO comparte (antivirus, Get-Content de otro), se reintenta y si no se puede
+    # se dice que no (sin lanzar) y sin dejar el .tmp tirado.
+    $ioDuro = Join-Path $ioDir 'bloqueado.json'
+    [void](Save-CvJsonFile -Path $ioDuro -Object ([pscustomobject]@{ a = 1 }))
+    $fsDuro = [System.IO.File]::Open($ioDuro, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+    try {
+        Assert-Eq   'Io: bloqueado de verdad -> false' $false (Save-CvJsonFile -Path $ioDuro -Object ([pscustomobject]@{ a = 3 }) -Quiet)
+    } finally { $fsDuro.Dispose() }
+    Assert-True 'Io: no deja el .tmp tirado' (-not (Test-Path -LiteralPath "$ioDuro.tmp"))
+} finally {
+    Remove-Item -Recurse -Force -LiteralPath $ioDir -ErrorAction SilentlyContinue
+}
+
+# ¿Sigue vivo ese proceso? (bloqueos y estado de workers preguntan lo mismo)
+Assert-True 'Proceso: yo estoy vivo'   (Test-CvProcessAlive -ProcessId $PID)
+Assert-Eq   'Proceso: pid 0'    $false (Test-CvProcessAlive -ProcessId 0)
+Assert-Eq   'Proceso: pid absurdo' $false (Test-CvProcessAlive -ProcessId 999999)
+
+# Reloj H:MM:SS (duracion de un archivo y ETA larga) y MB para comparar tamanos.
+Assert-Eq   'Reloj: 50 min'     '0:50:10' (Format-CvClock -Seconds 3010)
+Assert-Eq   'Reloj: 1 hora'     '1:00:00' (Format-CvClock -Seconds 3600)
+Assert-Eq   'Reloj: trunca'     '0:00:59' (Format-CvClock -Seconds 59.9)
+Assert-Eq   'Reloj: negativo'   '0:00:00' (Format-CvClock -Seconds -5)
+Assert-Eq   'MB: cero'          '0'       (Format-CvMb -Bytes 0)
+Assert-True 'MB: un mega'       ((Format-CvMb -Bytes 1MB) -match '^1([.,]0)?$')
+Assert-True 'MB: decimal'       ((Format-CvMb -Bytes (1536 * 1024)) -match '^1[.,]5$')
+
+# ================================================================================================
+Write-Host "`nJobCore - forma del job y validacion" -ForegroundColor Cyan
+# ConvertTo-CvJobRecord es la FUENTE UNICA de la estructura del .job.json: la usan la consola
+# (Convert.ps1) y el editor en ventana. Si cambia aqui, cambia en los dos sitios a la vez.
+$jctxFake = [pscustomobject]@{ FFmpegVersion = '7.1.1'; AacGainVersion = '1.9' }
+$rec = ConvertTo-CvJobRecord -Context $jctxFake -File 'D:\x\peli.mkv' -Prof ([pscustomobject]@{ VideoEncoder = 'libx265' }) `
+    -VideoIndex 0 -Crop '1920:800:0:140' -Resize '1280:-2' -Anim $true `
+    -AudioTracks @([pscustomobject]@{ Index = 1; Is51 = $true; Sync = 1.5; Lang = 'spa'; Default = $true }) `
+    -Subtitles @([pscustomobject]@{ Index = 4 })
+Assert-Eq   'Job: claves de primer nivel' 'file|profile|ffmpegVersion|aacgainVersion|video|audio|subtitles|subtitleCues' (@($rec.Keys) -join '|')
+Assert-True 'Job: video trae sus 6 campos' ((@('skip','index','crop','resize','anim','hdr') | Where-Object { -not $rec.video.ContainsKey($_) }).Count -eq 0)
+Assert-Eq   'Job: ffmpeg del contexto'  '7.1.1' $rec.ffmpegVersion
+Assert-Eq   'Job: aacgain del contexto' '1.9'   $rec.aacgainVersion
+Assert-Eq   'Job: archivo de origen' 'D:\x\peli.mkv' $rec.file
+Assert-Eq   'Job: recorte'   '1920:800:0:140' $rec.video.crop
+Assert-Eq   'Job: escalado'  '1280:-2'        $rec.video.resize
+Assert-Eq   'Job: animacion' $true            $rec.video.anim
+Assert-Eq   'Job: sin Info no marca HDR' $false $rec.video.hdr
+Assert-Eq   'Job: una pista de audio' 1 @($rec.audio.tracks).Count
+Assert-Eq   'Job: idioma de la pista' 'spa' $rec.audio.tracks[0].lang
+Assert-Eq   'Job: sync numerico'      1.5   $rec.audio.tracks[0].sync
+Assert-True 'Job: sync es double'     ($rec.audio.tracks[0].sync -is [double])
+Assert-Eq   'Job: pista predeterminada' $true $rec.audio.tracks[0].default
+Assert-Eq   'Job: subtitulos'         1 @($rec.subtitles).Count
+# Lineas de TODAS las pistas de subtitulo (no solo de las elegidas): asi el resumen puede
+# ensenarlas sin volver a demultiplexar el fichero. Sin pasarlas, la clave queda vacia.
+Assert-True 'Job: mapa de lineas vacio por defecto' ($null -ne $rec.subtitleCues -and @($rec.subtitleCues.Keys).Count -eq 0)
+$recCue = ConvertTo-CvJobRecord -Context $jctxFake -File 'x.mkv' -Prof ([pscustomobject]@{}) -SubtitleCues @{ '4' = 0; '5' = 1082 }
+Assert-Eq   'Job: guarda las lineas de la 5' 1082 $recCue.subtitleCues['5']
+Assert-Eq   'Job: y las de la vacia'         0    $recCue.subtitleCues['4']
+# Sin pistas de audio la clave sigue existiendo (lista vacia), no desaparece.
+$recVacio = ConvertTo-CvJobRecord -Context $jctxFake -File 'x.mkv' -Prof ([pscustomobject]@{}) -AudioSkip $true
+Assert-Eq   'Job: audio.skip en copy'    $true $recVacio.audio.skip
+Assert-Eq   'Job: tracks vacio es lista' 0     @($recVacio.audio.tracks).Count
+
+# Validacion del borrador (lo que impide guardar).
+$okDraft = [pscustomobject]@{
+    File = 'x.mkv'; VideoSkip = $false; VideoIndex = 0; Crop = ''; AudioSkip = $false
+    Audio = @([pscustomobject]@{ Index = 1; Lang = 'spa'; Sync = 0; Default = $true })
+}
+$v1 = Test-CvJobDraft -Draft $okDraft
+Assert-True 'Borrador correcto'        $v1.Ok
+Assert-Eq   'Borrador sin avisos'  0   @($v1.Warnings).Count
+$badCrop = $okDraft.PSObject.Copy(); $badCrop.Crop = '1920x800'
+Assert-Eq   'Borrador: recorte mal escrito' $false (Test-CvJobDraft -Draft $badCrop).Ok
+$noDef = $okDraft.PSObject.Copy()
+$noDef.Audio = @([pscustomobject]@{ Index = 1; Lang = 'spa'; Sync = 0; Default = $false })
+Assert-Eq   'Borrador: sin predeterminada' $false (Test-CvJobDraft -Draft $noDef).Ok
+$twoDef = $okDraft.PSObject.Copy()
+$twoDef.Audio = @(
+    [pscustomobject]@{ Index = 1; Lang = 'spa'; Sync = 0; Default = $true }
+    [pscustomobject]@{ Index = 2; Lang = 'eng'; Sync = 0; Default = $true }
+)
+Assert-Eq   'Borrador: dos predeterminadas' $false (Test-CvJobDraft -Draft $twoDef).Ok
+$noVid = $okDraft.PSObject.Copy(); $noVid.VideoIndex = -1
+Assert-Eq   'Borrador: sin pista de video'  $false (Test-CvJobDraft -Draft $noVid).Ok
+$copyVid = $okDraft.PSObject.Copy(); $copyVid.VideoIndex = -1; $copyVid.VideoSkip = $true
+Assert-True 'Borrador: en copy no hace falta indice' (Test-CvJobDraft -Draft $copyVid).Ok
+$badLang = $okDraft.PSObject.Copy()
+$badLang.Audio = @([pscustomobject]@{ Index = 1; Lang = 'castellano'; Sync = 0; Default = $true })
+$v2 = Test-CvJobDraft -Draft $badLang
+Assert-True 'Borrador: idioma raro solo avisa' ($v2.Ok -and @($v2.Warnings).Count -eq 1)
+Assert-Eq   'Borrador vacio no es valido' $false (Test-CvJobDraft -Draft $null).Ok
 
 # ================================================================================================
 $total = $script:pass + $script:fail

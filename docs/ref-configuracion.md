@@ -38,19 +38,23 @@ Esquema completo (tras la fusión con los defaults):
                    "video": { "videoEncoder": "hevc_nvenc", "videoProfile": "main10", "videoLevel": "5.0", "fps": "23.976", "forceFps": true, "multipass": "off", "tonemapHdr": "auto", "tonemapCurve": "bt.2390", "anamorphic": "square", "qualityCheck": "off",
                               "auto": { "gpuOnly": false, "maxCodec": "", "crf": 23, "crfAv1": 30, "qmin": 1, "qmax": 23, "level": "5.0" },
                               "tuning": { "presetNvenc": "slow", "presetX26x": "slow", "presetSvtav1": "6", "presetAv1Nvenc": "p6", "rcLookahead": 32, "refs": 4, "tier": "high" },
-                              "border": { "start": 120, "duration": 120, "samples": 6, "autoAcceptPct": 60, "autoAcceptMinMargin": 2, "autoSamples": 3, "autoDuration": 5, "minCropPct": 2 } },
+                              "border": { "start": 120, "duration": 120, "samples": 6, "autoAcceptPct": 60, "autoAcceptMinMargin": 2, "autoSamples": 3, "autoDuration": 15, "autoMaxCropPct": 40, "minCropPct": 2 } },
                    "audio": { "hz": 44100, "channels": 2, "encoder": "aac_coder", "codec": "aac", "bitrate": "192k", "downmixMode": "default", "downmixCoeffs": { "center": 0.5, "front": 0.35, "surround": 0.15 }, "syncAdelay": true, "multiAudio": true, "keepTitle": false, "syncThreshold": 2.0, "aacCoder": "twoloop",
                               "volume": { "method": "loudnorm", "peakTarget": 0, "loudnorm": { "I": -16, "TP": -1.5, "LRA": 11 } } },
-                   "subtitles": { "toSrt": ["webvtt"], "defaultLang": "", "dropEmpty": true } } },
+                   "subtitles": { "toSrt": ["webvtt"], "defaultLang": "", "dropEmpty": true,
+                                  "textCodecs": ["subrip", "srt", "ass", "ssa", "mov_text", "webvtt", "text", "eia_608", "subviewer"],
+                                  "imageExtensions": { "hdmv_pgs_subtitle": ".sup", "pgssub": ".sup", "dvd_subtitle": ".idx", "dvdsub": ".idx" } } } },
   "customProfile": { "videoEncoder": "hevc_nvenc", "videoProfile": "main10", "videoLevel": "5.0", "qmin": 1, "qmax": 23, "crf": 21, "multipass": "off", "audioCodec": "aac", "audioBitrate": "192k" },
-  "preview":     { "start": 0, "seconds": 0, "syncSeconds": 0, "subtitleEditor": "start", "subtitleEditorExe": "" },
+  "preview":     { "start": 0, "seconds": 0, "syncSeconds": 0, "subtitleEditor": "start", "subtitleEditorExe": "", "player": "start", "playerExe": "" },
   "postprocess": { "stripTags": true, "mkvpropedit": "", "attachments": { "keep": false, "fonts": true, "covers": false, "other": false } },
   "behavior":    { "cleanTemps": true, "separateWindow": true, "lockCloseButton": true, "log": true, "workers": 2, "retries": 2, "progress": true, "promptTimeout": { "default": 0, "sync": 5, "border": 10, "animation": 10, "anamorphic": 10, "audioSync": 15, "video": -1, "audio": -1, "subtitle": -1, "subtitleLang": 15 }, "promptTimeoutStopOnType": true },
   "debug":       { "enabled": false, "pausePerCommand": true },
   "test":        { "enabled": false, "minutes": 5, "betaDownmix": false, "betaOnePass": false },
   "console":     { "background": "DarkBlue", "foreground": "Yellow", "font": "Cascadia Code", "fontSize": 18, "windowWidth": 150, "windowHeight": 40, "sepWidth": 64, "progressBarWidth": 20, "asciiMarks": false },
+  "gui":         { "theme": "system", "rememberLayout": true, "confirmCloseWithWorkers": true, "queueWidth": 1320, "queueHeight": 760, "queueSplitPercent": 52 },
   "paths":       { "original": "", "proceso": "", "convertido": "", "logs": "" },
   "profiles":    [ { "label": "...", "videoEncoder": "...", "crf": 18, ... } ],
+  "defaultProfile": "Auto",
   "gpuCache":    { "ffmpeg": "7.1.1", "gpu": "NVIDIA GeForce ...", "encoders": ["h264","hevc"] }
 }
 ```
@@ -147,6 +151,8 @@ Las claves de vídeo van bajo **`encode.video`** y las de audio bajo **`encode.a
 | `subtitles.toSrt` | `["webvtt"]` | **Lista de tipos de subtítulo (por codec) a convertir a SRT.** Un subtítulo **legible** cuyo codec esté en la lista se transcodifica a SubRip (`-c:s srt`) en el mismo comando. El **WEBVTT embebido** que ffmpeg **no puede leer** (el demuxer de Matroska lo marca `none`) se **rescata con `mkvextract`** a un temporal y se convierte a srt en la misma ejecución. Los subtítulos ilegibles **no** cubiertos por la lista (o en contenedor no-MKV) se **ignoran** con `[AVISO]` (copiarlos tumbaría la conversión). Lista **vacía** = no convertir nada. Añade p. ej. `"ass"`, `"mov_text"`. Necesita `mkvextract` (se descarga con mkvtoolnix). Detalle en [ref-gotchas.md](ref-gotchas.md). |
 | `subtitles.dropEmpty` | `true` | **Descarta al preparar las pistas de subtítulo VACÍAS** (sin un solo cue). Se detectan **sin demultiplexar**, por los tags de mkvmerge (`NUMBER_OF_FRAMES = 0` o `DURATION = 00:00:00`); **ante la duda (sin tags) no se descarta nada**. Además de evitar una pista muerta en la salida, impide que la **barra de progreso se congele**: ffmpeg calcula el `out_time` de `-progress` como el **mínimo de todas las pistas de salida**, así que una pista vacía lo deja en `N/A` toda la codificación. `false` = conservarlas. |
 | `subtitles.defaultLang` | `""` | **Idioma por defecto** de la pregunta de idioma del **fallback** de subtítulos (cuando ninguno es del idioma preferido). Con un código (p. ej. `"spa"`), ese es el valor que aplica **ENTER**/timeout: reetiqueta las pistas elegidas sin teclearlo cada vez (útil si siempre vienen mal etiquetadas igual). **`""` (por defecto)** = clásico: ENTER **mantiene** el idioma del subtítulo elegido. Se puede teclear otro código en el momento para sobreescribir. |
+| `subtitles.textCodecs` | `["subrip", "srt", "ass", "ssa", "mov_text", "webvtt", "text", "eia_608", "subviewer"]` | **Qué códecs de subtítulo son de TEXTO**: se pueden leer, contar sus líneas y sacar a `.srt`. Lo que **no** esté aquí se trata como de **imagen** (mapas de bits: PGS, VobSub, DVB), que no tiene texto que enseñar y solo se puede extraer tal cual. Si aparece un códec de texto nuevo, se añade aquí y funciona en todo el programa (visor, resumen, editor de jobs) sin tocar código. Ojo: es una **lista**, y una lista en `config.json` **sustituye** a la de serie (no se suma), así que hay que escribirla entera. |
+| `subtitles.imageExtensions` | `{ "hdmv_pgs_subtitle": ".sup", "pgssub": ".sup", "dvd_subtitle": ".idx", "dvdsub": ".idx" }` | **A qué fichero se saca cada códec de IMAGEN** al extraerlo para abrirlo fuera (`códec de ffmpeg` → `extensión`). Lo que pongas **se suma** a los de serie: en `config.json` solo hacen falta los códecs nuevos, no repetir estos. Da igual cómo lo escribas (`PGSSUB`/`sup` vale: se normaliza a minúsculas y con punto). Un códec que no esté en la lista no se puede extraer, y así se dice. |
 
 Sobre `threads` (uso de CPU):
 
@@ -189,10 +195,11 @@ Detección de bordes negros con `cropdetect` en varios puntos del vídeo (ruta c
 | `start` | `120` | Segundo donde empieza el muestreo de `cropdetect` (primer punto). Si el vídeo es más corto, se ajusta solo a ~10% de su duración. |
 | `duration` | `120` | Segundos que escanea **cada** punto (no es un total: con `samples=6` son 6 escaneos de `duration` s cada uno). |
 | `samples` | `6` | Nº de puntos repartidos del vídeo donde se escanean bordes (`1` = solo al inicio, clásico). Cuantos más puntos, más fiable la detección (p. ej. si los créditos iniciales o una escena oscura tienen distinto encuadre); cada punto mantiene su ventana de `duration` s, así que subir `samples` **aumenta el tiempo total** de análisis (N × `duration`). |
-| `autoAcceptPct` | `60` | % de votos que debe alcanzar el recorte **más votado** (sobre los puntos que detectaron borde) para **aceptarse automáticamente**, descartando los atípicos (p. ej. una escena oscura con otro encuadre). Si el más votado llega a ese % **y** cumple `autoAcceptMinMargin`, se usa sin preguntar (preview + confirmar); si no, se muestra el menú de recortes por votos para elegir a mano. `100` = exigir unanimidad. Detalle y matriz de decisión: [explica-deteccion-bordes.md](explica-deteccion-bordes.md). |
+| `autoAcceptPct` | `60` | % de votos que debe alcanzar el recorte **más votado** (sobre los puntos que detectaron borde) para **aceptarse automáticamente**, descartando los atípicos (p. ej. una escena oscura con otro encuadre). Si el más votado llega a ese % **y** cumple `autoAcceptMinMargin`, se usa sin preguntar (preview + confirmar); si no, se muestra el menú de recortes por votos para elegir a mano. `100` = exigir unanimidad. **Solo aplica al escaneo del modo interactivo** (`detectBorder: true` y el menú manual): el modo `auto` no vota, combina los puntos por unión. Detalle: [explica-deteccion-bordes.md](explica-deteccion-bordes.md). |
 | `autoAcceptMinMargin` | `2` | Margen mínimo de votos del más votado sobre el segundo para auto-aceptar (**además** del %). Evita auto-aceptar con evidencia débil cuando hay pocas muestras: `2/3` = 67% pero solo `+1` de margen → pregunta; `6/9` = 67% con `+3` → auto. `0` = solo cuenta el %. Detalle y matriz de decisión: [explica-deteccion-bordes.md](explica-deteccion-bordes.md). |
-| `autoSamples` / `autoDuration` | `3` / `5` | Pre-escaneo del modo `DetectBorder: 'auto'` (más ligero que el normal): nº de puntos y segundos por punto. Nota: el escáner aplica un mínimo de **5 s/punto**, así que `autoDuration < 5` se trata como 5. |
-| `minCropPct` | `2` | Reducción mínima (% de ancho o alto) para que el modo `auto` considere que **hay barras de verdad**; por debajo se toma como ruido de borde y **no** recorta (p. ej. un `3824` sobre `3832` = 0,2% → se ignora). |
+| `autoSamples` / `autoDuration` | `3` / `15` | Pre-escaneo del modo `DetectBorder: 'auto'` (más ligero que el normal): nº de puntos y segundos por punto. **15 s y no 5**: en 5 s el tramo puede caer entero dentro de un plano oscuro, y como `cropdetect` acumula, su caja no llega a crecer hasta el fotograma real (medido sobre un episodio con barras: con 5 s ningún punto las daba). El escáner aplica un mínimo de 5 s/punto. |
+| `autoMaxCropPct` | `40` | Tope de recorte que el modo `auto` aplica **solo**. Los puntos se combinan por **unión** (lo que está negro en todos), así que el resultado ya es conservador; pero si aun así sale un recorte mayor que este % de ancho o de alto, se **propone** y se pide confirmación en vez de aplicarlo a ciegas — casi siempre significa que ningún punto vio un plano a pantalla completa. Referencia: un 2.39:1 dentro de 16:9 se lleva ~22% del alto; un 4:3, ~25% del ancho. |
+| `minCropPct` | `2` | Reducción mínima (% de ancho o alto) para que el modo `auto` considere que **hay barras de verdad**; por debajo se toma como ruido de borde y **no** recorta (p. ej. un `3824` sobre `3832` = 0,2% → se ignora). Se aplica **por eje**: unas barras arriba y abajo se recortan aunque los 2px de los lados se ignoren. |
 
 ## `preview`
 
@@ -203,6 +210,8 @@ Reproducción con ffplay en PREPARAR (previews de **pista de audio**, **pista de
 | `start` | `0` | Segundo donde **empieza** la muestra. `0` = **desde el principio**. Si el vídeo es **más corto** que el valor, el inicio se ajusta solo a ~10% de su duración (no se queda fuera). |
 | `seconds` | `0` | **Duración** (s) de la muestra. `0` = **sin límite**: reproduce hasta el final (o hasta que cierres con `q`/ESC). `> 0` = una muestra de esos segundos. |
 | `syncSeconds` | `0` | **Tope** (s) de **cada preview** de la comparación **A/B** de sincronía de audio (original vs corregido). Como ahora se reproduce la **fuente directa** con ffplay (no se codifica ningún clip), admite **`0` = sin límite** (reproduce hasta el final o hasta cerrar con `q`/ESC), igual que `seconds`. Ponlo `> 0` si prefieres una muestra corta. |
+| `player` | `"start"` | Con qué **reproducir un vídeo entero** desde la cola (menú contextual → *Reproducir el ORIGINAL / el CONVERTIDO*): `start` = el reproductor **asociado de Windows** (el que ya tienes configurado; si no hay asociación, cae a `ffplay`), `ffplay` = el de `tools\` (siempre está), `external` = el de `playerExe`. No afecta a las **previews** de PREPARAR, que son siempre `ffplay` con sus filtros. |
+| `playerExe` | `""` | Ruta al reproductor que usa `player: "external"` (VLC, MPC-HC…). Si no existe, se cae a `ffplay` y, si tampoco, al asociado: nunca se lanza un `.exe` que no está. |
 | `subtitleEditor` | `"start"` | Cómo abrir el texto de un subtítulo con **`V N`** en el menú. Tres modos: **`"start"` (por defecto)** = el programa **asociado de Windows** (*fallback* a Notepad); **`"win"`** = una **ventana propia de PowerShell** (WinForms + `RichTextBox` de solo lectura, monoespaciado, con scroll; modal, ESC para cerrar), sin editor externo; **`"external"`** = el `.exe` de `subtitleEditorExe`. Si el modo elegido falla, cae al asociado de Windows. Compatibilidad: `""`≡`"start"` y `"ventana"`≡`"win"`. `V N` admite override puntual: **`V N <modo> [exe]`** (ver [ref-perfiles.md](ref-perfiles.md)). |
 | `subtitleEditorExe` | `""` | Ruta al `.exe` que usa el modo **`"external"`** de `subtitleEditor` (p. ej. `C:\...\SubtitleEdit.exe`, VS Code). Ignorado en `"start"`/`"win"`. Si está vacío estando en `"external"`, cae al asociado de Windows. |
 
@@ -310,6 +319,20 @@ En el **resumen de conversión** (al terminar), la duración es la del fichero *
 | `progressBarWidth` | `20` | Ancho (caracteres) de la barra visual de progreso del worker (`████████░░░░░░░░░░░░`, junto al `%` en vídeo/audio). `0` = sin barra (solo el `%`). Fuente única; `Get-CvProgressBar` la usa. Solo aplica con `behavior.progress = true` y duración conocida. |
 | `asciiMarks` | `false` | Usa marcas ASCII (`[OK]`/`[ERROR]`) y corchetes `[ ]` en los avisos, en vez de los símbolos `✓`/`✗` y el badge `▐ … ▌`. Útil si la consola/fuente no tiene esos glifos (se verían como cuadros). Es apariencia de consola (por eso está aquí y no en `behavior`). |
 
+## `gui` — apariencia de las ventanas
+
+Lo que `console` es para el modo consola, pero para `Convert-gui` / `setup-gui`.
+
+| Clave | Ejemplo | Uso |
+|---|---|---|
+| `theme` | `"system"` | Aspecto de **todas las ventanas**: `system` sigue lo que tenga Windows (Configuración → Personalización → Colores → *Modo de aplicación*), `light` fuerza claro y `dark` fuerza oscuro. Detalle y límites en [ref-gotchas.md](ref-gotchas.md). |
+| `rememberLayout` | `true` | Al **cerrar** la ventana de la cola se apunta cómo quedó (tamaño, maximizada, posición del divisor y anchos de columna) y la siguiente vez se abre igual. Con `false` no se escribe nada y siempre se abre con los tamaños de aquí. |
+| `confirmCloseWithWorkers` | `true` | Al **cerrar** la cola con workers codificando, preguntar qué hacer (dejarlos en segundo plano, parada ordenada o cortarlos). Los workers son **procesos aparte**: cerrar la ventana **no los mata**, así que con `false` se cierra sin avisar y siguen codificando ocultos. Es el equivalente en ventana de `behavior.lockCloseButton`. |
+| `queueWidth` / `queueHeight` | `1320` / `760` | Tamaño (px) de la ventana de la cola **la primera vez** (o siempre, con `rememberLayout: false`). Nunca por debajo del mínimo de la ventana (860x560) ni mayor que la pantalla. |
+| `queueSplitPercent` | `52` | Porcentaje del alto para la **lista** de la cola; el resto, para el resumen y el log. Se usa cuando no hay nada recordado. Válido 10-90. |
+
+> **Dónde se apunta.** En `<config>.gui.json`, **junto al config en uso** y con su mismo nombre (`config.json` → `config.gui.json`, `config.debug.json` → `config.debug.gui.json`): cada configuración tiene su `Original\` y su cola, y se mira de otra manera. Es un fichero de **estado, no de configuración**: se puede borrar sin más y las ventanas vuelven a abrir con los valores de aquí. Está cubierto por el `.gitignore` de `config.*json`.
+
 ## `paths` — carpetas de trabajo
 
 Permite ubicar las carpetas fuera de la carpeta del programa. Cada valor admite **ruta absoluta** (`E:\Media\Original`, `\\servidor\share\in`) o **relativa** al programa; **vacío** = por defecto junto al programa. La carpeta se crea sola si no existe.
@@ -348,7 +371,19 @@ Array **opcional** de perfiles que se **añaden** a los de serie en el menú *US
 | `maxWidth` | `1920` | Reduce a ese ancho **solo si el vídeo es mayor** (manteniendo aspecto; no amplía). Alternativa a `changeSize` (si están los dos, manda `changeSize`). Se compara contra el **ancho mostrado** (`almacenado × SAR`), no el almacenado: en vídeo **anamórfico** (SAR ≠ 1, p. ej. un `1920` que se ve a `2538`) el tope actúa sobre lo que realmente se ve, y el reescalado conserva el aspecto (DAR) del original. Ver [ref-perfiles.md](ref-perfiles.md) y la nota de vídeo anamórfico en [ref-gotchas.md](ref-gotchas.md). |
 | `audioEncoder` / `audioCodec` / `audioBitrate` / `audioHz` | `"aac_coder"` / `"aac"` / `"192k"` / `44100` | Audio. `audioCodec` = codec de salida al recodificar (`aac`/`ac3`/`eac3`/`libmp3lame`/`flac`/`libopus`). Ver [explica-audio.md](explica-audio.md). |
 
-Se editan **a mano** en el JSON (el editor navegable de `setup` los muestra pero remite a este documento, para no corromper el array de objetos). Ver [ref-perfiles.md](ref-perfiles.md).
+**No hace falta escribirlos a mano**: se crean y se mantienen desde el programa — *setup → Configuración → Perfiles* (ventana y consola; ahí también se **duplica** uno de serie para partir de él), el botón *Guardar como perfil* al ajustar un perfil en la cola, o la pregunta del perfil Custom de consola al terminarlo. Se escribe **solo lo que tiene valor** (un campo ausente sigue cayendo al global de `encode.*`) y el `label` es lo que identifica al perfil para editarlo o borrarlo. Detalle en [ref-perfiles.md](ref-perfiles.md#crearlos-desde-el-programa-sin-tocar-el-json). El editor navegable de `config.json` los **muestra** pero no los edita (es un array de objetos).
+
+## `defaultProfile` — el perfil que sale marcado al preparar
+
+Cuál de los perfiles aparece **ya elegido** al abrir el diálogo de perfil (ventana) o el menú *USAR PERFIL* (consola), donde además se marca con un **`*`** y se acepta con **ENTER**. Admite tres formas:
+
+| Valor | Qué elige |
+| --- | --- |
+| `"Auto"` (por defecto) | *Auto*: el mejor encoder de **este** equipo (GPU si puede, si no CPU). |
+| `"Perfil 3"` | El perfil **de serie** número 3, con la misma numeración del menú. |
+| `"Series 1080p (CPU)"` | El perfil **propio** de [`profiles`](#profiles--perfiles-de-codificación-propios) con ese `label`. |
+
+Lo que no se reconozca —un perfil propio que se borró, un número que ya no existe— cae en *Auto*, que es como se comportaba antes de que esta clave existiera. **No hace falta escribirlo a mano**: se elige en *setup → Configuración → Perfiles* (botón *Predeterminado* en la ventana, o la opción del mismo nombre en consola), y se lee del **fichero**, así que cambiarlo vale sin reiniciar.
 
 ## Fichero de config alternativo (`-Config`)
 

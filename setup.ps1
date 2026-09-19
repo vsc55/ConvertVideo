@@ -24,7 +24,7 @@ param(
     # se lanzan en su propia consola para ver el progreso en vivo sin bloquear la ventana; tambien
     # sirve para automatizar setup desde un .cmd o CI.
     #   -Task install -App ffmpeg -Version 7.1.1 [-SetDefault]
-    #   -Task tests   -Suite unit|features
+    #   -Task tests   -Suite unit|features|gui|cola
     [ValidateSet('', 'install', 'tests')][string]$Task = '',
     [string]$App = '',          # -Task install: app del catalogo 'downloads'
     [string]$Version = '',      # -Task install: version a instalar
@@ -41,6 +41,7 @@ $Lib  = Join-Path $Root 'lib'
 # config.json; Profile = catálogos de opciones que el editor lista en los menús -Get-CvEditorOptions-).
 $modules = @(
     'Log'
+    'Io'
     'Config'
     'Context'
     'Console'
@@ -261,6 +262,110 @@ function Clear-Proceso {
     }
 }
 
+function Show-ProfilesMenu {
+    <#
+        Perfiles PROPIOS (config.json -> 'profiles'): los que se anaden a los de serie en el menu de
+        USAR PERFIL. Aqui se crean, se editan, se duplican y se borran, en vez de escribirlos a mano
+        en el fichero como habia que hacer hasta ahora. Duplicar vale tambien sobre los de SERIE:
+        partir de uno que ya funciona es lo comodo para hacerse el suyo (los de serie en si no se
+        tocan: viven en el codigo, no en el config).
+
+        El perfil se construye con el MISMO builder interactivo que la opcion Custom del menu de
+        perfiles (New-CustomProfile), y se guarda con Save-CvProfileInteractive: las dos caras
+        (consola y ventana) escriben con las mismas funciones de lib\Profile.psm1.
+    #>
+    while ($true) {
+        Clear-Host
+        $rows = @(Get-CvConfigProfileRows -Path $CfgPath)
+        Write-CvLog 'SETUP' ("Perfiles propios de {0}: {1}   (los de serie salen al duplicar)" -f $CfgName, $rows.Count)
+        if ($rows.Count -gt 0) {
+            Write-Host ''
+            foreach ($r in $rows) { Write-Host ("   - {0}   ({1})" -f $r.Label, $r.Text) -ForegroundColor Gray }
+        }
+        Write-Host ''
+        Write-CvLog 'SETUP' ("Predeterminado (sale marcado al preparar): {0}" -f (Get-CvConfigDefaultProfile -Path $CfgPath))
+        Write-Host ''
+        $optNew = 'Crear un perfil nuevo'
+        $optDup = 'Duplicar un perfil (propio o de serie)'
+        $optDef = 'Elegir el perfil predeterminado'
+        $opts = @($optNew, $optDup, $optDef)
+        if ($rows.Count -gt 0) { $opts += @('Editar un perfil', 'Borrar un perfil') }
+        $sel = Select-FromList -Title 'PERFILES' -Options $opts -NoneLabel 'volver' -DefaultIndex 0
+        if ($sel -eq '') { return }
+
+        # Para editar / duplicar / borrar, primero cual. Al duplicar entran tambien los de serie.
+        $target = $null
+        if ($sel -ne $optNew) {
+            $pool = $(if ($sel -eq $optDup -or $sel -eq $optDef) { @(Get-CvProfileManagerRows -Path $CfgPath) } else { $rows })
+            # Para elegir el predeterminado entra tambien 'Auto', que es el de fabrica.
+            if ($sel -eq $optDef) {
+                $pool = @($pool) + @([pscustomobject]@{
+                    Label = 'Auto'
+                    Text  = 'mejor encoder de este equipo (GPU si puede, si no CPU)'
+                    Kind  = 'auto'
+                    Prof  = $null
+                })
+            }
+            if ($pool.Count -eq 0) { continue }
+            # Se elige por POSICION, no por nombre: un perfil propio podria llamarse igual que la
+            # etiqueta de uno de serie ('Perfil 3') y se cogeria el que no es.
+            $ops = @()
+            for ($i = 0; $i -lt $pool.Count; $i++) {
+                $ops += @{
+                    Value = "$i"
+                    Text  = ("{0}   [{1}]   ({2})" -f $pool[$i].Label, "$($pool[$i].Kind)", $pool[$i].Text)
+                }
+            }
+            $pick = Select-FromList -Title 'QUE PERFIL:' -Options $ops -NoneLabel 'volver' -DefaultIndex 1
+            if ("$pick" -eq '') { continue }
+            $target = $pool[[int]"$pick"]
+            if ($null -eq $target) { continue }
+        }
+
+        Clear-Host
+        switch ($sel) {
+            'Crear un perfil nuevo' {
+                # -NoSaveOffer: aqui el guardado no se OFRECE, se da por hecho (a eso se ha venido),
+                # asi que lo pide este menu y no el builder.
+                $p = New-CustomProfile -Context $ctx -NoSaveOffer
+                if ($null -ne $p) { [void](Save-CvProfileInteractive -Prof $p -Path $CfgPath) }
+                else { Write-CvLog 'SETUP' 'Cancelado.' }
+                Wait-Setup
+            }
+            'Editar un perfil' {
+                Write-CvLog 'SETUP' ("Editando '{0}'. Se parte de sus valores; al terminar se guarda con el mismo nombre." -f $target.Label)
+                $p = New-CustomProfile -Context $ctx -Seed $target.Prof -NoSaveOffer
+                if ($null -ne $p) { [void](Save-CvProfileInteractive -Prof $p -Path $CfgPath -Current $target.Label) }
+                else { Write-CvLog 'SETUP' 'Cancelado.' }
+                Wait-Setup
+            }
+            'Duplicar un perfil (propio o de serie)' {
+                Write-CvLog 'SETUP' ("Duplicando '{0}'. Cambia lo que quieras y dale OTRO nombre." -f $target.Label)
+                $p = New-CustomProfile -Context $ctx -Seed $target.Prof -NoSaveOffer
+                if ($null -ne $p) { [void](Save-CvProfileInteractive -Prof $p -Path $CfgPath) }
+                else { Write-CvLog 'SETUP' 'Cancelado.' }
+                Wait-Setup
+            }
+            'Elegir el perfil predeterminado' {
+                $r = Save-CvConfigDefaultProfile -Path $CfgPath -Label "$($target.Label)"
+                if ($r.Ok) { Write-CvLog 'SETUP' ("[OK] - Predeterminado: '{0}' (sale marcado al preparar, y con ENTER en el menu)." -f $target.Label) }
+                else { Write-CvLog 'SETUP' ("[ERROR] - {0}" -f $r.Error) }
+                Wait-Setup
+            }
+            'Borrar un perfil' {
+                if (Read-YesNo ("Borrar el perfil '{0}'?" -f $target.Label) $false) {
+                    $r = Remove-CvConfigProfile -Path $CfgPath -Label $target.Label
+                    if ($r.Ok) { Write-CvLog 'SETUP' ("[OK] - Borrado '{0}' (quedan {1})." -f $target.Label, $r.Count) }
+                    else { Write-CvLog 'SETUP' ("[ERROR] - {0}" -f $r.Error) }
+                } else {
+                    Write-CvLog 'SETUP' 'Cancelado.'
+                }
+                Wait-Setup
+            }
+        }
+    }
+}
+
 function Show-CleanMenu {
     Clear-Host
     $proc  = $ctx.Proceso
@@ -268,7 +373,7 @@ function Show-CleanMenu {
     $nlock = @(Get-ChildItem -LiteralPath $proc -Filter '*.lock'     -File -ErrorAction SilentlyContinue).Count
     $opts = @(
         ("Eliminar jobs (*.job.json)        [{0}]" -f $njob),
-        ("Eliminar bloqueos (*.lock)        [{0}]" -f $nlock),
+        ("Eliminar bloqueos y estado de workers [{0}]" -f $nlock),
         'Eliminar temporales (mkv / m4a / wav)',
         'Eliminar TODO (jobs + bloqueos + temporales)'
     )
@@ -357,16 +462,47 @@ function Show-Estado {
 # ===========================================================================
 #  Submenu de herramientas (instalar / cambiar version de cada app)
 # ===========================================================================
+function Show-UseVersionMenu {
+    # Cambiar la version EN USO entre las YA instaladas, sin descargar nada. Antes la unica forma de
+    # tocar 'selected' era instalando, asi que volver a una version que ya se tenia obligaba a
+    # bajarla otra vez. La regla (solo versiones instaladas) vive en Set-CvSetupVersionInUse.
+    Clear-Host
+    $names = @(Get-AppNames)
+    $app = Select-FromList -Title 'USAR UNA VERSION YA INSTALADA (no se descarga nada)' -Options $names -NoneLabel 'volver' -DefaultIndex 1
+    if ($app -eq '') { return }
+    Clear-Host
+    $inst = @(Get-CvInstalledVersions -Context $ctx -Name $app)
+    if ($inst.Count -eq 0) {
+        Write-CvLog 'SETUP' ("No hay ninguna version de {0} instalada; instala una primero." -f $app)
+        Wait-Setup; return
+    }
+    $cur  = "$((Get-App $app).selected)"
+    $opts = @($inst | ForEach-Object { if ("$_" -eq $cur) { "{0}   (en uso)" -f $_ } else { "$_" } })
+    $v = Select-FromList -Title ("Version de {0} que se usara" -f $app) -Options $opts -NoneLabel 'volver' -DefaultIndex 1
+    if ($v -eq '') { return }
+    Clear-Host
+    $ver = ("$v" -split '\s+')[0]
+    $r = Set-CvSetupVersionInUse -Context $ctx -CfgPath $CfgPath -Name $app -Version $ver
+    if ($r.Ok) { Write-CvLog 'SETUP' ("[OK] - {0}: {1} (no se ha descargado nada)." -f $CfgName, $r.Reason) }
+    else       { Write-CvLog 'SETUP' ("[ERR] - {0}" -f $r.Reason) }
+    Wait-Setup
+}
+
 function Show-ToolsMenu {
     while ($true) {
         Clear-Host
         $names = @(Get-AppNames)
         $opts  = @()
         foreach ($n in $names) { $opts += ("Instalar / cambiar version de {0}" -f $n) }
+        $opts += 'Usar una version YA instalada (sin descargar)'
         $opts += 'Reinstalar TODO (version por defecto de cada app)'
         $sel = Select-FromList -Title 'HERRAMIENTAS (instalar / versiones)' -Options $opts -NoneLabel 'volver' -DefaultIndex 1
         if ($sel -eq '') { return }
         Clear-Host
+        if ($sel -like 'Usar una version*') {
+            Show-UseVersionMenu
+            continue
+        }
         if ($sel -like 'Reinstalar TODO*') {
             foreach ($n in $names) { Invoke-InstallApp -Name $n -Version "$((Get-App $n).selected)" | Out-Null }
         } else {
@@ -431,8 +567,10 @@ while (-not $exit) {
 
     $headers[$opts.Count] = 'Configuracion'
     $optEditCfg  = ("Editar configuracion ({0})" -f $CfgName)
+    $optProfiles = ("Perfiles ({0} propios guardados; los de serie se pueden duplicar)" -f @(Get-CvConfigProfiles -Path $CfgPath).Count)
     $optResetCfg = ("Restablecer {0} (valores por defecto)" -f $CfgName)
     $opts += $optEditCfg
+    $opts += $optProfiles
     $opts += $optResetCfg
 
     $headers[$opts.Count] = 'Limpieza'
@@ -454,6 +592,9 @@ while (-not $exit) {
         # Editor en lib\ConfigEditor.psm1. Sin pausa al salir: vuelve directo al menu principal
         # (el guardado ya fue una accion explicita; el menu se redibuja limpio a continuacion).
         Edit-CvConfigFile -Root $Root -CfgPath $CfgPath -CfgName $CfgName
+    }
+    elseif ($choice -eq $optProfiles) {
+        Show-ProfilesMenu                    # crear / editar / duplicar / borrar perfiles propios
     }
     elseif ($choice -eq $optResetCfg) {
         Reset-Config                         # limpia y pausa por su cuenta

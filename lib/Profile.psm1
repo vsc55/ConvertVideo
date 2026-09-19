@@ -207,6 +207,29 @@ function Get-CvVideoEncoders {
     )
 }
 
+function Get-CvEncoderShortName {
+    <#
+        PURO. Nombre corto y legible de un encoder de video para ENSENARLO ('hevc_nvenc' -> 'h265 (GPU)').
+        Sale del MISMO catalogo del menu (Get-CvVideoEncoders), cuyo texto empieza por '[h265 - GPU]':
+        asi no hay una segunda lista que mantener. Si el encoder no esta en el catalogo se devuelve su
+        nombre tal cual (p. ej. uno escrito a mano en config.json).
+    #>
+    param([string]$Encoder)
+    $e = "$Encoder".Trim().ToLower()
+    if ($e -eq '')     { return '' }
+    if ($e -eq 'copy') { return 'se copia' }
+    foreach ($o in (Get-CvVideoEncoders)) {
+        if ("$($o.Value)".ToLower() -ne $e) { continue }
+        if ("$($o.Text)" -match '^\[([^\]]+)\]') {
+            $parts = @(($Matches[1] -split '-') | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' })
+            if ($parts.Count -ge 2) { return ("{0} ({1})" -f $parts[0], $parts[1]) }
+            if ($parts.Count -eq 1) { return $parts[0] }
+        }
+        break
+    }
+    return $e
+}
+
 function Get-CvCpuEncoders {
     <# Fuente unica de los encoders de video por CPU (usan CRF, no QP/multipass de NVENC). #>
     @(
@@ -704,6 +727,377 @@ function ConvertTo-CvProfile {
         -DownmixCoeffs (ConvertTo-CvDownmixCoeffs (Get-CvProfileProp $Obj 'downmixCoeffs' $null))
 }
 
+# ===========================================================================
+#  Perfiles PROPIOS (config.json -> 'profiles'): guardarlos, renombrarlos y borrarlos
+#
+#  Hasta ahora un perfil hecho a mano (el Custom de consola / 'Ajustar...' de la ventana) moria con
+#  el job: para reutilizarlo habia que escribirlo A MANO en config.json. Esto es lo que falta para
+#  cerrar el circulo, y vive AQUI -con el resto de lo que sabe de perfiles- en vez de en cada UI:
+#  la consola y las dos ventanas llaman a las mismas funciones.
+#
+#  Las de LISTA son puras (se prueban sin tocar disco); las de fichero son una capa fina encima.
+# ===========================================================================
+
+function ConvertTo-CvProfileConfig {
+    <#
+        PURO. Inverso de ConvertTo-CvProfile: el objeto camelCase que se guarda en config.json.
+
+        Solo se escribe lo que TIENE valor. Un campo ausente significa "usa el global de encode.*",
+        que es exactamente como lo lee ConvertTo-CvProfile: asi un perfil guardado sigue al config
+        si manana se cambia el bitrate o el downmix globales, en vez de quedarse congelado.
+    #>
+    param(
+        [Parameter(Mandatory)]$Prof,
+        [string]$Label = ''
+    )
+    $o = [ordered]@{}
+    if ("$Label".Trim() -ne '') { $o['label'] = "$Label".Trim() }
+    # El encoder SIEMPRE se escribe (incluido 'copy'): es lo que define el perfil.
+    $o['videoEncoder'] = "$($Prof.VideoEncoder)"
+    if ("$($Prof.VideoProfile)".Trim() -ne '') { $o['videoProfile'] = "$($Prof.VideoProfile)".Trim() }
+    if ("$($Prof.VideoLevel)".Trim()   -ne '') { $o['videoLevel']   = "$($Prof.VideoLevel)".Trim() }
+    if ($null -ne $Prof.Qmin) { $o['qmin'] = [int]$Prof.Qmin }
+    if ($null -ne $Prof.Qmax) { $o['qmax'] = [int]$Prof.Qmax }
+    if ($null -ne $Prof.Crf)  { $o['crf']  = [int]$Prof.Crf }
+    # detectBorder: 'auto' o $true se guardan; $false es el default, no hace falta escribirlo.
+    if ("$($Prof.DetectBorder)".ToLower() -eq 'auto') { $o['detectBorder'] = 'auto' }
+    elseif ([bool]$Prof.DetectBorder)                 { $o['detectBorder'] = $true }
+    if ("$($Prof.ChangeSize)".Trim() -ne '') { $o['changeSize'] = "$($Prof.ChangeSize)".Trim() }
+    if ([bool]$Prof.NoUpscale)               { $o['noUpscale']  = $true }
+    if ($null -ne $Prof.MaxWidth -and [int]$Prof.MaxWidth -gt 0) { $o['maxWidth'] = [int]$Prof.MaxWidth }
+    if ("$($Prof.Multipass)".Trim()    -ne '') { $o['multipass']    = "$($Prof.Multipass)".Trim() }
+    if ("$($Prof.AudioEncoder)".Trim() -ne '') { $o['audioEncoder'] = "$($Prof.AudioEncoder)".Trim() }
+    if ("$($Prof.AudioCodec)".Trim()   -ne '') { $o['audioCodec']   = "$($Prof.AudioCodec)".Trim() }
+    if ("$($Prof.AudioBitrate)".Trim() -ne '') { $o['audioBitrate'] = "$($Prof.AudioBitrate)".Trim() }
+    if ($null -ne $Prof.AudioHz -and [int]$Prof.AudioHz -gt 0) { $o['audioHz'] = [int]$Prof.AudioHz }
+    if ($null -ne $Prof.AudioChannels -and [int]$Prof.AudioChannels -ge 1) { $o['audioChannels'] = [int]$Prof.AudioChannels }
+    if ("$($Prof.DownmixMode)".Trim() -ne '') { $o['downmixMode'] = "$($Prof.DownmixMode)".Trim() }
+    if ($null -ne $Prof.DownmixCoeffs) {
+        $o['downmixCoeffs'] = [pscustomobject][ordered]@{
+            center   = [double]$Prof.DownmixCoeffs.Center
+            front    = [double]$Prof.DownmixCoeffs.Front
+            surround = [double]$Prof.DownmixCoeffs.Surround
+        }
+    }
+    return [pscustomobject]$o
+}
+
+function Get-CvProfileLabel {
+    <# PURO. Nombre de una entrada de 'profiles' (su 'label'), o '' si no lo lleva. #>
+    param($Entry)
+    return "$(Get-CvProfileProp $Entry 'label' '')".Trim()
+}
+
+function Test-CvProfileName {
+    <#
+        PURO. Comprueba el nombre con el que se quiere guardar un perfil. Devuelve @{ Ok; Error }.
+        -Existing son las entradas que ya hay (para el duplicado) y -Allow el nombre que se esta
+        editando (renombrarse a si mismo no es un duplicado).
+    #>
+    param(
+        [string]$Name,
+        $Existing = @(),
+        [string]$Allow = ''
+    )
+    $n = "$Name".Trim()
+    if ($n -eq '')            { return @{ Ok = $false; Error = 'El perfil necesita un nombre.' } }
+    if ($n.Length -gt 60)     { return @{ Ok = $false; Error = 'El nombre es demasiado largo (maximo 60 caracteres).' } }
+    foreach ($e in @($Existing)) {
+        $lbl = Get-CvProfileLabel $e
+        if ($lbl -eq '') { continue }
+        if ($lbl -eq "$Allow".Trim()) { continue }
+        # Sin distinguir mayusculas: dos perfiles que solo se diferencien en eso no se distinguen
+        # en el menu, y el que manda es el primero.
+        if ($lbl -ieq $n) { return @{ Ok = $false; Error = ("Ya hay un perfil que se llama '{0}'." -f $lbl) } }
+    }
+    return @{ Ok = $true; Error = '' }
+}
+
+function Set-CvProfileInList {
+    <#
+        PURO. Devuelve la lista de perfiles con -Entry dentro: sustituye al que tenga ese mismo
+        nombre (o el de -Replace, para renombrar) y, si no hay ninguno, lo anade al final.
+    #>
+    param(
+        $List = @(),
+        [Parameter(Mandatory)]$Entry,
+        [string]$Replace = ''
+    )
+    $target = $(if ("$Replace".Trim() -ne '') { "$Replace".Trim() } else { Get-CvProfileLabel $Entry })
+    $out  = @()
+    $done = $false
+    foreach ($e in @($List)) {
+        if (-not $done -and $target -ne '' -and (Get-CvProfileLabel $e) -ieq $target) {
+            $out += $Entry
+            $done = $true
+        } else {
+            $out += $e
+        }
+    }
+    if (-not $done) { $out += $Entry }
+    return @($out)
+}
+
+function Remove-CvProfileFromList {
+    <# PURO. La lista sin el perfil que se llama -Label (si no esta, la misma lista). #>
+    param(
+        $List = @(),
+        [Parameter(Mandatory)][string]$Label
+    )
+    $t = "$Label".Trim()
+    return @(@($List) | Where-Object { (Get-CvProfileLabel $_) -ine $t })
+}
+
+function Get-CvProfileList {
+    <#
+        PURO. La seccion 'profiles' de un config (crudo o el de defaults) como array LIMPIO. Sin
+        esto, una seccion ausente da @($null) -un elemento fantasma que se cuenta como perfil y
+        acabaria escrito como 'null' en el fichero-.
+    #>
+    param($Config)
+    if ($null -eq $Config) { return @() }
+    # A mano y no con Get-CvNodeVal: ese devuelve el valor con una coma unaria delante (para que
+    # PowerShell no desenvuelva las listas), y aqui eso deja la lista DENTRO de otra lista: el
+    # primer 'perfil' seria el array entero y nada cuadraria despues.
+    $v = $null
+    if ($Config -is [System.Collections.IDictionary]) {
+        if ($Config.Contains('profiles')) { $v = $Config['profiles'] }
+    } elseif ($Config.PSObject.Properties['profiles']) {
+        $v = $Config.profiles
+    }
+    if ($null -eq $v) { return @() }
+    return @(@($v) | Where-Object { $null -ne $_ })
+}
+
+function Get-CvConfigProfiles {
+    <#
+        Los perfiles propios que hay AHORA en el fichero de config (no los del contexto, que son los
+        que habia al abrirlo). Vacio si el fichero no existe o no tiene la seccion.
+    #>
+    param([Parameter(Mandatory)][string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return @() }
+    try {
+        $cfg = Read-CvConfigFile -Path $Path
+    } catch { return @() }
+    return @(Get-CvProfileList $cfg)
+}
+
+function Get-CvConfigProfileRows {
+    <#
+        Los perfiles propios listos para ENSENARLOS: @{ Label; Text; Prof; Entry } por cada uno, con
+        la misma etiqueta que el menu de perfiles (Format-CvProfileLabel). Lo usan el submenu de
+        consola y la ventana de perfiles: ninguna de las dos re-lee ni re-formatea por su cuenta.
+    #>
+    param([Parameter(Mandatory)][string]$Path)
+    $out = @()
+    foreach ($e in @(Get-CvConfigProfiles -Path $Path)) {
+        $prof = ConvertTo-CvProfile -Obj $e
+        $out += [pscustomobject]@{
+            Label = (Get-CvProfileLabel $e)
+            Text  = (Format-CvProfileLabel -Prof $prof)
+            Prof  = $prof
+            Entry = $e
+            Kind  = 'propio'
+        }
+    }
+    return @($out)
+}
+
+function Get-CvBuiltinProfileRows {
+    <#
+        PURO. Los perfiles DE SERIE listos para ensenarlos: @{ Num; Label; Text; Prof; Kind }. El
+        numero es el MISMO con el que salen en el menu de perfiles (1..N, continuo entre grupos),
+        que es como se conocen; el texto, la misma etiqueta que ahi (Format-CvProfileLabel).
+
+        No se pueden editar ni borrar -viven en el codigo, no en el config-, pero DUPLICAR uno es la
+        forma comoda de partir de algo que ya funciona para hacerse uno propio.
+    #>
+    $out = @()
+    $n = 0
+    foreach ($g in @(Get-CvProfiles)) {
+        foreach ($pr in @($g.Profiles)) {
+            $n++
+            $out += [pscustomobject]@{
+                Num   = $n
+                Label = ("Perfil {0}" -f $n)
+                Text  = (Format-CvProfileLabel -Prof $pr)
+                Prof  = $pr
+                Entry = $null
+                Kind  = 'serie'
+            }
+        }
+    }
+    return @($out)
+}
+
+function Get-CvDefaultProfileKey {
+    <#
+        PURO. La CLAVE de menu del perfil PREDETERMINADO: '3' (uno de serie), '14' (uno propio) o 'A'
+        (Auto). -Default es lo que diga la config: el NOMBRE de un perfil propio, 'Perfil N' de los
+        de serie, o 'Auto'. Lo que no se reconozca -un perfil propio que se ha borrado, por ejemplo-
+        cae en Auto, que es lo que habia antes de que existiera esta opcion.
+
+        La numeracion es la MISMA que el menu de consola y la lista de la ventana: los de serie 1..N
+        (continuo entre grupos) y los propios detras, en el orden del config.
+    #>
+    param(
+        [string]$Default = '',
+        [object[]]$Extra = @()
+    )
+    $d = "$Default".Trim()
+    if ($d -eq '' -or $d -match '^(?i)auto$') { return 'A' }
+    $n = 0
+    foreach ($g in @(Get-CvProfiles)) {
+        foreach ($pr in @($g.Profiles)) { $n++ }
+    }
+    # Por NOMBRE, que es como se identifican los propios (igual que al guardarlos o borrarlos).
+    for ($i = 0; $i -lt @($Extra).Count; $i++) {
+        $obj = @($Extra)[$i]
+        if ($null -eq $obj) { continue }
+        $lbl = "$(Get-CvProfileProp $obj 'label' '')".Trim()
+        if ($lbl -ne '' -and $lbl -eq $d) { return "$($n + $i + 1)" }
+    }
+    if ($d -match '^(?i)perfil\s+(\d+)$') {
+        $num = [int]$matches[1]
+        if ($num -ge 1 -and $num -le $n) { return "$num" }
+    }
+    return 'A'
+}
+
+function Get-CvConfigDefaultProfile {
+    <#
+        El perfil predeterminado que hay AHORA en el fichero (no el del contexto, que es el que habia
+        al abrir): asi cambiarlo desde la ventana vale sin reiniciar. 'Auto' si no hay nada puesto.
+    #>
+    param([Parameter(Mandatory)][string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return 'Auto' }
+    try {
+        $cfg = Read-CvConfigFile -Path $Path
+    } catch { return 'Auto' }
+    $v = ''
+    if ($cfg -is [System.Collections.IDictionary]) {
+        if ($cfg.Contains('defaultProfile')) { $v = "$($cfg['defaultProfile'])" }
+    } elseif ($cfg.PSObject.Properties['defaultProfile']) {
+        $v = "$($cfg.defaultProfile)"
+    }
+    if ("$v".Trim() -eq '') { return 'Auto' }
+    return "$v".Trim()
+}
+
+function Save-CvConfigDefaultProfile {
+    <#
+        Deja escrito cual es el perfil predeterminado (-Label: el nombre de uno propio, 'Perfil N' de
+        los de serie, o 'Auto'). Escribe SOLO esa clave sobre el config crudo. Devuelve @{ Ok; Error }.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Label
+    )
+    $v = "$Label".Trim()
+    if ($v -eq '') { $v = 'Auto' }
+    return (Set-CvConfigValue -Path $Path -Key 'defaultProfile' -Value $v)
+}
+
+function Get-CvProfileManagerRows {
+    <#
+        Todo lo que se ensena al gestionar perfiles: primero los PROPIOS (los editables) y detras los
+        de SERIE (solo lectura). Fuente unica de las dos caras: la ventana de setup y el submenu de
+        consola listan lo mismo y en el mismo orden.
+    #>
+    param([Parameter(Mandatory)][string]$Path)
+    return @(@(Get-CvConfigProfileRows -Path $Path) + @(Get-CvBuiltinProfileRows))
+}
+
+function Save-CvConfigProfile {
+    <#
+        Guarda un perfil en config.json -> 'profiles' con el nombre -Label. Si ya hay uno con ese
+        nombre se SUSTITUYE (o se renombra el de -Replace), asi que sirve igual para crear y para
+        editar. Devuelve @{ Ok; Error; Label; Count }.
+
+        Se escribe sobre el fichero CRUDO (Read-CvConfigFile / Save-CvConfigFile): lo que no sea la
+        seccion 'profiles' se queda tal cual estaba, incluida la sangria y el orden.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)]$Prof,
+        [Parameter(Mandatory)][string]$Label,
+        [string]$Replace = ''
+    )
+    try {
+        # El config crudo es un PSCustomObject (viene de ConvertFrom-Json) pero los defaults son un
+        # hashtable: se entra por los helpers del propio Config, que saben con cual estan hablando.
+        $cfg = $(if (Test-Path -LiteralPath $Path) { Read-CvConfigFile -Path $Path } else { Get-CvConfigDefaults })
+        $cur = @(Get-CvProfileList $cfg)
+        $chk = Test-CvProfileName -Name $Label -Existing $cur -Allow $(if ("$Replace" -ne '') { $Replace } else { $Label })
+        if (-not $chk.Ok) { return @{ Ok = $false; Error = "$($chk.Error)"; Label = "$Label"; Count = $cur.Count } }
+        $entry = ConvertTo-CvProfileConfig -Prof $Prof -Label $Label
+        $new   = @(Set-CvProfileInList -List $cur -Entry $entry -Replace $Replace)
+        Set-CvChildLeaf -Node $cfg -Key 'profiles' -Value $new
+        Save-CvConfigFile -Path $Path -Config $cfg
+        return @{ Ok = $true; Error = ''; Label = "$Label".Trim(); Count = $new.Count }
+    } catch {
+        return @{ Ok = $false; Error = "$($_.Exception.Message)"; Label = "$Label"; Count = 0 }
+    }
+}
+
+function Remove-CvConfigProfile {
+    <# Borra de config.json el perfil propio que se llama -Label. Devuelve @{ Ok; Error; Count }. #>
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$Label
+    )
+    try {
+        if (-not (Test-Path -LiteralPath $Path)) { return @{ Ok = $false; Error = 'No existe el fichero de configuracion.'; Count = 0 } }
+        $cfg = Read-CvConfigFile -Path $Path
+        $cur = @(Get-CvProfileList $cfg)
+        $new = @(Remove-CvProfileFromList -List $cur -Label $Label)
+        if ($new.Count -eq $cur.Count) { return @{ Ok = $false; Error = ("No hay ningun perfil que se llame '{0}'." -f $Label); Count = $cur.Count } }
+        Set-CvChildLeaf -Node $cfg -Key 'profiles' -Value $new
+        Save-CvConfigFile -Path $Path -Config $cfg
+        return @{ Ok = $true; Error = ''; Count = $new.Count }
+    } catch {
+        return @{ Ok = $false; Error = "$($_.Exception.Message)"; Count = 0 }
+    }
+}
+
+function Save-CvProfileInteractive {
+    <#
+        CONSOLA: pide el nombre y guarda el perfil en config.json ('profiles'). Insiste mientras el
+        nombre no valga (vacio o repetido) y se sale con 'C'/ESC sin guardar nada.
+        -Current = nombre actual cuando se esta EDITANDO uno (ENTER lo conserva y no cuenta como
+        duplicado consigo mismo). Devuelve el nombre guardado, o '' si no se guardo.
+    #>
+    param(
+        [Parameter(Mandatory)]$Prof,
+        [Parameter(Mandatory)][string]$Path,
+        [string]$Current = ''
+    )
+    while ($true) {
+        $hint = $(if ("$Current" -ne '') { " [ENTER = {0}]" -f $Current } else { '' })
+        $name = ''
+        try {
+            $name = (Read-CvLine -Prompt ("   Nombre del perfil{0} [C/ESC = no guardar]" -f $hint) -AllowCancel).Trim()
+        } catch {
+            if ("$($_.Exception.Message)" -eq 'CV_CANCEL') { return '' }
+            throw
+        }
+        if ($name -match '^[Cc]$') { return '' }
+        if ($name -eq '' -and "$Current" -ne '') { $name = "$Current" }
+        $chk = Test-CvProfileName -Name $name -Existing (Get-CvConfigProfiles -Path $Path) -Allow $Current
+        if (-not $chk.Ok) {
+            Write-Host ("   {0}" -f $chk.Error) -ForegroundColor Yellow
+            continue
+        }
+        $r = Save-CvConfigProfile -Path $Path -Prof $Prof -Label $name -Replace $Current
+        if (-not $r.Ok) {
+            Write-Host ("   No se pudo guardar: {0}" -f $r.Error) -ForegroundColor Red
+            return ''
+        }
+        Write-CvLog 'GLOBAL' ("[OK] - Perfil guardado en {0}: {1}" -f (Split-Path -Leaf $Path), $r.Label)
+        return "$($r.Label)"
+    }
+}
+
 function Format-CvProfileLabel {
     <#
         Etiqueta compacta de un perfil para el menu (estilo 'A: 192K, V: h265[NV]/M10/L5/Q(1-23)').
@@ -770,8 +1164,17 @@ function New-CustomProfile {
         Construye un perfil de forma interactiva. En CUALQUIER pregunta, escribir 'C' o
         pulsar ESC cancela y vuelve al menu de perfiles. Al final permite [R]ehacer.
         Devuelve el perfil, o $null si se cancela.
+
+        -Seed: partir de un perfil EXISTENTE (editar o duplicar uno propio) en vez de las semillas
+        de config ('customProfile'); cada pregunta llega con su valor ya puesto.
+        -NoSaveOffer: no preguntar si se guarda en el config. Lo usa quien ya va a guardarlo por su
+        cuenta (el menu de perfiles propios de setup), para no preguntar dos veces lo mismo.
     #>
-    param($Context = $null)
+    param(
+        $Context = $null,
+        $Seed = $null,
+        [switch]$NoSaveOffer
+    )
     # Valores por defecto: del contexto (config 'customProfile'); si no hay contexto, de los defaults
     # de config (Get-CvConfigDefaults, fuente unica) en vez de literales hardcodeados aqui.
     $dflt = Get-CvConfigDefaults; $cp = $dflt.customProfile
@@ -795,6 +1198,29 @@ function New-CustomProfile {
     $defCh     = if ($Context -and [int]$Context.CustomAudioChannels -ge 1) { [int]$Context.CustomAudioChannels } else { [int]$cp.audioChannels }
     $defDm     = if ($Context -and "$($Context.CustomDownmixMode)" -ne '') { "$($Context.CustomDownmixMode)" } else { "$($cp.downmixMode)" }
     $defCoeffs = if ($Context -and $Context.CustomDownmixCoeffs) { $Context.CustomDownmixCoeffs } else { @{ Center = [double]$cp.downmixCoeffs.center; Front = [double]$cp.downmixCoeffs.front; Surround = [double]$cp.downmixCoeffs.surround } }
+
+    # EDITAR / DUPLICAR uno que ya existe: las semillas salen del perfil, no del config, para que
+    # cada pregunta llegue con lo que ese perfil tiene y solo haya que tocar lo que se quiere cambiar.
+    if ($null -ne $Seed) {
+        $defEnc    = "$($Seed.VideoEncoder)"
+        $defProf   = "$($Seed.VideoProfile)"
+        $defLvl    = "$($Seed.VideoLevel)"
+        $defQmin   = $Seed.Qmin
+        $defQmax   = $Seed.Qmax
+        $defCrf    = $Seed.Crf
+        $defMp     = "$($Seed.Multipass)"
+        $defAb     = "$($Seed.AudioBitrate)"
+        $defCodec  = "$($Seed.AudioCodec)"
+        $defDetect = $Seed.DetectBorder
+        $defChange = "$($Seed.ChangeSize)"
+        $defNoUp   = [bool]$Seed.NoUpscale
+        $defMaxW   = $(if ($null -ne $Seed.MaxWidth) { [int]$Seed.MaxWidth } else { 0 })
+        $defAEnc   = "$($Seed.AudioEncoder)"
+        $defHz     = $(if ([int]$Seed.AudioHz -ge 1) { [int]$Seed.AudioHz } else { $defHz })
+        $defCh     = $(if ($null -ne $Seed.AudioChannels -and [int]$Seed.AudioChannels -ge 1) { [int]$Seed.AudioChannels } else { $defCh })
+        $defDm     = $(if ("$($Seed.DownmixMode)" -ne '') { "$($Seed.DownmixMode)" } else { $defDm })
+        if ($null -ne $Seed.DownmixCoeffs) { $defCoeffs = $Seed.DownmixCoeffs }
+    }
 
     while ($true) {
         try {
@@ -972,6 +1398,18 @@ function New-CustomProfile {
             Write-ProfileInfo -Prof $p
             $conf = (Read-CvLine -Prompt '[ENTER] usar esta config / [R] rehacer / [C o ESC] cancelar' -AllowCancel).Trim()
             if ($conf -match '^[Rr]$') { continue }
+            # Guardarlo para REUTILIZARLO: hasta ahora un perfil hecho aqui moria con el job y habia
+            # que reescribirlo a mano en config.json. Se ofrece con el default en NO, asi que quien
+            # siempre ha pulsado ENTER no nota el cambio.
+            if (-not $NoSaveOffer -and $Context -and "$($Context.ConfigPath)" -ne '') {
+                try {
+                    if (Read-YesNo '   Guardar este perfil en el config para reutilizarlo?' $false) {
+                        [void](Save-CvProfileInteractive -Prof $p -Path "$($Context.ConfigPath)")
+                    }
+                } catch {
+                    if ("$($_.Exception.Message)" -ne 'CV_CANCEL') { throw }   # ESC aqui = no guardar
+                }
+            }
             return $p
         }
         catch {
@@ -1025,19 +1463,28 @@ function Select-Profile {
     $numW   = Get-CvMenuNumWidth $maxNum
     $numFmt = { param($num, $label) '{0}. {1}' -f (("$num").PadLeft($numW)), $label }
 
+    # Perfil PREDETERMINADO (config 'defaultProfile'): sale con un '*' delante y es lo que se usa al
+    # pulsar ENTER sin escribir nada, que es el gesto de quien no va a cambiar de perfil.
+    $defKey = Get-CvDefaultProfileKey -Default $(if ($null -ne $Context) { "$($Context.DefaultProfile)" } else { '' }) -Extra $Extra
+    $marca  = { param($num) $(if ("$num" -eq "$defKey") { '* ' } else { '  ' }) }
     $baseLines = @()
-    foreach ($it in $baseItems) { $baseLines += $(if ($it.Break) { '' } else { & $numFmt $it.Num $it.Label }) }
+    foreach ($it in $baseItems) { $baseLines += $(if ($it.Break) { '' } else { (& $marca $it.Num) + (& $numFmt $it.Num $it.Label) }) }
     $extraLines = @()
-    foreach ($it in $extraItems) { $extraLines += (& $numFmt $it.Num $it.Label) }
+    foreach ($it in $extraItems) { $extraLines += ((& $marca $it.Num) + (& $numFmt $it.Num $it.Label)) }
 
     $menuLines = @($baseLines)
     if ($extraLines.Count) { $menuLines += @('', '-- Perfiles de config.json --') + $extraLines }
+    # OJO con los parentesis: dentro de un @(...) la COMA ata mas que el '+', asi que
+    # `'', '  ' + $texto` no es una linea con sangria, son DOS elementos ('' y '  ') mas el texto
+    # suelto. Cada concatenacion va entera entre parentesis.
     $menuLines += @(
         '',
-        ('{0}. Custom (configuracion personalizada)' -f ('0'.PadLeft($numW))),
-        ('{0}. Auto  (mejor encoder de este equipo: GPU si puede, si no CPU)' -f ('A'.PadLeft($numW))),
+        ('  ' + ('{0}. Custom (configuracion personalizada)' -f ('0'.PadLeft($numW)))),
+        ((& $marca 'A') + ('{0}. Auto  (mejor encoder de este equipo: GPU si puede, si no CPU)' -f ('A'.PadLeft($numW)))),
         '',
-        ('{0}. Salir' -f ('X'.PadLeft($numW)))
+        ('  ' + ('{0}. Salir' -f ('X'.PadLeft($numW)))),
+        '',
+        '  (* = predeterminado, se elige con ENTER; se cambia en setup > Perfiles)'
     )
 
     $show = $true
@@ -1046,7 +1493,8 @@ function Select-Profile {
             Show-Menu -Title 'USAR PERFIL:' -Lines $menuLines
             $show = $false
         }
-        $sel = (Read-Host '[GLOBAL] [PROFILE] - OPCION NUMERO (A = auto, X = salir)').Trim()
+        $sel = (Read-Host '[GLOBAL] [PROFILE] - OPCION NUMERO (ENTER = el marcado con *, A = auto, X = salir)').Trim()
+        if ($sel -eq '') { $sel = "$defKey" }                      # ENTER = el predeterminado
         if ($sel -match '^[Xx]$') { return $null }                 # salir
         if ($sel -eq '0') {
             $custom = New-CustomProfile -Context $Context

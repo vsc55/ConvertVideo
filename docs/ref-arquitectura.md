@@ -9,19 +9,27 @@ ConvertVideo/
 ├── Convert.ps1        Orquestador: clasificar / preparar / worker
 ├── setup.ps1               Utilidad: herramientas + editor de config + limpieza (menú de consola; también `-Task` no interactivo)
 ├── setup-gui.ps1           La MISMA utilidad en VENTANA (WinForms); comparte los datos con setup.ps1 vía lib\SetupCore.psm1
+├── Convert-gui.ps1         La COLA de conversión en VENTANA: estado de cada archivo, workers y progreso (lib\WorkerCore.psm1)
 ├── FixSyncSub.ps1          Utilidad aparte: corregir/re-sincronizar subtítulos .srt (usa lib\SubtitleSRT.psm1)
-├── *.cmd                   Lanzadores por doble clic (Bypass): Convert.cmd / setup.cmd / setup-gui.cmd / FixSyncSub.cmd (arrastrar y soltar) + Convert-Debug.cmd / setup-Debug.cmd (cargan config.debug.json)
+├── *.cmd                   Lanzadores por doble clic (Bypass): Convert.cmd / setup.cmd / Convert-gui.cmd / setup-gui.cmd / FixSyncSub.cmd (arrastrar y soltar) + Convert-Debug.cmd / setup-Debug.cmd (cargan config.debug.json) + Convert-gui-Config.cmd (la cola en ventana preguntando el config)
 ├── config.json             Toda la configuración (se carga al arrancar)
 ├── config.debug.json       Config alterna para los lanzadores -Debug (-Config)
 ├── lib/
+│   ├── Io.psm1             Ficheros: JSON atómico y UTF-8 sin BOM (job, estado de workers, config, layout)
 │   ├── Log.psm1            Log de consola (Write-CvLog) y transcript a logs\
 │   ├── Config.psm1         Valores por defecto de config.json + carga/fusión/reset
 │   ├── ConfigEditor.psm1   Editor interactivo de config.json (solo lo usa setup.ps1)
 │   ├── Context.psm1        Contexto de ejecución ($ctx) + helpers (idiomas, números, tiempo, listado de ficheros)
 │   ├── Console.psm1        Apariencia de consola, ventana nativa, menús y prompts
-│   ├── Gui.psm1            Ventanas GUI (WinForms) genéricas: visor de texto del subtítulo ('V N' modo win)
-│   ├── GuiSetup.psm1       Ventana de setup (WinForms): acciones, panel de salida y editor de config en árbol
+│   ├── Gui.psm1            Común a TODAS las ventanas (WinForms): arranque, fuente, doble búfer, avisos, diálogo de N salidas, tamaños recordados, visor de texto, desplegable de catálogo, panel que sigue un log y abrir con Windows
+│   ├── GuiSetup.psm1       Ventana de setup (WinForms): acciones, panel de salida y sus diálogos (herramientas, logs, limpieza)
+│   ├── GuiConfig.psm1      Editor de config.json en ventana (árbol + ayuda por clave); lo abren setup y la cola
 │   ├── SetupCore.psm1      DATOS de setup (estado, herramientas, limpieza, baterías); fuente única de consola y ventana
+│   ├── GuiConvert.psm1     Ventana de la cola de conversión (WinForms): lista de archivos, workers y log en vivo
+│   ├── GuiJob.psm1         Ventana del editor de jobs (PREPARAR con ratón: perfil, vídeo, audio, subtítulos)
+│   ├── GuiProfile.psm1     Ventanas de PERFILES: elegir, ajustar (y guardar en el config) y gestionar los propios
+│   ├── WorkerCore.psm1     DATOS de la cola (estado de cada archivo, progreso que publica cada worker, parada ordenada)
+│   ├── JobCore.psm1        DATOS del job (opciones por archivo, borrador automático, forma del .job.json)
 │   ├── Exec.psm1           Ejecución de procesos externos (ffmpeg/ffprobe…)
 │   ├── Job.psm1            Cola: jobs JSON, lock atómico, temporales, ruta de salida
 │   ├── Tools.psm1          Apps/versiones/descargas (ffmpeg, aacgain, sevenzip, mkvtoolnix)
@@ -36,7 +44,7 @@ ConvertVideo/
 │   ├── Render.psm1         Spec de render (job → decisiones: vídeo/audio/subs/adjuntos/códecs)
 │   └── OnePass.psm1        🧪 BETA: ejecución en una sola pasada de ffmpeg
 ├── Original/               Entrada: vídeos a convertir
-├── Proceso/                Trabajo: .job.json, .lock y temporales (.mkv/.m4a/.wav)
+├── Proceso/                Trabajo: .job.json, .lock, estado de los workers (<pid>.worker.json) y temporales (.mkv/.m4a/.wav)
 ├── Convertido/             Salida: <nombre>_fix.mkv
 ├── tools/<app>/<ver>/<plat>/   Ejecutables (ffmpeg/ffprobe/ffplay, aacgain)
 ├── logs/                   Transcript de cada ejecución (fecha + PID)

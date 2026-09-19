@@ -203,7 +203,7 @@ function Invoke-CvOnePass {
         if (Test-Path -LiteralPath $out) { Remove-Item -Force -LiteralPath $out -ErrorAction SilentlyContinue }
         return $false
     }
-    $mb = [math]::Round((Get-Item -LiteralPath $out).Length / 1MB, 1)
+    $mb = Format-CvMb -Bytes (Get-Item -LiteralPath $out).Length
     Stop-CvStep $Context 'UNA-PASADA' $true -OkMsg ("[OK] - {0}  ({1} MB)" -f (Split-Path $out -Leaf), $mb)
     # Limpiar las etiquetas DURATION que anade el muxer de Matroska (igual que el multiplex clasico).
     Remove-CvMkvTags -Context $Context -File $out

@@ -38,6 +38,39 @@ function Get-CvStarLine { param([int]$Width = 0) Get-CvLine -Char '*' -Width $Wi
 # (console.progressBarWidth) al arrancar; <0 = aun no fijado -> se toma el default de config. 0 = sin
 # barra. Misma logica de fuente unica que $script:CvSepWidth.
 $script:CvProgressBarWidth = -1
+function Format-CvSize {
+    <#
+        PURO. Tamano LEGIBLE: '812 MB' / '2,4 GB' (vacio si no hay tamano). Se pasa -Bytes o -Kb, lo
+        que se tenga a mano (un `.Length` o lo que devuelve Get-CvQueueStatus).
+
+        Vive aqui, con el resto de helpers de presentacion compartidos (Get-CvProgressBar, los
+        separadores): lo usa la ventana de la cola y sirve igual para la consola. El resumen de
+        conversion NO lo usa a proposito: ahi el tamano va SIEMPRE en MB a los dos lados
+        (origen -> destino) para poder compararlos de un vistazo.
+    #>
+    param(
+        [long]$Bytes = 0,
+        [long]$Kb    = 0
+    )
+    $k = if ($Kb -gt 0) { $Kb } else { [long][math]::Round($Bytes / 1024.0) }
+    if ($k -le 0) { return '' }
+    $mb = $k / 1024.0
+    if ($mb -ge 1024) { return ('{0:N1} GB' -f ($mb / 1024.0)) }
+    return ('{0:N0} MB' -f $mb)
+}
+
+function Format-CvMb {
+    <#
+        PURO. Tamano en MB con un decimal ('812,4'), SIN unidad ni auto-escala. Es el formato del
+        resumen de conversion y de los logs del pipeline: ahi se comparan dos tamanos (origen ->
+        destino, o el MB que acaba de escribir un paso), y pasar uno a GB y el otro no haria la
+        comparacion ilegible. Para mostrar un tamano suelto, Format-CvSize.
+    #>
+    param([long]$Bytes)
+    if ($Bytes -le 0) { return '0' }
+    return ('{0}' -f [math]::Round($Bytes / 1MB, 1))
+}
+
 function Set-CvProgressBarWidth { param([int]$Width) $script:CvProgressBarWidth = [Math]::Max(0, $Width) }
 function Resolve-CvProgressBarWidth {
     <# Ancho a usar: -Width explicito (>=0) | el fijado por Set-CvProgressBarWidth | el default de config. #>

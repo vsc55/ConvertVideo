@@ -18,6 +18,16 @@ param(
     # Ventana de worker adicional: salta la fase PREPARAR y va directo a codificar (lo lanzan
     # las ventanas extra que se abren al elegir varios workers en paralelo).
     [switch]$WorkerOnly,
+    # Worker DESATENDIDO: el que abre la ventana de la cola (Convert-gui), normalmente sin consola a
+    # la vista. No pregunta NADA (si falta una herramienta aborta con el motivo en vez de ofrecer el
+    # menu de descarga) y no se queda en la pausa final: un prompt en una consola oculta seria un
+    # proceso colgado para siempre. Implica -WorkerOnly.
+    [switch]$Unattended,
+    # Codificar SOLO estos archivos (nombre base, sin extension), en vez de todos los preparados. Lo
+    # usa la ventana de la cola cuando se eligen unos cuantos a mano; sirve igual desde consola para
+    # rehacer uno concreto sin tocar el resto. Vacio = todos, como siempre. Solo afecta a la fase
+    # WORKER: PREPARAR sigue recorriendo lo que falte.
+    [string[]]$Only = @(),
     # Fichero de configuracion a usar (por defecto config.json junto al programa). Admite ruta
     # absoluta o relativa al directorio actual. Permite tener varios perfiles de config.
     [string]$Config = ''
@@ -30,12 +40,15 @@ $Root = $PSScriptRoot
 $Lib  = Join-Path $Root 'lib'
 $modules = @(
     'Log'
+    'Io'
     'Config'
     'Context'
     'Console'
     'Gui'
     'Exec'
     'Job'
+    'JobCore'
+    'WorkerCore'
     'Tools'
     'MediaInfo'
     'Profile'
@@ -52,11 +65,24 @@ foreach ($m in $modules) {
     Import-Module (Join-Path $Lib ("{0}.psm1" -f $m)) -Force
 }
 
+# Desatendido = worker: nunca entra en PREPARAR (que es todo preguntas).
+if ($Unattended) { $WorkerOnly = $true }
+
 # Arranque comun (config + contexto + marcas + log + apariencia + cabecera). Ver Start-CvSession.
 $sess    = Start-CvSession -Root $Root -Config $Config -LogPrefix 'Convert'
 $ctx     = $sess.Context
 $cfgPath = $sess.ConfigPath
 $cvLog   = $sess.LogFile
+
+# Publicar el estado de ESTE proceso en Proceso\<pid>.worker.json (WorkerCore): es lo unico que la
+# ventana de la cola (Convert-gui) no puede deducir de los ficheros -que archivo se esta codificando
+# y por donde va-. Se hace SIEMPRE, tambien en una ejecucion normal en consola, asi la ventana ve
+# igual los workers que se abrieron a mano. Best-effort: si falla, aqui no se entera nadie.
+Start-CvWorkerState -Context $ctx -Role $(if ($WorkerOnly) { 'worker' } else { 'convert' }) -LogPath "$cvLog"
+# Abrir el conversor A MANO es un "adelante" explicito: se retira cualquier bandera de parada que
+# hubiera quedado de una sesion anterior (si no, un stop.flag olvidado dejaria la cola muerta sin
+# explicacion). Los workers desatendidos NO la tocan: es justo la orden que tienen que obedecer.
+if (-not $Unattended) { Clear-CvWorkerStop -Context $ctx }
 
 # Separadores de secciones (ancho comun de la UI; fuente unica en Console.psm1).
 $sepLine  = Get-CvSepLine
@@ -73,6 +99,14 @@ if (-not (Test-CvToolInstalled -Context $ctx -Name 'ffmpeg' -Version $ctx.FFmpeg
         exit 1
     }
     Write-CvLog 'GLOBAL' ("[FFMPEG] - Falta la version {0}." -f $ctx.FFmpegVersion)
+    # Desatendido: no hay nadie para contestar el menu de descarga (ver Test-CvConvertReady, que es
+    # justo lo que comprueba la ventana ANTES de abrir un worker). Se aborta con el motivo en el log.
+    if ($Unattended) {
+        Write-CvLog 'GLOBAL' '[FFMPEG] - [ERR] - Modo desatendido: instala ffmpeg desde setup y vuelve a lanzar.'
+        Remove-CvWorkerState -Context $ctx
+        if ($cvLog) { Stop-CvLog }
+        exit 1
+    }
     $ffVer = Select-CvToolVersion -Context $ctx -Name 'ffmpeg'
     if (-not [string]::IsNullOrWhiteSpace($ffVer)) {
         if (Install-CvTool -Context $ctx -Name 'ffmpeg' -Version $ffVer) {
@@ -91,12 +125,16 @@ if ("$($ctx.VolumeMethod)".ToLower() -eq 'aacgain' -and -not (Test-CvToolInstall
         exit 1
     }
     Write-CvLog 'GLOBAL' ("[AACGAIN] - Falta la version {0}." -f $ctx.AacGainVersion)
-    $agVer = Select-CvToolVersion -Context $ctx -Name 'aacgain'
+    # Desatendido: no se ofrece el menu de descarga (no hay quien lo conteste); se sigue sin aacgain,
+    # que solo afecta al ajuste de volumen, no a la conversion.
+    $agVer = if ($Unattended) { '' } else { Select-CvToolVersion -Context $ctx -Name 'aacgain' }
     if (-not [string]::IsNullOrWhiteSpace($agVer)) {
         if (Install-CvTool -Context $ctx -Name 'aacgain' -Version $agVer) {
             $didInstall = $true
             $ctx = New-CvToolContext -Context $ctx -AacGainVersion $agVer
         }
+    } elseif ($Unattended) {
+        Write-CvLog 'GLOBAL' '[AACGAIN] - [AVISO] - Modo desatendido: no se descarga; el ajuste de volumen se omitira.'
     } else {
         Write-CvLog 'GLOBAL' '[AACGAIN] - Descarga cancelada.'
     }
@@ -213,6 +251,7 @@ function Write-PrepareStatus {
 $files = @(Get-ProcessableFiles -Context $ctx)
 if ($files.Count -eq 0) {
     Write-CvLog 'GLOBAL' ("[FIN] - No hay archivos procesables en {0}" -f $ctx.Original)
+    Remove-CvWorkerState -Context $ctx
     exit 0
 }
 
@@ -235,6 +274,7 @@ if (-not $WorkerOnly) {
 if ($ctx.LockClose) { Set-CvCloseButton -Enabled $false }
 trap {
     if ($ctx.LockClose) { try { Set-CvCloseButton -Enabled $true } catch {} }
+    try { Remove-CvWorkerState -Context $ctx } catch {}   # no dejar el estado como worker huerfano
     if ($cvLog) { Stop-CvLog }
     break
 }
@@ -257,6 +297,7 @@ if ($needPrepare) {
         # El usuario eligio salir (X): cierre limpio.
         Write-CvLog 'GLOBAL' '[SALIR] - Cancelado por el usuario.'
         if ($ctx.LockClose) { Set-CvCloseButton -Enabled $true }
+        Remove-CvWorkerState -Context $ctx
         if ($cvLog) { Stop-CvLog }
         exit 0
     }
@@ -309,34 +350,14 @@ if ($needPrepare) {
         $subSel = Select-Subtitles -Context $ctx -Info $info -Manual ([ref]$subManual)
 
         # Congelar el perfil + las respuestas + las versiones de herramientas en el job
-        # (autosuficiente: el worker usara estas versiones y las instalara si faltan).
-        $job = [ordered]@{
-            file           = $f.FullName
-            profile        = $cfgProfile
-            ffmpegVersion  = $ctx.FFmpegVersion
-            aacgainVersion = $ctx.AacGainVersion
-            video          = @{
-                skip   = $vAsk.Skip
-                index  = $vAsk.Index
-                crop   = $vAsk.Crop
-                resize = $vAsk.Resize
-                anim   = $vAsk.Anim
-                hdr    = [bool](Test-CvHdr -Info $info -Index $(if ($null -ne $vAsk.Index) { [int]$vAsk.Index } else { -1 }))
-            }
-            audio          = @{
-                skip   = $aAsk.Skip
-                tracks = @($aAsk.Tracks | ForEach-Object {
-                    @{
-                        index   = $_.Index
-                        is51    = $_.Is51
-                        sync    = $_.Sync
-                        lang    = $_.Lang
-                        default = $_.Default
-                    }
-                })
-            }
-            subtitles      = @($subSel)
-        }
+        # (autosuficiente: el worker usara estas versiones y las instalara si faltan). La FORMA del
+        # job vive en ConvertTo-CvJobRecord (JobCore), compartida con el editor en ventana: aqui solo
+        # se le pasan las respuestas de las preguntas, para que no haya dos sitios escribiendola.
+        $job = ConvertTo-CvJobRecord -Context $ctx -File $f.FullName -Prof $cfgProfile -Info $info `
+            -VideoSkip ([bool]$vAsk.Skip) `
+            -VideoIndex $(if ($null -ne $vAsk.Index) { [int]$vAsk.Index } else { -1 }) `
+            -Crop "$($vAsk.Crop)" -Resize "$($vAsk.Resize)" -Anim ([bool]$vAsk.Anim) `
+            -AudioSkip ([bool]$aAsk.Skip) -AudioTracks @($aAsk.Tracks) -Subtitles @($subSel)
         Write-CvJob -Context $ctx -Name $name -Job $job
 
         # Hubo intervencion manual si el archivo necesito CUALQUIER pregunta: seleccion de pista
@@ -365,6 +386,7 @@ if ($needPrepare) {
         # lanzar la conversion despues (abriendo Convert.cmd cuando se quiera).
         Write-CvLog 'GLOBAL' '[PREPARAR] - Solo preparar: los jobs quedan listos. Abre Convert.cmd cuando quieras codificar.'
         if ($ctx.LockClose) { Set-CvCloseButton -Enabled $true }
+        Remove-CvWorkerState -Context $ctx
         if ($cvLog) { Stop-CvLog }
         exit 0
     }
@@ -400,6 +422,9 @@ if ($needPrepare) {
 #  FASE WORKER
 # ============================================================
 Write-Host ''
+if ($Only.Count -gt 0) {
+    Write-CvLog 'GLOBAL' ("[WORKER] - Solo se codificaran {0} archivo(s) pedidos: {1}" -f $Only.Count, ((($Only | Select-Object -First 8) -join ', ') + $(if ($Only.Count -gt 8) { ', ...' } else { '' })))
+}
 Write-CvLog 'GLOBAL' '[WORKER] - Buscando archivos preparados para codificar...'
 
 # Reintentos: nº de fallos por archivo; a partir de $maxRetries se abandona (evita bucle
@@ -413,11 +438,19 @@ $results = [ordered]@{}
 $workerSw = [System.Diagnostics.Stopwatch]::StartNew()   # tiempo total del worker (para el resumen)
 $maxRetries = [int]$ctx.Retries; if ($maxRetries -lt 1) { $maxRetries = 1 }
 
-$didAny = $true
+$didAny  = $true
+$stopped = $false   # parada ordenada pedida desde la ventana de la cola
 while ($didAny) {
     $didAny = $false
     foreach ($f in (Get-ProcessableFiles -Context $ctx -Quiet)) {
         $name = $f.BaseName
+        # Parada ordenada (Proceso\stop.flag, lo deja la ventana de la cola): se mira ANTES de
+        # reclamar el siguiente archivo, nunca a mitad de una codificacion. Asi parar no deja
+        # temporales a medias ni un bloqueo que limpiar: el archivo en curso termina como siempre.
+        if (Test-CvWorkerStop -Context $ctx) { $stopped = $true; break }
+        # -Only: este worker solo se ocupa de los archivos pedidos. Los demas ni se miran (otro
+        # worker sin filtro, o con otro filtro, puede estar con ellos: el lock sigue repartiendo).
+        if ($Only.Count -gt 0 -and $Only -notcontains $name) { continue }
         if ($skip.Contains($name)) { continue }                        # marcado como no procesable
         $out  = Get-OutputPath $ctx $name
         if (Test-Path -LiteralPath $out) { continue }                       # ya hecho
@@ -425,6 +458,7 @@ while ($didAny) {
 
         # Reclamo atomico
         if (-not (Enter-Lock -Context $ctx -Name $name)) { continue }  # lo tiene otro worker
+        Set-CvWorkerFile -Context $ctx -File $name                     # estado para la ventana de la cola
         $sw = [System.Diagnostics.Stopwatch]::StartNew()
         try {
             Write-Host ''
@@ -647,9 +681,16 @@ while ($didAny) {
         }
         finally {
             Exit-Lock -Context $ctx -Name $name
+            # Resultado de este archivo para la ventana de la cola: el MISMO que ira al resumen final.
+            $r = $results[$name]
+            $rst = if ($r -and $r.Status -eq 'OK') { 'ok' } else { 'error' }
+            $rwy = if ($r) { "$($r.Reason)" } else { '' }
+            Complete-CvWorkerFile -Context $ctx -Status $rst -Reason $rwy
         }
     }
+    if ($stopped) { break }
 }
+if ($stopped) { Write-CvLog 'GLOBAL' '[STOP] - Parada pedida (Proceso\stop.flag): no se toman mas archivos.' }
 
 Write-Host ''
 Write-CvLog 'GLOBAL' '[END] - No quedan archivos libres por procesar'
@@ -689,6 +730,10 @@ if ($done.Count -gt 0) {
 # Reactivar el boton X al terminar.
 if ($ctx.LockClose) { Set-CvCloseButton -Enabled $true }
 
+# Dejar de publicar estado: este worker ya no esta (si no, la ventana de la cola lo veria como
+# huerfano hasta que alguien limpiara el fichero).
+Remove-CvWorkerState -Context $ctx
+
 # Cerrar el log de la ejecucion.
 if ($cvLog) { Stop-CvLog }
 
@@ -697,7 +742,7 @@ if ($cvLog) { Stop-CvLog }
 # INTERACTIVA (consola real). Con la entrada REDIRIGIDA (baterias de test, tuberias, CI) se OMITE: un
 # 'Read-Host' sobre una tuberia abierta pero vacia se QUEDA BLOQUEADO esperando un ENTER que no llega
 # (no devuelve EOF), asi que la bateria colgaria tras el resumen del worker.
-if ((@($results.Keys).Count -gt 0) -and -not [Console]::IsInputRedirected) {
+if ((@($results.Keys).Count -gt 0) -and -not $Unattended -and -not [Console]::IsInputRedirected) {
     Write-Host ''
     Read-Host 'ENTER para cerrar esta ventana' | Out-Null
 }

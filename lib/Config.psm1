@@ -137,6 +137,24 @@ function Get-CvSubtitleEditorModes {
     )
 }
 
+function Get-CvGuiThemes {
+    <# Aspecto de las ventanas (gui.theme). El 1o = default de fabrica. #>
+    @(
+        @{ Value = 'system'; Text = 'el de Windows (si lo pones oscuro, las ventanas tambien)' }
+        @{ Value = 'light';  Text = 'claro siempre' }
+        @{ Value = 'dark';   Text = 'oscuro siempre' }
+    )
+}
+
+function Get-CvPlayerModes {
+    <# Con que se reproduce un video entero desde la cola (preview.player). El 1o = default. #>
+    @(
+        @{ Value = 'start';    Text = 'reproductor asociado de Windows (si no hay, ffplay)' }
+        @{ Value = 'ffplay';   Text = 'el ffplay de tools (siempre esta, no depende del equipo)' }
+        @{ Value = 'external'; Text = 'el reproductor de playerExe (VLC, MPC-HC...)' }
+    )
+}
+
 function Get-CvNvencTiers {
     <# Tier de hevc_nvenc (encode.video.tuning.tier). #>
     @(
@@ -397,7 +415,14 @@ function Get-CvConfigDefaults {
                     autoAcceptPct       = 60
                     autoAcceptMinMargin = 2
                     autoSamples         = 3
-                    autoDuration        = 5
+                    #  - autoMaxCropPct: tope de lo que el modo 'auto' recorta SOLO. Los puntos se
+                    #    combinan por UNION (lo que esta negro en todos), asi que el resultado es
+                    #    conservador; pero si aun asi sale un recorte enorme -mas de este % de ancho o
+                    #    de alto- casi seguro es que ningun punto vio un plano a pantalla completa, asi
+                    #    que se propone y se pide confirmacion en vez de aplicarlo a ciegas. Referencia:
+                    #    un 2.39:1 dentro de 16:9 se lleva ~22% del alto; un 4:3, ~25% del ancho.
+                    autoMaxCropPct      = 40
+                    autoDuration        = 15
                     minCropPct          = 2
                 }
             }
@@ -457,6 +482,34 @@ function Get-CvConfigDefaults {
                 toSrt       = @('webvtt')
                 defaultLang = ''
                 dropEmpty   = $true
+                # Codecs de subtitulo que son TEXTO: se pueden leer, pasar a .srt y contar sus lineas.
+                #   Lo que no este aqui se trata como de IMAGEN (mapas de bits: PGS, VobSub, DVB), que
+                #   no tienen texto que ensenar y solo se pueden sacar tal cual y abrir con quien los
+                #   entienda (que ademas hace OCR). Si aparece un codec de texto nuevo, se anade aqui
+                #   y funciona en todo el programa (visor, resumen, editor de jobs) sin tocar codigo.
+                #   OJO: es una LISTA, y en config.json una lista SUSTITUYE a esta (no se suma); para
+                #   anadir uno hay que escribirlas todas. El mapa de abajo, en cambio, se fusiona.
+                textCodecs  = @(
+                    'subrip'
+                    'srt'
+                    'ass'
+                    'ssa'
+                    'mov_text'
+                    'webvtt'
+                    'text'
+                    'eia_608'
+                    'subviewer'
+                )
+                # A que FICHERO se saca cada codec de IMAGEN al extraerlo para abrirlo fuera. El
+                #   formato es 'codec de ffmpeg' -> 'extension' (con o sin punto, da igual). Lo que
+                #   se ponga aqui se SUMA a lo de serie: config.json solo tiene que traer los codecs
+                #   nuevos, no repetir estos. Un codec que no este en la lista no se puede extraer.
+                imageExtensions = [ordered]@{
+                    hdmv_pgs_subtitle = '.sup'
+                    pgssub            = '.sup'
+                    dvd_subtitle      = '.idx'
+                    dvdsub            = '.idx'
+                }
             }
         }
         # customProfile: valores por DEFECTO del constructor de perfil CUSTOM interactivo (opcion 0
@@ -507,12 +560,19 @@ function Get-CvConfigDefaults {
         #   definido en subtitleEditorExe (p. ej. Subtitle Edit o VS Code). subtitleEditorExe = ruta al
         #   .exe que usa el modo 'external' (ignorado en los otros modos). Compatibilidad: '' equivale a
         #   'start' y 'ventana' a 'win'. El comando 'V N' admite override puntual: 'V N <modo> [exe]'.
+        #   player/playerExe = con que se REPRODUCE un video entero desde la cola (el original o el ya
+        #   convertido, con el boton derecho): 'start' (por defecto) = el reproductor asociado de
+        #   Windows -el que ya tiene configurado cada uno-, con vuelta a ffplay si no hay ninguno;
+        #   'ffplay' = el de tools (siempre esta); 'external' = el .exe de playerExe. Esto NO son las
+        #   previews de PREPARAR, que son siempre ffplay con sus filtros.
         preview   = [ordered]@{
             start             = 0
             seconds           = 0
             syncSeconds       = 0
             subtitleEditor    = 'start'
             subtitleEditorExe = ''
+            player            = 'start'
+            playerExe         = ''
         }
         # Postproceso del MKV final:
         #  - stripTags: limpiar con mkvpropedit las etiquetas DURATION por pista que anade el
@@ -609,6 +669,24 @@ function Get-CvConfigDefaults {
             # tiene esos glifos). Es apariencia de consola, por eso vive aqui (no en behavior).
             asciiMarks       = $false
         }
+        # Apariencia de las VENTANAS (lo que 'console' es para el modo consola).
+        #   rememberLayout: al cerrar la ventana de la COLA se apunta como quedo -tamano, maximizada, reparto
+        #   del divisor y anchos de columna- en '<config>.gui.json' (junto al config en uso) y la
+        #   siguiente vez se abre igual. Con $false no se escribe nada y siempre se abre con los
+        #   tamanos de aqui. El fichero es de estado, no de configuracion: se puede borrar sin mas.
+        gui       = [ordered]@{
+            theme             = 'system'
+            rememberLayout    = $true
+            # Los workers son procesos APARTE: cerrar la ventana no los mata, siguen codificando sin
+            # nada a la vista (van con la consola oculta). Con esto activado, al cerrar con workers
+            # vivos se pregunta que hacer: dejarlos, parada ordenada o cortarlos. Es el equivalente
+            # en ventana de behavior.lockCloseButton (que desactiva la X de la consola).
+            confirmCloseWithWorkers = $true
+            queueWidth        = 1320
+            queueHeight       = 760
+            # Reparto del alto de la cola: % para la lista; el resto, para el resumen y el log.
+            queueSplitPercent = 52
+        }
         # Carpetas de trabajo: vacio = junto al programa; admite ruta absoluta o relativa.
         paths     = [ordered]@{
             original   = ''
@@ -621,6 +699,10 @@ function Get-CvConfigDefaults {
         # qmin, qmax, crf, detectBorder, changeSize, audioEncoder, audioCodec, audioBitrate, audioHz.
         # Ejemplo: { "label":"Anime 1080p", "videoEncoder":"libx265", "crf":18, "changeSize":"1920:-2" }
         profiles  = @()
+        # Perfil que sale MARCADO al preparar (ventana y consola). Vale el NOMBRE de uno propio de
+        # 'profiles', 'Perfil N' de los de serie (el mismo numero del menu) o 'Auto'. Se cambia desde
+        # setup > Perfiles, sin tocar el fichero a mano.
+        defaultProfile = 'Auto'
     }
     # customProfile HEREDA de encode.* (fuente unica) los campos con equivalente global, en vez de
     # repetir el literal: cambiar el default global cambia tambien la semilla del builder custom.
@@ -647,6 +729,32 @@ function Get-CvConfigDefaults {
         surround = $cfg.encode.audio.downmixCoeffs.surround
     }
     return $cfg
+}
+
+function ConvertTo-CvSubtitleExtMap {
+    <#
+        PURO. Normaliza el mapa 'codec -> extension' de encode.subtitles.imageExtensions a una tabla
+        con las claves en minusculas y las extensiones con su punto ('PGSSUB' + 'sup' -> 'pgssub' +
+        '.sup'): asi la config admite lo que escriba cada uno y el resto del codigo compara sin mas.
+        Acepta tanto la tabla de los defaults como el objeto que sale de leer el JSON.
+    #>
+    param($Source)
+    $map = @{}
+    if ($null -eq $Source) { return $map }
+    $pairs = @()
+    if ($Source -is [System.Collections.IDictionary]) {
+        foreach ($k in @($Source.Keys)) { $pairs += @{ Name = "$k"; Value = $Source[$k] } }
+    } else {
+        foreach ($p in @($Source.PSObject.Properties)) { $pairs += @{ Name = "$($p.Name)"; Value = $p.Value } }
+    }
+    foreach ($p in $pairs) {
+        $codec = "$($p.Name)".Trim().ToLower()
+        $ext   = "$($p.Value)".Trim().ToLower()
+        if ($codec -eq '' -or $ext -eq '') { continue }
+        if (-not $ext.StartsWith('.')) { $ext = '.' + $ext }
+        $map[$codec] = $ext
+    }
+    return $map
 }
 
 function Get-CvConfigHelp {
@@ -713,6 +821,8 @@ function Get-CvConfigHelp {
         'encode/audio/aacCoder'       = 'Coder del encoder AAC nativo (twoloop = mayor calidad)'
         'encode/subtitles/toSrt'      = 'Tipos de subtitulo (por codec) a convertir a SRT (p.ej. webvtt); el WEBVTT ilegible se rescata con mkvextract. Vacio = no convertir'
         'encode/subtitles/defaultLang' = 'Idioma por defecto de la pregunta de idioma del fallback de subtitulos (ENTER lo usa). Vacio = mantener el del subtitulo elegido'
+        'encode/subtitles/textCodecs'  = 'Codecs de subtitulo que son TEXTO (el resto se trata como imagen)'
+        'encode/subtitles/imageExtensions' = 'A que fichero se saca cada codec de IMAGEN al extraerlo (codec -> extension); se suma a los de serie'
         'encode/subtitles/dropEmpty'  = 'Descartar las pistas de subtitulo VACIAS (sin cues); evitan una pista muerta en la salida y que se congele la barra de progreso'
 
         'customProfile'             = '[av] Valores por defecto del constructor de perfil CUSTOM (opcion 0 de USAR PERFIL); mismos campos que un profiles[]'
@@ -745,6 +855,7 @@ function Get-CvConfigHelp {
         'encode/video/border/autoAcceptPct'      = '% de puntos que deben coincidir para auto-aceptar el recorte'
         'encode/video/border/autoAcceptMinMargin'= 'Votos de ventaja sobre el 2o para auto-aceptar (0 = sin margen)'
         'encode/video/border/autoSamples'        = "Puntos del pre-escaneo del modo 'auto' del perfil"
+        'encode/video/border/autoMaxCropPct'     = "Tope de recorte que el modo 'auto' aplica solo (% de ancho/alto); mas que eso, se confirma"
         'encode/video/border/autoDuration'       = "Segundos por punto del pre-escaneo 'auto' (minimo real 5 s)"
         'encode/video/border/minCropPct'         = 'Reduccion minima (%) para considerar barras (menos = no recorta)'
 
@@ -753,6 +864,8 @@ function Get-CvConfigHelp {
         'preview/start'   = 'Segundo en que empieza la muestra (0 = desde el principio)'
         'preview/seconds' = 'Duracion de la muestra en seg (0 = sin limite, todo el video)'
         'preview/syncSeconds' = 'Tope (seg) del preview A/B de sincronia de audio (0 = sin limite, hasta el final o q/ESC)'
+        'preview/player'         = "Reproducir un video desde la cola: 'start' = asociado de Windows | 'ffplay' = el de tools | 'external' = el .exe de playerExe"
+        'preview/playerExe'      = 'Reproductor para player=external (ruta al .exe: VLC, MPC-HC...)'
         'preview/subtitleEditor' = "Ver texto de subtitulo ('V N'): 'start' = asociado de Windows | 'win' = ventana propia (WinForms) | 'external' = el .exe de subtitleEditorExe"
         'preview/subtitleEditorExe' = "Ruta al .exe para el modo 'external' de subtitleEditor (p. ej. Subtitle Edit, VS Code); ignorado en 'start'/'win'"
 
@@ -815,13 +928,22 @@ function Get-CvConfigHelp {
         'console/sepWidth'    = 'Ancho (caracteres) de los separadores de seccion === / --- de la UI'
         'console/progressBarWidth' = 'Ancho (caracteres) de la barra visual de progreso del worker; 0 = sin barra'
 
+        'gui'                   = 'Apariencia de las ventanas (Convert-gui / setup-gui)'
+        'gui/theme'             = "Aspecto de las ventanas: 'system' (sigue a Windows) / 'light' / 'dark'"
+        'gui/rememberLayout'    = 'Recordar como queda la ventana de la cola al cerrarla (en <config>.gui.json)'
+        'gui/confirmCloseWithWorkers' = 'Al cerrar la cola con workers codificando, preguntar que hacer (siguen vivos si no)'
+        'gui/queueWidth'        = 'Ancho (px) de la ventana de la cola la primera vez'
+        'gui/queueHeight'       = 'Alto (px) de la ventana de la cola la primera vez'
+        'gui/queueSplitPercent' = 'Porcentaje del alto para la lista de la cola (el resto, resumen y log)'
+
         'paths'            = '[av] Carpetas de trabajo (vacio = junto al programa)'
         'paths/original'   = 'Carpeta de entrada (videos a convertir)'
         'paths/proceso'    = 'Carpeta de temporales durante la conversion'
         'paths/convertido' = 'Carpeta de salida (videos ya convertidos)'
         'paths/logs'       = 'Carpeta de logs de sesion'
 
-        'profiles' = '[av] Perfiles propios (se anaden a los de serie); se editan a mano en el fichero de config'
+        'profiles' = '[av] Perfiles propios (se anaden a los de serie); se crean desde setup > Perfiles propios o al ajustar un perfil'
+        'defaultProfile' = "Perfil marcado al preparar: nombre de uno propio, 'Perfil N' de los de serie, o Auto"
     }
 }
 
@@ -1123,14 +1245,49 @@ function Repair-CvConfigArrays($cfg) {
 }
 function Read-CvConfigFile {
     param([Parameter(Mandatory)][string]$Path)
-    $cfg = Get-Content -Raw -LiteralPath $Path | ConvertFrom-Json
+    $cfg = Read-CvJsonFile -Path $Path
     Repair-CvConfigArrays $cfg
     return $cfg
 }
 function Save-CvConfigFile {
     param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)]$Config)
+    # El JSON lo monta el formateador propio (ConvertTo-CvJson, que respeta el orden y la sangria
+    # del fichero de configuracion); aqui solo se escribe. NO atomico: config.json no lo lee nadie
+    # mientras se guarda, y un .tmp suelto en la raiz del programa se veria raro.
     $json = (ConvertTo-CvJson -Node $Config -Indent 0) -replace "`n", "`r`n"
-    [System.IO.File]::WriteAllText($Path, $json + "`r`n", (New-Object System.Text.UTF8Encoding($false)))
+    [void](Save-CvTextFile -Path $Path -Text ($json + "`r`n"))
+}
+
+function Set-CvConfigValue {
+    <#
+        Guarda UN valor suelto en el fichero de configuracion, sin tocar nada mas: -Key es la ruta
+        con barras ('gui/theme'). Se escribe sobre el config CRUDO, asi que un config minimo sigue
+        minimo y lo que no se toca se queda con su formato.
+
+        Es lo que necesita una ventana para recordar una preferencia que se cambia desde ella (el
+        tema, por ejemplo) sin montar el editor entero. Devuelve @{ Ok; Error }.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        # AllowEmptyString: una clave vacia se contesta con @{ Ok = $false }, no con una excepcion
+        # (esta funcion INFORMA de los fallos, que es lo que espera quien la llama desde una ventana).
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Key,
+        $Value
+    )
+    try {
+        $cfg = $(if (Test-Path -LiteralPath $Path) { Read-CvConfigFile -Path $Path } else { Get-CvConfigDefaults })
+        $partes = @("$Key" -split '/' | Where-Object { "$_" -ne '' })
+        if ($partes.Count -eq 0) { return @{ Ok = $false; Error = 'clave vacia' } }
+        # Get-CvChildNode CREA la seccion si falta, que es lo que hace falta aqui: un config minimo
+        # puede no tener 'gui' todavia y aun asi se le puede guardar 'gui/theme'.
+        $nodo = $cfg
+        for ($i = 0; $i -lt ($partes.Count - 1); $i++) { $nodo = Get-CvChildNode -Node $nodo -Key $partes[$i] }
+        Set-CvChildLeaf -Node $nodo -Key $partes[-1] -Value $Value
+        Save-CvConfigFile -Path $Path -Config $cfg
+        return @{ Ok = $true; Error = '' }
+    } catch {
+        return @{ Ok = $false; Error = "$($_.Exception.Message)" }
+    }
 }
 
 function Reset-CvConfig {

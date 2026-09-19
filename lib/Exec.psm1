@@ -216,12 +216,26 @@ function Invoke-ToolShow {
     return $p.ExitCode
 }
 
+function Test-CvProcessAlive {
+    <#
+        PURO-ish. $true si EN ESTE EQUIPO existe un proceso con ese PID. Fuente unica de la
+        comprobacion: la usan el bloqueo de un archivo (Test-CvLockStale) y el estado de los workers.
+
+        OJO con lo que NO dice: un PID que no existe aqui no significa que el trabajo este muerto si
+        el .lock es de OTRO equipo (ahi el PID ni siquiera es comparable). Esa regla vive en quien
+        llama, no aqui.
+    #>
+    param([int]$ProcessId)
+    if ($ProcessId -le 0) { return $false }
+    return ($null -ne (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue))
+}
+
 function Format-CvEta {
     <# Segundos -> 'mm:ss' o 'h:mm:ss' (compacto, sin ms). Negativo/no finito -> '--:--'. #>
     param([double]$Seconds)
     if ($Seconds -lt 0 -or [double]::IsInfinity($Seconds) -or [double]::IsNaN($Seconds)) { return '--:--' }
     $p = Get-CvTimeParts ([math]::Round($Seconds))   # redondeo a segundos (MS = 0)
-    if ($p.H -ge 1) { return ('{0}:{1:00}:{2:00}' -f $p.H, $p.M, $p.S) }
+    if ($p.H -ge 1) { return (Format-CvClock -Seconds ([math]::Round($Seconds))) }
     return ('{0:00}:{1:00}' -f $p.M, $p.S)
 }
 
@@ -337,6 +351,10 @@ function Invoke-ToolProgress {
     $frames     = 0.0     # 'frame=' del -progress (frames ya codificados)
     $bitrate    = ''      # 'bitrate=' del -progress (p. ej. '1234.5kbits/s' o 'N/A')
     $qv         = ''      # 'stream_X_X_q=' del -progress (cuantizador del stream; -1 si no aplica)
+    # WorkerCore solo lo cargan Convert.ps1 y la ventana de la cola: se comprueba UNA vez (no en cada
+    # repintado) para que esta funcion siga valiendo en los scripts que no lo importan (FixSyncSub,
+    # las baterias de test) sin tragarse errores con un try/catch por render.
+    $pubProgress = $null -ne (Get-Command Update-CvWorkerProgress -ErrorAction SilentlyContinue)
 
     while ($null -ne ($line = $reader.ReadLine())) {
         if     ($line.StartsWith('out_time_us=')) { $n = 0L; if ([long]::TryParse($line.Substring(12), [ref]$n) -and $n -ge 0) { $outSec = $n / 1000000.0; $hasOut = $true } }
@@ -362,8 +380,10 @@ function Invoke-ToolProgress {
                 }
                 # Resto acotado a >= 0: con el avance estimado por frames el total puede quedarse corto
                 # por decimas y un resto negativo pintaria 'ETA --:--' justo al acabar.
-                if ($pct -ge 0 -and $hasSpd) { $parts += ('  ETA {0}' -f (Format-CvEta ([math]::Max(0.0, [double]($TotalSeconds - $sec)) / $spd))) }
-                if ($hasSpd)        { $parts += ('  {0}x' -f ([math]::Round($spd, 2)).ToString($inv)) }
+                $etaTxt = if ($pct -ge 0 -and $hasSpd) { Format-CvEta ([math]::Max(0.0, [double]($TotalSeconds - $sec)) / $spd) } else { '' }
+                $spdTxt = if ($hasSpd) { '{0}x' -f ([math]::Round($spd, 2)).ToString($inv) } else { '' }
+                if ($etaTxt) { $parts += ('  ETA {0}' -f $etaTxt) }
+                if ($spdTxt)        { $parts += ('  {0}' -f $spdTxt) }
                 elseif ($pct -lt 0) { $parts += ('  {0}' -f (Format-CvEta $sec)) }   # sin total: tiempo transcurrido
                 # Bitrate (audio y video) y cuantizador q (solo si -ShowQ, p. ej. video). Se omiten
                 # mientras ffmpeg aun no da un valor util ('N/A' al arrancar; q negativo = no aplica).
@@ -375,6 +395,10 @@ function Invoke-ToolProgress {
                     }
                 }
                 $lastLen = Write-CvProgressLine -Text $parts -PrevLen $lastLen
+                # El MISMO estado, publicado para la ventana de la cola (Convert-gui): asi ensena
+                # exactamente lo que se ve aqui, sin volver a calcular nada. Solo si el proceso esta
+                # publicando estado (un worker); en una ejecucion normal la llamada no hace nada.
+                if ($pubProgress) { Update-CvWorkerProgress -Context $Context -Step $Label -Percent $pct -Eta $etaTxt -Speed $spdTxt }
                 $lastPct = $curPct; $lastRender = $sw.Elapsed.TotalSeconds
             }
         }

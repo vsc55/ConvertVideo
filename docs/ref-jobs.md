@@ -1,5 +1,9 @@
 # Jobs, lock y temporales
 
+> El job lleva `subtitleCues`: el número de líneas de **todas** las pistas de subtítulo del archivo (no solo las elegidas), para poder enseñarlas y compararlas sin volver a demultiplexar. Además, cada subtítulo elegido lleva su `Cues` cuando quien preparó ya lo sabía — el editor en ventana lo cuenta para su tabla —, para que nadie tenga que volver a demultiplexar el fichero solo para enseñarlo. `-1` = no se sabe; nadie lo cuenta solo por guardarlo.
+
+> La **estructura** del `.job.json` tiene una sola fuente en el código: `ConvertTo-CvJobRecord` (`lib\JobCore.psm1`). La usan la consola (`Convert.ps1`, al terminar sus preguntas) y el editor en ventana ([ref-cola.md](ref-cola.md)), así que los dos escriben exactamente lo mismo.
+
 Todo el estado de trabajo vive en `Proceso\`.
 
 ## El job (`Proceso\<nombre>.job.json`)
@@ -56,6 +60,17 @@ $fs = [System.IO.File]::Open($lock, [FileMode]::CreateNew, [FileAccess]::Write, 
 - Se libera siempre en el `finally` (`Exit-Lock` → `[IO.File]::Delete`), incluso si la codificación falla.
 - **Locks huérfanos**: en el lock se guarda `PID`+equipo. Si otro worker encuentra un lock cuyo proceso dueño **ya no existe** (mismo equipo), lo considera caducado (`Test-CvLockStale`) y lo roba. En otra máquina no se puede verificar, así que no se roba.
 - Es literal-safe (compatible con nombres con corchetes).
+
+## Ficheros de control de los workers
+
+Además del job, el lock y los temporales, en `Proceso\` viven dos ficheros que sostienen la **cola en ventana** ([ref-cola.md](ref-cola.md)):
+
+| Fichero | Quién lo escribe | Para qué |
+|---|---|---|
+| `<pid>.worker.json` | cada `Convert.ps1` (siempre, también en consola) | Publica lo único que no se deduce de los ficheros: archivo en curso, paso, %, ETA y velocidad. Se borra al terminar; si queda, su worker murió (se detecta igual que un lock huérfano, por el PID). |
+| `stop.flag` | la ventana (botón *Parar*) | Parada **ordenada**: los workers lo miran **entre archivos** y no reclaman más. |
+
+Los dos se limpian con los *bloqueos* desde setup (`Get-CvProcesoPatterns -What locks`).
 
 ## Temporales (`Get-CvTempPaths`)
 

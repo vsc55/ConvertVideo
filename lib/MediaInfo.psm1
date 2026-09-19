@@ -76,11 +76,11 @@ function Get-VideoStreamPos {
     return 0
 }
 
-function Get-CvAudioBitrate {
+function Get-CvStreamBitrate {
     <#
-        Bitrate de una pista de audio en bps (o $null si no se puede saber). Se lee de
-        'stream.bit_rate' (lo traen habitualmente AC-3/E-AC-3/DTS) o, si falta, del tag de
-        estadisticas de mkvmerge 'BPS' (frecuente en MKV). Sirve para comparar calidad de pistas.
+        Bitrate de CUALQUIER pista en bps (o $null si no se puede saber). Se lee de 'stream.bit_rate'
+        (lo traen habitualmente AC-3/E-AC-3/DTS) o, si falta, del tag de estadisticas de mkvmerge
+        'BPS' (frecuente en MKV, tambien para video).
     #>
     param([Parameter(Mandatory)]$Stream)
     $n = [int64]0
@@ -88,6 +88,27 @@ function Get-CvAudioBitrate {
     $bps = Get-Tag $Stream 'BPS'
     if ($bps -and [int64]::TryParse("$bps".Trim(), [ref]$n) -and $n -gt 0) { return $n }
     return $null
+}
+
+function Get-CvAudioBitrate {
+    <# Bitrate de una pista de AUDIO en bps (o $null). Sirve para comparar calidad de pistas. #>
+    param([Parameter(Mandatory)]$Stream)
+    return (Get-CvStreamBitrate -Stream $Stream)
+}
+
+function Get-CvStreamBitDepth {
+    <#
+        PURO. Profundidad de bits de una pista de video a partir de su pix_fmt ('yuv420p10le' -> 10).
+        0 si no se puede saber. Sirve para el resumen: 8 bits vs 10 bits es de lo primero que se mira.
+    #>
+    param($Stream)
+    if (-not $Stream) { return 0 }
+    $n = 0
+    if ($Stream.PSObject.Properties['bits_per_raw_sample'] -and [int]::TryParse("$($Stream.bits_per_raw_sample)".Trim(), [ref]$n) -and $n -gt 0) { return $n }
+    $fmt = "$($Stream.pix_fmt)".ToLower()
+    if ($fmt -match 'p(\d+)(le|be)$') { return [int]$Matches[1] }
+    if ($fmt) { return 8 }
+    return 0
 }
 
 function Get-CvAudioCodecRank {
@@ -370,6 +391,21 @@ function Get-SubtitleStreamPos {
     return 0
 }
 
+function Get-CvSubtitleCueTag {
+    <#
+        PURO. Nº de cues de una pista de subtitulo segun el tag de estadisticas de mkvmerge
+        ('NUMBER_OF_FRAMES'), que ya viene en el stream cargado por Get-MediaInfo. -1 si no lo trae.
+
+        Es la parte INSTANTANEA de Get-CvSubtitleCueCount, separada para quien no puede permitirse el
+        respaldo lento (demultiplexar el fichero entero): p. ej. el resumen de la cola, que se pinta
+        al seleccionar una fila y tiene que salir al momento.
+    #>
+    param([Parameter(Mandatory)]$Stream)
+    $n = 0
+    if ([int]::TryParse("$(Get-Tag $Stream 'NUMBER_OF_FRAMES')".Trim(), [ref]$n)) { return $n }
+    return -1
+}
+
 function Get-CvSubtitleCueCount {
     <#
         Nº de cues (entradas) de una pista de subtitulo por su indice absoluto. Devuelve -1 si no
@@ -389,7 +425,8 @@ function Get-CvSubtitleCueCount {
     #    fallback. Sin stream, un ffprobe de METADATOS (rapido, sin demux) para leer el tag.
     $nf = ''
     if ($Stream) {
-        $nf = "$(Get-Tag $Stream 'NUMBER_OF_FRAMES')"
+        $tagged = Get-CvSubtitleCueTag -Stream $Stream
+        if ($tagged -ge 0) { return $tagged }
     } else {
         $t = Invoke-ToolCapture -Exe $Context.FFprobe -Arguments @(
             '-v','error','-select_streams',"$Index",
@@ -436,10 +473,7 @@ function Get-DurationText {
     param([Parameter(Mandatory)]$Info)
     $sec = Get-MediaDuration $Info
     if ($sec -le 0) { return '?' }
-    $ts = [TimeSpan]::FromSeconds([math]::Floor($sec))
-    # OJO: [int] REDONDEA en PowerShell (0.9 h -> 1); hay que TRUNCAR las horas totales
-    # (ej. 53:56 = 0.899 h) con [math]::Floor, si no un video de <1h saldria como "1:MM:SS".
-    return ('{0}:{1:00}:{2:00}' -f [int][math]::Floor($ts.TotalHours), $ts.Minutes, $ts.Seconds)
+    return (Format-CvClock -Seconds $sec)
 }
 
 function Write-SourceSummary {
@@ -530,8 +564,8 @@ function Write-ConversionSummary {
     $origBytes = (Get-Item -LiteralPath $File).Length
     $outBytes  = 0
     if (Test-Path -LiteralPath $Output) { $outBytes = (Get-Item -LiteralPath $Output).Length }
-    $origMB = [math]::Round($origBytes / 1MB, 1)
-    $outMB  = [math]::Round($outBytes  / 1MB, 1)
+    $origMB = Format-CvMb -Bytes $origBytes
+    $outMB  = Format-CvMb -Bytes $outBytes
     $ahorro = if ($origBytes -gt 0) { [math]::Round(100 * (1 - ($outBytes / $origBytes)), 1) } else { 0 }
 
     $vs      = Get-VideoStream -Info $Info

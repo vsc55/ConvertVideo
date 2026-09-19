@@ -251,7 +251,7 @@ function Invoke-Multiplex {
     # Borrar los temporales de subtitulos rescatados (se hayan usado o no).
     foreach ($t in @($sx.Temps)) { if (Test-Path -LiteralPath $t) { Remove-Item -Force -LiteralPath $t -ErrorAction SilentlyContinue } }
     $ok = (($code -eq 0) -and (Test-Path -LiteralPath $out) -and ((Get-Item -LiteralPath $out).Length -gt 0))
-    $mbTxt = if ($ok) { ("({0} MB)" -f [math]::Round((Get-Item -LiteralPath $out).Length / 1MB, 1)) } else { '' }
+    $mbTxt = if ($ok) { ("({0} MB)" -f (Format-CvMb -Bytes (Get-Item -LiteralPath $out).Length)) } else { '' }
     Stop-CvStep $Context 'MULTIPLEX' $ok -Extra $mbTxt -OkMsg ("[OK] - {0}  {1}" -f (Split-Path $out -Leaf), $mbTxt) -FailMsg ("[ERR] - ffmpeg devolvio codigo {0}" -f $code)
     if (-not $ok) {
         # Borrar la salida parcial para no darla por buena ni bloquear el reintento.

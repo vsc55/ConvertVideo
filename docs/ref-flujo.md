@@ -29,6 +29,8 @@ flowchart TD
 |---|---|---|
 | `-Config <ruta>` | `Convert` y `setup` | Fichero de configuración a usar en vez de `config.json` junto al programa. Admite ruta **absoluta** o **relativa** al directorio actual. Permite mantener varios perfiles de config (p. ej. `Convert.cmd -Config perfiles\anime.json`). Los workers extra heredan el mismo `-Config`. Si la ruta no existe, se avisa y se usan los valores por defecto. |
 | `-WorkerOnly` | `Convert` | Salta la fase PREPARAR y entra directo como worker (lo usan las ventanas extra que se abren al pedir varios workers en paralelo). |
+| `-Only <nombres>` | `Convert` | Codifica **solo** esos archivos (nombre base, sin extensión), en vez de todos los preparados. Lo usa la ventana de la cola al elegir unos cuantos a mano, y sirve igual desde consola para rehacer uno concreto: `Convert.cmd -WorkerOnly -Only "Serie_1x05"`. Vacío = todos. Solo afecta a la fase WORKER. |
+| `-Unattended` | `Convert` | Worker **desatendido** (el que abre `Convert-gui`, normalmente sin consola a la vista): implica `-WorkerOnly`, no pregunta nada (si falta `ffmpeg` aborta con el motivo en vez de ofrecer la descarga) y no pausa al terminar. Ver [ref-cola.md](ref-cola.md). |
 
 ## Clasificación
 
@@ -89,6 +91,8 @@ Por cada candidato:
 - **Re-convertir** un archivo: borra su `Convertido\<nombre>_fix.<ext>` (y su `.job` si además quieres que te vuelva a preguntar la configuración).
 
 ## Fase PREPARAR
+
+> También se puede preparar **en ventana**: `Convert-gui.cmd` → *Preparar pendientes*. Sigue el mismo guión que esta sección —perfil una vez, después archivo por archivo— con las **mismas** funciones de decisión; lo que aquí se resuelve solo, allí también, y solo se para a preguntar en los mismos casos. Ver [ref-cola.md](ref-cola.md). El resto de esta sección describe el flujo de **consola**.
 
 Se elige **un** perfil ([ref-perfiles.md](ref-perfiles.md)) que se aplica a todo el lote, y para cada archivo sin preparar se hacen las preguntas/detecciones y se escribe el job.
 
@@ -190,6 +194,8 @@ Ver los comandos exactos en [ref-comandos.md](ref-comandos.md). El detalle del a
 
 - El reclamo de cada archivo es un **fichero-lock** `Proceso\<nombre>.lock` creado con `FileMode.CreateNew` (falla atómicamente si ya existe). Solo un worker gana.
 - Se pueden lanzar **varias ventanas** (`Convert.cmd`) a la vez: cuando todos los archivos tienen `.job`, cada ventana entra como worker y se reparten los archivos por el lock.
+- En vez de N consolas, `Convert-gui.cmd` abre **un solo panel** con toda la cola: lanza los workers (`Convert.ps1 -WorkerOnly -Unattended`), enseña el estado y el progreso de cada archivo y permite pararlos ordenadamente. Detalle en [ref-cola.md](ref-cola.md).
+- Cada worker **publica su estado** en `Proceso\<pid>.worker.json` (archivo en curso, paso, %, ETA). Lo lee el panel; un worker abierto a mano también aparece en él.
 - El lock se libera siempre en el `finally`, incluso si la codificación falla. Si un worker muere a mitad, otro puede **robar el lock caducado** (guarda `PID`+equipo; ver [ref-jobs.md](ref-jobs.md)).
 - **Reintentos con límite**: un archivo que falla se reintenta hasta un máximo (`behavior.retries`, por defecto 2); superado, se **abandona** (se marca en `skip`). Los ilegibles se descartan y un error inesperado se captura por archivo (no aborta el lote). Esto evita el bucle infinito con inputs corruptos o ffmpeg que no arranca.
 - La codificación de audio/vídeo debe terminar con éxito (ffmpeg código 0 + salida no vacía) para que se multiplexe; si no, el archivo cuenta como fallo (no se genera un MKV con vídeo sin recodificar).

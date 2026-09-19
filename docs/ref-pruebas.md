@@ -129,6 +129,22 @@ Los casos que dependen de **GPU** (tone-mapping con libplacebo, multipass NVENC)
 
 También se lanza desde `setup` (bloque **Pruebas** · *Ejecutar batería de features*), igual que los tests unitarios (proceso hijo). Tarda más que los unitarios porque codifica; los unitarios siguen siendo la comprobación rápida. Ver [ref-setup.md](ref-setup.md).
 
+## Baterías de ventana (`gui-tests.ps1` y `gui-convert-tests.ps1`)
+
+Las dos ventanas del proyecto se prueban **abriéndolas de verdad** y dirigiéndolas sin ratón: sus controles llevan `.Name` (`cvTree`, `cvQueue`, `cvStart`…), así que la batería los busca con `Controls.Find`, los manipula y comprueba el resultado. Sin entorno gráfico (o sin `-Sta`) esos casos se **saltan** (`[SKIP]`), no fallan.
+
+```powershell
+powershell -ExecutionPolicy Bypass -Sta -File test\gui-tests.ps1           # setup (datos + editor de config)
+powershell -ExecutionPolicy Bypass -Sta -File test\gui-convert-tests.ps1   # cola (datos + ventana de Convert-gui)
+```
+
+- **Setup** (`gui-tests.ps1`): los datos de `SetupCore` sobre un root temporal y el editor de configuración en árbol (editar número/enum/lista, volver al default, opciones avanzadas, guardar solo lo que difiere) y el **estado recordado de las ventanas** (`<config>.gui.json`: guardar, releer, ignorar un fichero corrupto, y las reglas puras de tamaño y divisor). Detalle en [ref-setup.md](ref-setup.md).
+- **Cola** (`gui-convert-tests.ps1`): se siembra una cola completa en un root temporal —vídeos, jobs, bloqueos vivos y **caducados**, salidas y ficheros de estado de worker— y se comprueba que cada archivo sale con su estado, que la fila en curso trae el progreso que publica el worker y que la ventana pinta y habilita lo que toca. Incluye la **preparación de jobs** sobre fixtures reales: las opciones que se ofrecen, el borrador automático (misma elección que haría la consola), el **autodiscover** (`Get-CvJobAutoPlan`: qué se resuelve solo y qué hace falta preguntar), guardar/releer el `.job.json`, la ventana del editor —marcar una pista de audio, cambiarle el idioma, hacerla predeterminada, añadir un subtítulo y guardar— y el **recorrido completo de *Preparar pendientes*** (diálogo de perfil incluido) hasta que el archivo aparece *en cola*. También **abre la ventana dos veces**: comprueba que al cerrarla apunta cómo quedó (tamaño, divisor, columnas) y que la segunda se abre exactamente así. Y el **aviso al cerrar con workers vivos**: la cola sembrada tiene uno (el propio proceso de la batería), así que con `gui.confirmCloseWithWorkers` activado el diálogo sale de verdad y un temporizador lo contesta por su `.Name` — la única excepción a la regla de "nada modal", con contador para no dejar la batería colgada. En el resto de casos esa clave va a `false` en el config temporal, justo para que cerrar no pregunte. Esos casos **necesitan ffprobe** (enlazan `tools\` del proyecto) y se saltan si no está. Detalle en [ref-cola.md](ref-cola.md).
+
+**Regla al dirigir una ventana desde una batería**: el temporizador que la maneja **espera** a que esté montada (reintenta hasta encontrar su control y, en la cola, hasta que la lista tiene filas), con un tope de intentos. Un disparo único a los X ms parece que funciona y falla en cuanto la máquina está ocupada: ejecutar la batería de la cola justo detrás de otra la tiraba entera —43 casos de golpe, todos con valores vacíos—, y sola volvía a pasar, que es lo que la hacía parecer intermitente.
+
+**Regla al tocar `GuiSetup.psm1`/`GuiConfig.psm1`/`GuiConvert.psm1`**: los caminos que ejercitan estas baterías **no pueden sacar un diálogo modal**, o la batería se queda colgada esperando a que una persona pulse *Aceptar* (pasó con el aviso de "config.json actualizado"). Si una acción necesita confirmar, que lo haga el **llamador**. Por lo mismo, la batería de la cola **no pulsa** *Iniciar* ni *Cancelar ahora*: lanzarían o matarían procesos de verdad.
+
 ## Fuentes y licencias de las muestras base
 
 Documentado para evitar problemas legales. Verificar siempre las condiciones en la web de origen antes de redistribuir.

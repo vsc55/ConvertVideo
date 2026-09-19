@@ -23,9 +23,245 @@ function Find-CropDetect {
     ) + $mapArg + @('-vf','cropdetect','-f','null','-')) -Context $Context
     $cropMatches = [regex]::Matches($r.StdErr, 'crop=(\d+:\d+:\d+:\d+)')
     if ($cropMatches.Count -eq 0) { return $null }
-    $best = $cropMatches | ForEach-Object { $_.Groups[1].Value } |
-            Group-Object | Sort-Object Count -Descending | Select-Object -First 1
-    return $best.Name
+    # La ULTIMA linea, no la mas repetida: cropdetect ACUMULA dentro de la ventana analizada -la caja
+    # de contenido solo crece- asi que la ultima es la que cubre todo lo que se ha visto en ese tramo.
+    # La mas repetida sesga hacia el plano que mas dure (un plano oscuro de 3 s deja su caja pequena
+    # repetida 70 veces), y era lo que hacia que un tramo con una escena oscura al principio
+    # devolviera un recorte que se comia imagen.
+    return $cropMatches[$cropMatches.Count - 1].Groups[1].Value
+}
+
+function Test-CvCropSignificant {
+    <#
+        PURO. Un recorte detectado, es una BARRA de verdad o solo el ruido de borde que cropdetect
+        quita casi siempre? Se compara cuanto reduce (ancho o alto, lo que mas) contra -MinPct
+        (encode.video.border.minCropPct). Ojo con los tipos: '1 - w/iw' con enteros da 0 ENTERO y
+        [math]::Max(int, decimal) truncaria el otro termino, asi que se castea a [double].
+    #>
+    param([string]$Crop, [int]$Width, [int]$Height, [double]$MinPct)
+    if ($Width -le 0 -or $Height -le 0) { return $false }
+    $q = "$Crop" -split ':'
+    if ($q.Count -lt 2) { return $false }
+    $cw = 0; $ch = 0
+    if (-not [int]::TryParse($q[0], [ref]$cw)) { return $false }
+    if (-not [int]::TryParse($q[1], [ref]$ch)) { return $false }
+    $red = [math]::Max([double](1 - $cw / $Width), [double](1 - $ch / $Height)) * 100
+    return ($red -ge $MinPct)
+}
+
+function Get-CvOutputSize {
+    <#
+        PURO. Tamano que va a tener la imagen FINAL: se parte del de origen, se aplica el recorte y
+        despues el reescalado, que es el orden en que los encadena el filtro (Get-CvVideoFilterChain).
+        Sirve para CONTARLO -el resumen dice 'queda 1920x960'-, no para construir el filtro.
+
+        El reescalado admite lo mismo que 'scale=': 'W:H' fijo, o '-1'/'-2' en un eje = automatico
+        conservando el aspecto ('-2' ademas obliga a par, que es lo que piden casi todos los codecs).
+        Se ignora lo que venga tras una coma ('1920:800,setsar=1'): eso ya no es tamano.
+
+        Devuelve @{ Width; Height; CropWidth; CropHeight; Left; Top; Right; Bottom; Cropped; Scaled },
+        todo 0/false si no se sabe el tamano de origen.
+    #>
+    param(
+        [int]$Width,
+        [int]$Height,
+        [string]$Crop = '',
+        [string]$Resize = ''
+    )
+    $r = @{
+        Width      = 0
+        Height     = 0
+        CropWidth  = 0
+        CropHeight = 0
+        Left       = 0
+        Top        = 0
+        Right      = 0
+        Bottom     = 0
+        Cropped    = $false
+        Scaled     = $false
+    }
+    if ($Width -le 0 -or $Height -le 0) { return $r }
+    $w = $Width
+    $h = $Height
+    if ("$Crop".Trim() -match '^(\d+):(\d+):(\d+):(\d+)$') {
+        $cw = [int]$Matches[1]; $ch = [int]$Matches[2]; $cx = [int]$Matches[3]; $cy = [int]$Matches[4]
+        if ($cw -gt 0 -and $ch -gt 0 -and ($cw + $cx) -le $Width -and ($ch + $cy) -le $Height) {
+            $r.CropWidth  = $cw
+            $r.CropHeight = $ch
+            $r.Left       = $cx
+            $r.Top        = $cy
+            $r.Right      = $Width  - $cw - $cx
+            $r.Bottom     = $Height - $ch - $cy
+            $r.Cropped    = ($cw -ne $Width -or $ch -ne $Height)
+            $w = $cw
+            $h = $ch
+        }
+    }
+    $spec = (("$Resize" -split ',')[0]).Trim()
+    if ($spec -ne '') {
+        $p = $spec -split ':'
+        if ($p.Count -ge 2) {
+            $tw = 0; $th = 0
+            [void][int]::TryParse($p[0].Trim(), [ref]$tw)
+            [void][int]::TryParse($p[1].Trim(), [ref]$th)
+            # <= 0 = token automatico ('-1'/'-2') o expresion: esa dimension la marca el aspecto.
+            # OJO con el redondeo: '-2' no trunca, redondea al PAR MAS CERCANO (1920x1080 a '-2:480'
+            # da 854, no 852). Se calcula sobre el valor exacto en double; '-1' redondea al entero.
+            $par = {
+                param([double]$Exact, [bool]$Even)
+                if ($Even) { return ([int][math]::Round($Exact / 2.0, [System.MidpointRounding]::AwayFromZero)) * 2 }
+                return [int][math]::Round($Exact, [System.MidpointRounding]::AwayFromZero)
+            }
+            if ($tw -gt 0 -and $th -gt 0) {
+                $w = $tw; $h = $th
+            } elseif ($tw -gt 0) {
+                $h = [Math]::Max(2, (& $par (($h * $tw) / [double]$w) ($p[1].Trim() -eq '-2'))); $w = $tw
+            } elseif ($th -gt 0) {
+                $w = [Math]::Max(2, (& $par (($w * $th) / [double]$h) ($p[0].Trim() -eq '-2'))); $h = $th
+            }
+            $r.Scaled = ($w -ne $(if ($r.CropWidth -gt 0) { $r.CropWidth } else { $Width }) -or
+                         $h -ne $(if ($r.CropHeight -gt 0) { $r.CropHeight } else { $Height }))
+        }
+    }
+    $r.Width  = $w
+    $r.Height = $h
+    return $r
+}
+
+function Format-CvCropCut {
+    <#
+        PURO. El recorte contado en PIXELES y por lados ('quita 60px arriba y 60px abajo'), que es lo
+        que se entiende de un vistazo; el 'W:H:X:Y' del filtro no dice cuanto se va por cada lado.
+        '' si no se quita nada.
+    #>
+    param(
+        [int]$Left   = 0,
+        [int]$Top    = 0,
+        [int]$Right  = 0,
+        [int]$Bottom = 0
+    )
+    # Barras simetricas (el caso normal): se dice una vez y se nombra lo que son.
+    if ($Top -gt 0 -and $Top -eq $Bottom -and $Left -eq 0 -and $Right -eq 0) {
+        return ("quita {0}px arriba y abajo (barras horizontales)" -f $Top)
+    }
+    if ($Left -gt 0 -and $Left -eq $Right -and $Top -eq 0 -and $Bottom -eq 0) {
+        return ("quita {0}px a cada lado (barras verticales)" -f $Left)
+    }
+    $bits = @()
+    if ($Top    -gt 0) { $bits += ("{0}px arriba" -f $Top) }
+    if ($Bottom -gt 0) { $bits += ("{0}px abajo" -f $Bottom) }
+    if ($Left   -gt 0) { $bits += ("{0}px a la izquierda" -f $Left) }
+    if ($Right  -gt 0) { $bits += ("{0}px a la derecha" -f $Right) }
+    if ($bits.Count -eq 0) { return '' }
+    return ("quita {0}" -f ($bits -join ' y '))
+}
+
+function Merge-CvCropBoxes {
+    <#
+        PURO. Convierte los recortes detectados en VARIOS puntos del video en UNO solo, que es el que
+        se puede aplicar sin comerse imagen. Tres pasos, y cada uno arregla un error real:
+
+        1. UNION. Una barra negra es lo que esta negro en TODOS los puntos; si en un punto la imagen
+           llega mas lejos, ahi hay contenido. Por eso se toma la caja que ENGLOBA a todas y no la mas
+           votada: con votos, dos planos oscuros ganaban a la unica muestra que veia el fotograma
+           entero, y el recorte resultante cortaba imagen (o no se aplicaba ninguno).
+        2. SIMETRIA. Las barras de un letterbox/pillarbox son simetricas: si un lado dice 94px y el
+           opuesto 2px, la diferencia es contenido oscuro de un plano, no barra. Se toma el MENOR de
+           cada par, que es lo conservador.
+        3. RUIDO POR EJE. cropdetect casi siempre quita unos pixeles de borde sucio. Si lo que se
+           quitaria en un eje no llega a -MinPct, ese eje no se toca (el otro puede si recortarse).
+
+        -Boxes son cadenas 'W:H:X:Y'. Devuelve 'W:H:X:Y' (o '' si no hay nada que recortar).
+    #>
+    param(
+        $Boxes,
+        [int]$Width,
+        [int]$Height,
+        [double]$MinPct = 2
+    )
+    if ($Width -le 0 -or $Height -le 0) { return '' }
+    $x1 = $Width; $y1 = $Height; $x2 = 0; $y2 = 0
+    $n = 0
+    foreach ($b in @($Boxes)) {
+        if ("$b" -notmatch '^(\d+):(\d+):(\d+):(\d+)$') { continue }
+        $w = [int]$Matches[1]; $h = [int]$Matches[2]; $x = [int]$Matches[3]; $y = [int]$Matches[4]
+        if ($w -le 0 -or $h -le 0 -or ($x + $w) -gt $Width -or ($y + $h) -gt $Height) { continue }
+        $n++
+        if ($x -lt $x1) { $x1 = $x }
+        if ($y -lt $y1) { $y1 = $y }
+        if (($x + $w) -gt $x2) { $x2 = $x + $w }
+        if (($y + $h) -gt $y2) { $y2 = $y + $h }
+    }
+    if ($n -eq 0) { return '' }
+    # Simetria: de cada par de margenes opuestos, el menor.
+    $left = [Math]::Min($x1, $Width  - $x2)
+    $top  = [Math]::Min($y1, $Height - $y2)
+    if ($left -lt 0) { $left = 0 }
+    if ($top  -lt 0) { $top  = 0 }
+    # Ruido por eje: lo que no llegue al minimo, no se recorta en ese eje.
+    if ((200.0 * $left / $Width)  -lt $MinPct) { $left = 0 }
+    if ((200.0 * $top  / $Height) -lt $MinPct) { $top  = 0 }
+    if ($left -eq 0 -and $top -eq 0) { return '' }
+    $cw = $Width  - (2 * $left)
+    $ch = $Height - (2 * $top)
+    if ($cw -le 0 -or $ch -le 0) { return '' }
+    return ("{0}:{1}:{2}:{3}" -f $cw, $ch, $left, $top)
+}
+
+function Resolve-CvCropAutoDecision {
+    <#
+        PURO. LA decision del modo AUTO de bordes a partir de los votos de Find-CropDetectSamples:
+        hay barras y se recortan, no las hay, o la evidencia es ambigua y lo tiene que ver una
+        persona. FUENTE UNICA: la usan la consola (Resolve-VideoChoices) y la ventana
+        (Get-CvJobAutoPlan), que antes tenian la formula escrita cada una por su lado.
+
+        Devuelve @{ Decision = 'crop'|'none'|'manual'; Crop; Reason }.
+
+        Como se decide (y por que): los puntos NO se votan, se COMBINAN (Merge-CvCropBoxes: union de
+        las cajas + simetria + ruido por eje). Una barra es lo que esta negro en TODOS los puntos, asi
+        que la mayoria es el criterio equivocado: en un episodio real, dos planos oscuros ganaban por
+        votos a la unica muestra que veia el fotograma entero y el resultado era no recortar nada -o
+        peor, recortar la caja de un plano oscuro y comerse imagen-.
+
+        Lo unico que se deja para una persona es el recorte DESPROPORCIONADO (-MaxCropPct): quitar mas
+        de eso no es un letterbox normal (un 2.39:1 dentro de 16:9 se lleva ~22% del alto; un 4:3
+        dentro de 16:9, un 25% del ancho), y casi siempre significa que ningun punto llego a ver un
+        plano a pantalla completa. Se propone, pero se pide confirmacion.
+    #>
+    param(
+        $Groups,
+        [int]$Width,
+        [int]$Height,
+        [double]$MinCropPct = 2,
+        [int]$MaxCropPct    = 40
+    )
+    $g = @($Groups)
+    if ($g.Count -eq 0) {
+        return @{ Decision = 'none'; Crop = ''; Reason = 'Sin bordes detectados: no se recorta' }
+    }
+    $crop = Merge-CvCropBoxes -Boxes @($g | ForEach-Object { "$($_.Crop)" }) -Width $Width -Height $Height -MinPct $MinCropPct
+    if ("$crop" -eq '') {
+        return @{ Decision = 'none'; Crop = ''; Reason = 'Sin barras (lo detectado es ruido de borde): no se recorta' }
+    }
+    $q  = "$crop" -split ':'
+    $cw = [int]$q[0]; $chh = [int]$q[1]
+    $redW = [int][math]::Round(100.0 * ($Width  - $cw)  / $Width)
+    $redH = [int][math]::Round(100.0 * ($Height - $chh) / $Height)
+    $que  = @()
+    if ($redH -gt 0) { $que += ("{0}% de alto" -f $redH) }
+    if ($redW -gt 0) { $que += ("{0}% de ancho" -f $redW) }
+    if ($redW -gt $MaxCropPct -or $redH -gt $MaxCropPct) {
+        return @{
+            Decision = 'manual'
+            Crop     = "$crop"
+            Reason   = ("Recorte {0} muy grande ({1}, mas del {2}%): confirmalo antes de aplicarlo" -f $crop, ($que -join ' y '), $MaxCropPct)
+        }
+    }
+    return @{
+        Decision = 'crop'
+        Crop     = "$crop"
+        Reason   = ("Barras detectadas: recorte {0} (quita {1}; {2} punto(s) analizados)" -f $crop, ($que -join ' y '), @($g).Count)
+    }
 }
 
 function Find-CropDetectSamples {
@@ -78,6 +314,113 @@ function Find-CropDetectSamples {
     return [pscustomobject]@{
         Groups  = $groups
         Samples = $Samples
+    }
+}
+
+function Get-CvPlayerCommand {
+    <#
+        PURO. Con que se abre un video para VERLO entero (no una preview de PREPARAR): devuelve
+        @{ Mode; Exe; Args; Shell } segun el modo pedido (preview.player) y lo que hay a mano.
+
+          start    -> lo abre el ASOCIADO de Windows (Shell = $true; el 'Exe' es el propio fichero).
+                      Es el modo por defecto: cada uno ya tiene su reproductor puesto, con sus
+                      atajos y su historial, y no hay que configurar nada.
+          ffplay   -> el ffplay de tools\\. Siempre esta (lo instala el propio programa), asi que es
+                      el PLAN B cuando no hay asociacion o el .exe externo no existe.
+          external -> el reproductor de preview.playerExe (VLC, MPC-HC...). Si esa ruta no existe se
+                      cae a ffplay -y si tampoco, al asociado-: nunca se lanza un exe que no esta.
+
+        Separado del lanzamiento para poder probar la DECISION sin abrir nada.
+    #>
+    param(
+        [string]$Mode   = 'start',
+        [string]$Exe    = '',
+        [string]$FFplay = '',
+        [Parameter(Mandatory)][string]$File
+    )
+    $m  = "$Mode".ToLower()
+    if ($m -eq '') { $m = 'start' }
+    $ff = "$FFplay"
+    $ffOk = ($ff -ne '') -and (Test-Path -LiteralPath $ff)
+
+    if ($m -eq 'external') {
+        $ex = "$Exe".Trim('"').Trim()
+        if ($ex -ne '' -and (Test-Path -LiteralPath $ex)) {
+            return @{
+                Mode  = 'external'
+                Exe   = $ex
+                Args  = @($File)
+                Shell = $false
+            }
+        }
+        $m = $(if ($ffOk) { 'ffplay' } else { 'start' })   # el externo no esta: no se lanza a ciegas
+    }
+    if ($m -eq 'ffplay') {
+        if ($ffOk) {
+            # Sin -autoexit: aqui se viene a VER el archivo, no a echarle un vistazo; se cierra con
+            # q/ESC o con la X. -window_title para distinguir el original del convertido de un vistazo.
+            return @{
+                Mode  = 'ffplay'
+                Exe   = $ff
+                Args  = @(
+                    '-hide_banner'
+                    '-loglevel'
+                    'error'
+                    '-window_title'
+                    ([System.IO.Path]::GetFileName($File))
+                    $File
+                )
+                Shell = $false
+            }
+        }
+        $m = 'start'
+    }
+    return @{
+        Mode  = 'start'
+        Exe   = $File
+        Args  = @()
+        Shell = $true
+    }
+}
+
+function Start-CvVideoPlayer {
+    <#
+        Abre un video para verlo, con lo que diga preview.player. NO ESPERA a que se cierre: quien
+        llama es una ventana (la cola) y bloquearla mientras se ve una pelicula no tendria ningun
+        sentido -y ademas dejaria la cola sin refrescar-.
+
+        Devuelve @{ Ok; Mode; Error }. No lanza: un reproductor que no arranca no puede tumbar la
+        aplicacion, se cuenta y ya.
+    #>
+    param(
+        [Parameter(Mandatory)]$Context,
+        [Parameter(Mandatory)][string]$File
+    )
+    if (-not (Test-Path -LiteralPath $File)) {
+        return @{ Ok = $false; Mode = ''; Error = ("No existe el archivo: {0}" -f $File) }
+    }
+    $cmd = Get-CvPlayerCommand -Mode "$($Context.PreviewPlayer)" -Exe "$($Context.PreviewPlayerExe)" `
+        -FFplay "$($Context.FFplay)" -File $File
+    try {
+        if ([bool]$cmd.Shell) {
+            # UseShellExecute: es lo que resuelve la asociacion de Windows (con -FilePath a secas,
+            # .NET intentaria EJECUTAR el .mkv). Si no hay programa asociado, Start-Process lanza.
+            [void](Start-Process -FilePath "$($cmd.Exe)" -ErrorAction Stop)
+        } else {
+            [void](Start-Process -FilePath "$($cmd.Exe)" -ArgumentList @($cmd.Args) -ErrorAction Stop)
+        }
+        return @{ Ok = $true; Mode = "$($cmd.Mode)"; Error = '' }
+    } catch {
+        # El asociado ha fallado (extension sin programa): se intenta con el ffplay de tools antes
+        # de darse por vencido, que es el que seguro esta.
+        if ("$($cmd.Mode)" -eq 'start' -and "$($Context.FFplay)" -ne '' -and (Test-Path -LiteralPath "$($Context.FFplay)")) {
+            try {
+                $alt = Get-CvPlayerCommand -Mode 'ffplay' -FFplay "$($Context.FFplay)" -File $File
+                [void](Start-Process -FilePath "$($alt.Exe)" -ArgumentList @($alt.Args) -ErrorAction Stop)
+                return @{ Ok = $true; Mode = 'ffplay'; Error = '' }
+            } catch { }
+        }
+        return @{ Ok = $false; Mode = "$($cmd.Mode)"; Error = "$($_.Exception.Message)" }
     }
 }
 
@@ -283,47 +626,14 @@ function Invoke-VideoAsk {
             #  - ambiguo (sin mayoria) -> pasa al modo interactivo (menu).
             Write-CvLog 'VIDEO' '[BORDE] - [AUTO] - Comprobando si hay barras negras...' -Indent 3
             $ag = @((Find-CropDetectSamples -Context $Context -File $Info.format.filename -Start $start -Duration ([int]$Context.BorderAutoDuration) -VideoDuration $vdur -Index $res.Index -Samples ([int]$Context.BorderAutoSamples)).Groups)
-            $decided = $false
-            if ($ag.Count -eq 0) {
-                Write-CvLog 'VIDEO' '[BORDE] - [AUTO] - Sin bordes detectados: no se recorta' -Indent 3
-                $res.Crop = ''; $decided = $true
-            } else {
-                # Unas barras reales son CONSTANTES: el MISMO recorte significativo aparece en varios
-                # puntos. Recortes near-full (< minCropPct, = sin barras) o dispersos de 1 voto (ruido
-                # de escenas oscuras) NO son barras. Nota: castear a [double] en Max (si el ancho no
-                # cambia, 1-w/iw = 0 ENTERO y Max(int,int) truncaria el otro termino y daria 0%).
-                $iw = [int]$vstream.width; $ih = [int]$vstream.height
-                $sig = @($ag | Where-Object {
-                    $q = "$($_.Crop)" -split ':'
-                    ($iw -gt 0 -and $ih -gt 0) -and
-                    (([math]::Max([double](1 - [int]$q[0] / $iw), [double](1 - [int]$q[1] / $ih)) * 100) -ge [double]$Context.BorderMinCropPct)
-                })
-                if ($sig.Count -eq 0) {
-                    Write-CvLog 'VIDEO' '[BORDE] - [AUTO] - Sin barras (recortes despreciables o near-full): no se recorta' -Indent 3
-                    $res.Crop = ''; $decided = $true
-                } else {
-                    $top    = $sig[0]                                    # candidato significativo mas votado
-                    $tot    = ($ag | Measure-Object -Property Count -Sum).Sum
-                    $topPct = if ($tot -gt 0) { [int][math]::Round(100 * $top.Count / $tot) } else { 0 }
-                    $others = @($ag | Where-Object { $_.Crop -ne $top.Crop } | Sort-Object Count -Descending)
-                    $margin = $top.Count - $(if ($others.Count -ge 1) { $others[0].Count } else { 0 })
-                    $reliable = ($ag.Count -eq 1) -or (($topPct -ge $Context.BorderAutoAcceptPct) -and ($margin -ge $Context.BorderAutoAcceptMargin))
-                    if ($reliable) {
-                        Write-CvLog 'VIDEO' ('[BORDE] - [AUTO] - Barras detectadas: recorte {0} (auto)' -f $top.Crop) -Indent 3
-                        $res.Crop = $top.Crop; $decided = $true
-                    } elseif ($top.Count -ge 2) {
-                        # Varios puntos coinciden en el recorte pero no llega al umbral -> ambiguo -> menu.
-                        Write-CvLog 'VIDEO' '[BORDE] - [AUTO] - Barras posibles sin mayoria fiable; se pasa a seleccion manual.' -Indent 3
-                    } else {
-                        # Ningun recorte se repite (todos 1 voto) -> ruido de escenas, no barras.
-                        Write-CvLog 'VIDEO' '[BORDE] - [AUTO] - Recortes dispersos sin coincidencia: no se recorta' -Indent 3
-                        $res.Crop = ''; $decided = $true
-                    }
-                }
-            }
-            if (-not $decided) {
-                Write-CvLog 'VIDEO' '[BORDE] - [AUTO] - Deteccion no concluyente; se pasa a seleccion manual.' -Indent 3
-                $runInteractive = $true
+            # La decision es de Resolve-CvCropAutoDecision (fuente unica, la misma que usa la ventana).
+            $dec = Resolve-CvCropAutoDecision -Groups $ag -Width ([int]$vstream.width) -Height ([int]$vstream.height) `
+                -MinCropPct ([double]$Context.BorderMinCropPct) -MaxCropPct ([int]$Context.BorderAutoMaxCropPct)
+            Write-CvLog 'VIDEO' ("[BORDE] - [AUTO] - {0}" -f $dec.Reason) -Indent 3
+            switch ("$($dec.Decision)") {
+                'crop'  { $res.Crop = "$($dec.Crop)" }
+                'none'  { $res.Crop = '' }
+                default { $runInteractive = $true }   # ambiguo: lo ve una persona, como siempre
             }
         }
 

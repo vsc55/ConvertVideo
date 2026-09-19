@@ -16,6 +16,58 @@ function Test-CvSubtitleUsable {
     return (-not [string]::IsNullOrWhiteSpace($c)) -and ($c.ToLower() -notin @('none', 'unknown'))
 }
 
+function Get-CvSubtitleTextCodecs {
+    <#
+        Codecs de subtitulo que son TEXTO (se pueden extraer a .srt y leer). El resto -PGS, VobSub,
+        DVB- son de IMAGEN: no hay texto que ensenar. FUENTE UNICA: la usan el visor
+        (Show-SubtitleContent) y la ventana de preparar, que apaga su boton 'Ver texto'.
+
+        La lista sale de la CONFIG (encode.subtitles.textCodecs), asi que se amplia sin tocar codigo.
+        Sin -Context se usan los defaults: hay sitios que no tienen contexto a mano (y los tests).
+    #>
+    param($Context = $null)
+    if ($null -ne $Context -and $Context.PSObject.Properties['SubtitleTextCodecs']) {
+        $c = @($Context.SubtitleTextCodecs)
+        if ($c.Count -gt 0) { return $c }
+    }
+    return @(@((Get-CvConfigDefaults).encode.subtitles.textCodecs) | ForEach-Object { "$_".Trim().ToLower() })
+}
+
+function Get-CvSubtitleFileExt {
+    <#
+        PURO. Extension del fichero al que se SACA una pista de subtitulo para poder abrirla fuera:
+          - texto (Get-CvSubtitleTextCodecs)     -> '.srt' (se transcodifica: legible en cualquier sitio)
+          - PGS (Blu-ray, hdmv_pgs_subtitle)     -> '.sup'  (se copia tal cual)
+          - VobSub (DVD, dvd_subtitle)           -> '.idx'  (el muxer vobsub escribe .idx + .sub)
+        '' = no se sabe sacar ese codec. Los de imagen NO tienen texto (son mapas de bits), asi que lo
+        util es dejarlos en su formato y abrirlos con quien los entienda (SubtitleEdit y companyia,
+        que ademas hacen OCR).
+    #>
+    param(
+        [string]$Codec,
+        $Context = $null
+    )
+    $c = "$Codec".Trim().ToLower()
+    if ($c -eq '') { return '' }
+    if (Test-CvSubtitleTextCodec -Codec $c -Context $Context) { return '.srt' }
+    $map = $null
+    if ($null -ne $Context -and $Context.PSObject.Properties['SubtitleFileExts']) { $map = $Context.SubtitleFileExts }
+    if ($null -eq $map -or @($map.Keys).Count -eq 0) {
+        $map = ConvertTo-CvSubtitleExtMap -Source (Get-CvConfigDefaults).encode.subtitles.imageExtensions
+    }
+    if ($map.ContainsKey($c)) { return "$($map[$c])" }
+    return ''
+}
+
+function Test-CvSubtitleTextCodec {
+    <# $true si ese codec de subtitulo es de texto (Get-CvSubtitleTextCodecs, config). #>
+    param(
+        [string]$Codec,
+        $Context = $null
+    )
+    return ((Get-CvSubtitleTextCodecs -Context $Context) -contains "$Codec".Trim().ToLower())
+}
+
 function Resolve-CvSubtitleAction {
     <#
         Decide QUE hacer con un subtitulo, segun si ffmpeg lo puede leer y la lista encode.subtitles.toSrt
@@ -123,8 +175,9 @@ function ConvertTo-SubSel {
         Objeto de seleccion de subtitulo para guardar en el job.
         -Default: $true/$false lo fuerza; si se omite ($null) se conserva el flag
         'default' ORIGINAL de la pista (asi un forzado que ya era predefinido lo sigue siendo).
+        -Cues: nº de lineas ya contado, si el llamador lo tiene; se guarda en el job.
     #>
-    param([Parameter(Mandatory)]$Stream, [object]$Default = $null, [object]$Forced = $null, [string]$Action = 'copy', [string]$Lang = '')
+    param([Parameter(Mandatory)]$Stream, [object]$Default = $null, [object]$Forced = $null, [string]$Action = 'copy', [string]$Lang = '', [int]$Cues = -1)
     $isDefault = if ($null -ne $Default) { [bool]$Default } else { (Test-SubDefault $Stream) }
     $isForced  = if ($null -ne $Forced)  { [bool]$Forced }  else { (Test-SubForced $Stream) }
     # Accion (Resolve-CvSubtitleAction): 'srt' = transcodificar a SubRip; 'rescue' = ademas hay que
@@ -141,6 +194,10 @@ function ConvertTo-SubSel {
         Default = $isDefault
         ToSrt   = ($Action -in @('srt', 'rescue'))
         Rescue  = ($Action -eq 'rescue')
+        # Nº de lineas (cues) si QUIEN ELIGE ya lo sabia -el editor en ventana lo cuenta para su
+        # tabla-, para no tener que volver a contarlo (sin el tag NUMBER_OF_FRAMES eso obliga a
+        # demultiplexar el fichero entero). -1 = no se sabe; nadie lo cuenta solo por guardarlo.
+        Cues    = $Cues
     }
 }
 
@@ -219,10 +276,65 @@ function Resolve-CvSubtitleOpen {
     }
 }
 
-function Open-CvSrtDefault {
-    <# Abre el .srt con el programa asociado de Windows; si falla, con Notepad. Best-effort. #>
+function Open-CvFileDefault {
+    <#
+        Abre un fichero con el programa ASOCIADO de Windows. Devuelve $false si no se pudo (no hay
+        asociacion para esa extension, o el shell fallo), para que el llamador lo diga en vez de
+        quedarse mudo. Sin fallback: para un .sup o un .idx, Notepad no sirve de nada.
+    #>
     param([Parameter(Mandatory)][string]$Path)
-    try { Start-Process -FilePath $Path } catch { try { Start-Process -FilePath 'notepad.exe' -ArgumentList $Path } catch {} }
+    try { Start-Process -FilePath $Path; return $true } catch { return $false }
+}
+
+function Open-CvSrtDefault {
+    <# Abre el .srt con el programa asociado de Windows; si falla, con Notepad (que siempre vale para
+       texto). Best-effort. #>
+    param([Parameter(Mandatory)][string]$Path)
+    if (Open-CvFileDefault -Path $Path) { return }
+    try { Start-Process -FilePath 'notepad.exe' -ArgumentList $Path } catch {}
+}
+
+function Export-CvSubtitleFile {
+    <#
+        Saca UNA pista de subtitulo a un fichero temporal para abrirla fuera: los de TEXTO se
+        transcodifican a .srt y los de IMAGEN se COPIAN tal cual a su formato (Get-CvSubtitleFileExt).
+        Devuelve la ruta del fichero, o '' si el codec no se sabe sacar o ffmpeg no produjo nada.
+
+        VobSub deja DOS ficheros (.idx + .sub); se devuelve el .idx, que es el que se abre.
+    #>
+    param(
+        [Parameter(Mandatory)]$Context,
+        [Parameter(Mandatory)][string]$File,
+        [Parameter(Mandatory)]$Stream
+    )
+    $idx   = [int]$Stream.index
+    $codec = "$($Stream.codec_name)".ToLower()
+    $ext   = Get-CvSubtitleFileExt -Codec $codec -Context $Context
+    if ($ext -eq '') { return '' }
+    $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("cv_sub_{0}_{1}{2}" -f ([System.IO.Path]::GetFileNameWithoutExtension($File)), $idx, $ext)
+    $ok = {
+        param([string]$Path)
+        (Test-Path -LiteralPath $Path) -and ((Get-Item -LiteralPath $Path).Length -gt 0)
+    }
+    if (Test-Path -LiteralPath $tmp) { Remove-Item -Force -LiteralPath $tmp -ErrorAction SilentlyContinue }
+
+    # 1) ffmpeg: texto -> SubRip (legible en cualquier parte); imagen -> copia tal cual.
+    $cs = if ($ext -eq '.srt') { 'srt' } else { 'copy' }
+    [void](Invoke-ToolCapture -Exe $Context.FFmpeg -Arguments @('-hide_banner','-loglevel','error','-y','-i',$File,'-map',"0:$idx",'-c:s',$cs,$tmp) -Context $Context)
+    if (& $ok $tmp) { return $tmp }
+    if (Test-Path -LiteralPath $tmp) { Remove-Item -Force -LiteralPath $tmp -ErrorAction SilentlyContinue }
+
+    # 2) Respaldo con mkvextract (solo Matroska): saca la pista tal cual y elige el formato por el
+    #    codec, no por la extension. Hace falta para VobSub, porque no todos los builds de ffmpeg
+    #    traen el muxer 'vobsub' (el nuestro, 5.1.2, NO lo trae; el de PGS -'sup'- si).
+    $mkx = "$($Context.MkvExtract)"
+    $isMkv = ([System.IO.Path]::GetExtension($File)).ToLower() -in @('.mkv', '.mka', '.mks', '.webm')
+    if ($isMkv -and -not [string]::IsNullOrWhiteSpace($mkx) -and (Test-Path -LiteralPath $mkx)) {
+        [void](Invoke-ToolCapture -Exe $mkx -Arguments @('tracks', $File, ("{0}:{1}" -f $idx, $tmp)) -Context $Context)
+        if (& $ok $tmp) { return $tmp }
+        if (Test-Path -LiteralPath $tmp) { Remove-Item -Force -LiteralPath $tmp -ErrorAction SilentlyContinue }
+    }
+    return ''
 }
 
 function Show-SubtitleContent {
@@ -231,8 +343,11 @@ function Show-SubtitleContent {
         'start' = programa asociado de Windows (fallback a Notepad); 'win' = ventana propia (WinForms);
         'external' = el .exe indicado (preview.subtitleEditorExe). Sin -Mode/-Exe usa lo configurado
         (Context.SubtitleEditor / .SubtitleEditorExe); con ellos, override puntual del comando 'V N'.
-        Si el modo elegido falla, cae al asociado de Windows. Las pistas de imagen (PGS/VobSub) no se
-        pueden ver como texto: se avisa y no se extrae.
+        Si el modo elegido falla, cae al asociado de Windows. Las pistas de IMAGEN (PGS/VobSub) no
+        tienen texto que ensenar -son mapas de bits-, asi que con ellas se hace lo unico util: se
+        SACAN tal cual a su formato (.sup / .idx+.sub, ver Export-CvSubtitleFile) y se abren con el
+        programa ASOCIADO de Windows, que es quien sabe leerlas (SubtitleEdit y companyia, que ademas
+        hacen OCR). Si el codec no se sabe sacar, o no hay programa asociado, se avisa.
     #>
     param(
         [Parameter(Mandatory)]$Context, [Parameter(Mandatory)][string]$File, [Parameter(Mandatory)]$Stream,
@@ -240,19 +355,17 @@ function Show-SubtitleContent {
     )
     $idx   = [int]$Stream.index
     $codec = "$($Stream.codec_name)".ToLower()
-    $textCodecs = @(
-        'subrip'
-        'srt'
-        'ass'
-        'ssa'
-        'mov_text'
-        'webvtt'
-        'text'
-        'eia_608'
-        'subviewer'
-    )
-    if ($codec -notin $textCodecs) {
-        Write-Host ("   La pista {0} es de imagen ({1}); no se puede ver como texto." -f $idx, $codec) -ForegroundColor Yellow
+    if (-not (Test-CvSubtitleTextCodec -Codec $codec -Context $Context)) {
+        # Imagen: no hay texto que ensenar, pero si se puede sacar el fichero y abrirlo con quien lo lea.
+        $img = Export-CvSubtitleFile -Context $Context -File $File -Stream $Stream
+        if ($img -eq '') {
+            Write-CvLog 'SUB' ("[AVISO] - La pista {0} es de imagen ({1}) y no se ha podido extraer a un fichero." -f $idx, $codec) -Indent 3
+            return
+        }
+        Write-CvLog 'SUB' ("[TEST] - Pista {0} ({1}): no es texto; se abre {2} con el programa asociado de Windows." -f $idx, $codec, [System.IO.Path]::GetFileName($img)) -Indent 3
+        if (-not (Open-CvFileDefault -Path $img)) {
+            Write-CvLog 'SUB' ("[AVISO] - Windows no tiene programa asociado para '{0}'. El fichero esta en: {1}" -f [System.IO.Path]::GetExtension($img), $img) -Indent 3
+        }
         return
     }
     $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("cv_sub_{0}_{1}.srt" -f ([System.IO.Path]::GetFileNameWithoutExtension($File)), $idx)

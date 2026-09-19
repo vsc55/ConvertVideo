@@ -63,6 +63,8 @@ function Get-CvEditorOptions {
         'downmixMode'     { return (& $ret (Get-CvDownmixModes) $false) }
         # --- preview ---
         'subtitleEditor'  { return (& $ret (Get-CvSubtitleEditorModes) $false) }
+        'player'          { return (& $ret (Get-CvPlayerModes) $false) }
+        'theme'           { return (& $ret (Get-CvGuiThemes) $false) }
         # --- consola (colores del .NET ConsoleColor, no un literal de datos) ---
         'background'      { return (& $ret ([enum]::GetNames([System.ConsoleColor])) $false) }
         'foreground'      { return (& $ret ([enum]::GetNames([System.ConsoleColor])) $false) }

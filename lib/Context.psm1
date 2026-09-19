@@ -5,7 +5,7 @@
 
 function Get-CvVersion {
     <# Version del proyecto (fuente unica; la usan Convert.ps1 y setup.ps1). #>
-    '4.6.0'
+    '4.7.0'
 }
 
 function Get-CvAppName {
@@ -165,6 +165,9 @@ function New-CvContext {
         # Modo DetectBorder='auto': puntos/seg del pre-escaneo y reduccion minima (%) para tomar el
         # recorte como barras reales (por debajo = ruido de borde -> no recorta).
         BorderAutoSamples = [Math]::Max(1, [int]$cfg.encode.video.border.autoSamples)
+        # Tope de recorte que el modo 'auto' se atreve a aplicar solo (% de ancho o alto); por
+        # encima, Resolve-CvCropAutoDecision lo propone pero pide confirmacion.
+        BorderAutoMaxCropPct = [Math]::Min(100, [Math]::Max(1, [int]$cfg.encode.video.border.autoMaxCropPct))
         BorderAutoDuration = [Math]::Max(1, [int]$cfg.encode.video.border.autoDuration)
         BorderMinCropPct  = [Math]::Max(0.0, [double]$cfg.encode.video.border.minCropPct)   # 0.0 (no 0) para forzar el overload double y no truncar un valor fraccionario
         # Previsualizacion ffplay: inicio (0 = principio) y duracion de la muestra (0 = sin limite).
@@ -173,6 +176,10 @@ function New-CvContext {
         # Tope (seg) de cada preview de la comparacion A/B de sincronia (Show-CvSyncPreview); 0 = SIN
         # limite (reproduce la fuente directa hasta el final o hasta q/ESC), como preview.seconds.
         PreviewSyncSeconds = [Math]::Max(0, [int]$cfg.preview.syncSeconds)
+        # Con que se REPRODUCE un video entero desde la cola (el original o el ya convertido);
+        # las previews de PREPARAR siguen siendo siempre ffplay con sus filtros.
+        PreviewPlayer     = (Resolve-CvOneOf "$($cfg.preview.player)" @(@(Get-CvPlayerModes) | ForEach-Object { "$($_.Value)" }) "$($def.preview.player)")
+        PreviewPlayerExe  = "$($cfg.preview.playerExe)"
         # Como abrir el .srt al ver el texto de un subtitulo ('V N'): modo (start/win/external) y, para
         # 'external', el .exe. Se normalizan al usarse (Resolve-CvSubtitleOpen): '' -> start, 'ventana' -> win.
         SubtitleEditor    = "$($cfg.preview.subtitleEditor)"
@@ -276,6 +283,24 @@ function New-CvContext {
         ConsoleFontSize   = [int]$cfg.console.fontSize
         WindowWidth       = [int]$cfg.console.windowWidth
         WindowHeight      = [int]$cfg.console.windowHeight
+        # Ventanas (config 'gui'): si se recuerda como quedo cada una y, si no hay nada recordado,
+        # con que tamano y reparto abre la cola. Valores absurdos (0 o negativos) caen al default.
+        # Subtitulos: que codecs son de TEXTO y a que fichero se saca cada uno de IMAGEN al
+        # extraerlo (config encode.subtitles.textCodecs / imageExtensions, ampliables sin tocar
+        # codigo). Se normaliza aqui -minusculas, y el punto de la extension- para que la config
+        # admita 'PGSSUB' o 'sup' y el resto del programa compare sin pensar.
+        SubtitleTextCodecs = @(@($cfg.encode.subtitles.textCodecs) | ForEach-Object { "$_".Trim().ToLower() } | Where-Object { $_ -ne '' })
+        SubtitleFileExts  = (ConvertTo-CvSubtitleExtMap -Source $cfg.encode.subtitles.imageExtensions)
+        # Aspecto de las ventanas: 'system' (lo que tenga Windows) / 'light' / 'dark'.
+        GuiTheme          = (Resolve-CvOneOf "$($cfg.gui.theme)" @(@(Get-CvGuiThemes) | ForEach-Object { "$($_.Value)" }) "$($def.gui.theme)")
+        GuiRemember       = [bool]$cfg.gui.rememberLayout
+        GuiConfirmClose   = [bool]$cfg.gui.confirmCloseWithWorkers
+        GuiQueueWidth     = $(if ([int]$cfg.gui.queueWidth  -gt 0) { [int]$cfg.gui.queueWidth }  else { [int]$def.gui.queueWidth })
+        GuiQueueHeight    = $(if ([int]$cfg.gui.queueHeight -gt 0) { [int]$cfg.gui.queueHeight } else { [int]$def.gui.queueHeight })
+        GuiQueueSplit     = $(
+            $p = [int]$cfg.gui.queueSplitPercent
+            if ($p -ge 10 -and $p -le 90) { $p } else { [int]$def.gui.queueSplitPercent }
+        )
         # Ancho de los separadores de seccion (=== / ---) de la UI; lo aplica Set-CvSepWidth al arrancar.
         SepWidth          = [Math]::Max(1, [int]$cfg.console.sepWidth)
         # Ancho de la barra visual de progreso del worker (0 = sin barra); lo aplica Set-CvProgressBarWidth.
@@ -287,6 +312,8 @@ function New-CvContext {
         AudioChannels  = $(if ([int]$cfg.encode.audio.channels -ge 1) { [int]$cfg.encode.audio.channels } else { [int]$def.encode.audio.channels })
         # Perfiles de codificacion propios (config 'profiles'); se anaden a los de serie.
         Profiles       = @($cfg.profiles)
+        # Perfil que sale marcado al preparar (ver Get-CvDefaultProfileKey).
+        DefaultProfile = "$($cfg.defaultProfile)"
         # Valores por defecto del constructor de perfil CUSTOM interactivo (config 'customProfile').
         CustomVideoEncoder = "$($cfg.customProfile.videoEncoder)"
         CustomVideoProfile = "$($cfg.customProfile.videoProfile)"
@@ -423,6 +450,21 @@ function Get-CvFiles {
         $out += $found
     }
     @($out | Sort-Object -Property FullName -Unique)
+}
+
+function Format-CvClock {
+    <#
+        PURO. Segundos -> 'H:MM:SS' (las horas sin rellenar: 0:42:10, 1:05:00). Fuente unica del
+        formato de reloj: lo usan la duracion de un archivo (Get-DurationText) y la ETA del worker
+        (Format-CvEta) cuando pasa de la hora.
+
+        Se TRUNCAN los segundos a proposito: [int] en PowerShell REDONDEA (0,9 h -> 1), asi que un
+        video de 53:56 saldria como '1:MM:SS' si se dejara redondear.
+    #>
+    param([double]$Seconds)
+    if ($Seconds -lt 0) { $Seconds = 0 }
+    $p = Get-CvTimeParts ([math]::Floor($Seconds))
+    return ('{0}:{1:00}:{2:00}' -f $p.H, $p.M, $p.S)
 }
 
 function Get-CvTimeParts {

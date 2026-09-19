@@ -29,11 +29,14 @@ $Lib  = Join-Path $Root 'lib'
 # para los desplegables) mas GuiSetup (la ventana) y SetupCore (los datos).
 $modules = @(
     'Log'
+    'Io'
     'Config'
     'Context'
     'Console'
     'Gui'
     'GuiSetup'
+    'GuiConfig'
+    'GuiProfile'
     'Exec'
     'Job'
     'Tools'
@@ -64,6 +67,9 @@ $ctx     = $sess.Context
 $CfgPath = $sess.ConfigPath
 $CfgName = Split-Path -Leaf $CfgPath
 $logFile = $sess.LogFile
+
+# Tema de las ventanas (gui.theme) para toda la sesion; ver Convert-gui.ps1.
+[void](Set-CvGuiThemeDefault -Theme "$($ctx.GuiTheme)")
 
 # 'Alterno' = NO es el config.json de junto al programa. Se compara la RUTA ya resuelta, no si vino
 # -Config: ahora el chooser siempre rellena -Config, y elegir el normal no debe salir como alterno.

@@ -33,6 +33,7 @@ $Root = Split-Path -Parent $PSScriptRoot
 $Lib  = Join-Path $Root 'lib'
 $modules = @(
     'Log'
+    'Io'
     'Config'
     'Context'
     'Console'

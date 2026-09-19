@@ -146,13 +146,18 @@ function Get-CvSetupProcesoStatus {
             Temps  = 0
         }
     }
+    # 'Locks' cuenta TODOS los ficheros de control (Get-CvProcesoPatterns -What locks: los *.lock, el
+    # estado que publica cada worker y la bandera de parada), que es justo lo que borra la limpieza de
+    # 'bloqueos'. Los CADUCADOS solo se miran en los *.lock, que son los que guardan el PID.
+    $nlock = 0
+    foreach ($p in (Get-CvProcesoPatterns -What locks)) { $nlock += @(Get-ChildItem -LiteralPath $proc -Filter $p -File -ErrorAction SilentlyContinue).Count }
     $locks = @(Get-ChildItem -LiteralPath $proc -Filter '*.lock' -File -ErrorAction SilentlyContinue)
     $ntemp = 0
     foreach ($p in (Get-CvProcesoPatterns -What temps)) { $ntemp += @(Get-ChildItem -LiteralPath $proc -Filter $p -File -ErrorAction SilentlyContinue).Count }
     [pscustomobject]@{
         Exists = $true
         Jobs   = @(Get-ChildItem -LiteralPath $proc -Filter '*.job.json' -File -ErrorAction SilentlyContinue).Count
-        Locks  = $locks.Count
+        Locks  = $nlock
         Stale  = @($locks | Where-Object { Test-CvLockStale $_.FullName }).Count
         Temps  = $ntemp
     }
@@ -217,6 +222,42 @@ function Set-CvSetupAppSelected {
     else { $cfg.downloads.$Name | Add-Member -NotePropertyName 'selected' -NotePropertyValue $Version -Force }
     Save-CvConfigFile -Path $CfgPath -Config $cfg
     return $true
+}
+
+function Set-CvSetupVersionInUse {
+    <#
+        Cambia la version EN USO de una app (downloads.<app>.selected) a una que YA ESTA INSTALADA,
+        SIN reinstalar nada. Hasta ahora la unica forma de tocar 'selected' era instalando, asi que
+        para volver a una version que ya se tenia habia que descargarla otra vez.
+
+        Exige que este instalada A PROPOSITO: 'selected' apuntando a una carpeta que no existe deja al
+        conversor sin ffmpeg, y lo que sale al final es el "el sistema no puede encontrar el archivo
+        especificado" de Process.Start, que no explica nada (paso de verdad).
+
+        Devuelve @{ Ok; Reason }. Es DATO: no pregunta ni pinta; confirma la UI.
+    #>
+    param(
+        [Parameter(Mandatory)]$Context,
+        [Parameter(Mandatory)][string]$CfgPath,
+        [Parameter(Mandatory)][string]$Name,
+        [string]$Version = ''
+    )
+    if ([string]::IsNullOrWhiteSpace($Version)) {
+        return [pscustomobject]@{ Ok = $false; Reason = 'no se ha indicado ninguna version' }
+    }
+    if (-not (Test-CvToolInstalled -Context $Context -Name $Name -Version $Version)) {
+        $inst = @(Get-CvInstalledVersions -Context $Context -Name $Name)
+        $hay  = if ($inst.Count -gt 0) { "instalada(s): {0}" -f ($inst -join ', ') } else { 'no hay ninguna instalada' }
+        return [pscustomobject]@{
+            Ok     = $false
+            Reason = ("{0} {1} no esta instalada ({2}); instalala antes de ponerla en uso." -f $Name, $Version, $hay)
+        }
+    }
+    [void](Set-CvSetupAppSelected -CfgPath $CfgPath -Name $Name -Version $Version)
+    return [pscustomobject]@{
+        Ok     = $true
+        Reason = ("{0} pasa a usar la version {1}" -f $Name, $Version)
+    }
 }
 
 function Remove-CvSetupAppVersion {
@@ -408,6 +449,12 @@ function Get-CvSetupTestSuites {
             File  = 'test\gui-tests.ps1'
             Text  = 'Bateria de setup'
             Info  = 'datos de setup + editor de configuracion en ventana; sin GUI se salta'
+        }
+        @{
+            Value = 'cola'
+            File  = 'test\gui-convert-tests.ps1'
+            Text  = 'Bateria de la cola'
+            Info  = 'datos de la cola + ventana de Convert-gui; sin GUI se salta'
         }
     )
 }

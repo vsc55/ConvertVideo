@@ -1,6 +1,6 @@
 # Documentación — ConvertVideo
 
-Documentación técnica y detallada del conversor. Para la visión general y la puesta en marcha, ver el [README principal](../README.md).
+Documentación técnica y detallada del conversor. Para la visión general y la puesta en marcha, ver el [README principal](../README.md); para **usar el programa** (qué ves en cada ventana y qué hacer), el [manual con capturas](../manual/README.md).
 
 ## Índice
 
@@ -14,6 +14,7 @@ Documentación técnica y detallada del conversor. Para la visión general y la 
 | [ref-configuracion.md](ref-configuracion.md) | Referencia completa de `config.json` (todas las secciones y claves). |
 | [ref-herramientas.md](ref-herramientas.md) | Sistema de herramientas versionadas (`tools\<app>\<version>\<plataforma>`), descargas, plataforma y versión por job. |
 | [ref-setup.md](ref-setup.md) | La utilidad `setup.ps1`/`setup.cmd`: menú (herramientas/estado/pruebas/limpieza), editor de `config.json`, config alterno `-Config`, lanzadores debug y fallback NVENC. Incluye **setup en ventana** (`setup-gui.cmd`) y el modo no interactivo `-Task`. |
+| [ref-cola.md](ref-cola.md) | La **cola de conversión en ventana** (`Convert-gui.cmd`): estados de cada archivo, workers desatendidos (`-Unattended`), parada ordenada y ficheros de control de `Proceso\`. |
 | [ref-jobs.md](ref-jobs.md) | Formato del `.job.json`, el lock atómico y los ficheros temporales. |
 | [ref-pruebas.md](ref-pruebas.md) | Muestras de test (`test\`): qué prueba cada una, resultado esperado, cómo regenerarlas y las fuentes/licencias. |
 | [explica-audio.md](explica-audio.md) | Selección de la pista de audio (mejor por canales/códec/bitrate) con diagramas, y comparativa de tiempo de los métodos de volumen (peak/loudnorm/aacgain). |

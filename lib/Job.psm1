@@ -10,24 +10,15 @@ function Test-CvJob    { param($Context,[string]$Name) Test-Path -LiteralPath (G
 
 
 function Write-CvJob {
-    <#
-        Escritura atomica del job: .tmp (UTF-8 sin BOM) y renombrado. Se usan operaciones
-        .NET con rutas LITERALES porque los nombres pueden llevar corchetes, que PowerShell
-        interpretaria como comodines en -Path.
-    #>
+    <# Guarda el job de forma ATOMICA (.tmp + renombrado, UTF-8 sin BOM): ver Save-CvJsonFile. #>
     param([Parameter(Mandatory)]$Context, [Parameter(Mandatory)][string]$Name, [Parameter(Mandatory)]$Job)
-    $final = Get-CvJobPath $Context $Name
-    $tmp   = "$final.tmp"
-    $json  = $Job | ConvertTo-Json -Depth 8
-    [System.IO.File]::WriteAllText($tmp, $json, (New-Object System.Text.UTF8Encoding($false)))
-    if ([System.IO.File]::Exists($final)) { [System.IO.File]::Delete($final) }
-    [System.IO.File]::Move($tmp, $final)
+    [void](Save-CvJsonFile -Path (Get-CvJobPath $Context $Name) -Object $Job -Depth 8)
 }
 
 
 function Read-CvJob {
     param([Parameter(Mandatory)]$Context, [Parameter(Mandatory)][string]$Name)
-    Get-Content -Raw -LiteralPath (Get-CvJobPath $Context $Name) | ConvertFrom-Json
+    Read-CvJsonFile -Path (Get-CvJobPath $Context $Name)
 }
 
 
@@ -120,7 +111,14 @@ function Get-CvProcesoPatterns {
         '*.job.json'
         '*.job.json.tmp'
     )
-    $locks = @('*.lock')
+    # 'locks' = ficheros de CONTROL de los workers: el reclamo de cada archivo (*.lock), el estado que
+    # cada worker publica para la ventana de la cola (<pid>.worker.json, WorkerCore) y la bandera de
+    # parada ordenada (stop.flag). Ninguno es dato: si sobra alguno de un worker muerto, se borra.
+    $locks = @(
+        '*.lock'
+        '*.worker.json'
+        'stop.flag'
+    )
     $temps = @(
         '*.mkv'
         '*.m4a'
@@ -180,7 +178,7 @@ function Test-CvLockStale {
     if (-not $m.Success) { return $false }
     if ($m.Groups[2].Value.Trim() -ne $env:COMPUTERNAME) { return $false }
     $lockPid = [int]$m.Groups[1].Value
-    return ($null -eq (Get-Process -Id $lockPid -ErrorAction SilentlyContinue))
+    return (-not (Test-CvProcessAlive -ProcessId $lockPid))
 }
 
 function Enter-Lock {

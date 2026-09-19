@@ -31,6 +31,8 @@ Recodifica a **MKV** (vídeo H.265/H.264 por GPU NVIDIA o CPU; audio AAC, AC-3, 
 
 `Convert.cmd` solo lanza `Convert.ps1` con `-ExecutionPolicy Bypass` (no cambia la política del sistema) y pone la consola en UTF-8.
 
+> ¿Prefieres ventanas? **[Manual de uso con capturas](manual/README.md)**: preparar, la cola de conversión, los workers y qué hacer cuando algo se queda a medias.
+
 Para gestionar las herramientas (FFmpeg, aacgain, MKVToolNix, 7zr) o editar la configuración cómodamente: **`setup.cmd`**. Ambos lanzadores admiten `-Config <ruta>` para usar un fichero de configuración alterno (se **reenvía** a las ventanas worker que se abran en paralelo). Para depurar hay **`Convert-Debug.cmd`**, que usa `config.debug.json` (`debug.enabled = true`) y muestra el log detallado sin tocar tu `config.json`; y **`setup-Debug.cmd`** para editar/gestionar ese `config.debug.json` con el editor de setup.
 
 ## En qué consiste
@@ -39,7 +41,7 @@ Modelo **preparar → procesar**:
 
 - **PREPARAR**: elige un perfil y, por cada vídeo, pregunta/detecta todo (selección de pista de vídeo si hay varias, bordes con preview en varios puntos, resize, animación, pista de audio con su idioma, sincronía, subtítulos) y lo congela en `Proceso\<nombre>.job.json`.
 - **WORKER**: codifica cada preparado de forma desatendida (audio → vídeo → multiplexado) y deja el MKV en `Convertido\`.
-- **Paralelo**: cuando todos tienen `.job`, puedes abrir varias ventanas de `Convert.cmd`; cada una toma archivos libres mediante un lock atómico.
+- **Paralelo**: cuando todos tienen `.job`, puedes abrir varias ventanas de `Convert.cmd`; cada una toma archivos libres mediante un lock atómico. O abre **`Convert-gui.cmd`**: un solo panel con toda la cola, los workers y su progreso ([docs/ref-cola.md](docs/ref-cola.md)).
 
 ## Funcionalidades
 
@@ -119,6 +121,8 @@ Todo es configurable en `config.json` (detalle en [ref-configuracion.md](docs/re
 | Carpeta / fichero | Uso |
 |---|---|
 | `Convert.cmd` / `setup.cmd` | Lanzadores del conversor / de la utilidad de gestión. |
+| `Convert-gui.cmd` / `setup-gui.cmd` | Lo mismo en **ventana**: la cola de conversión ([docs/ref-cola.md](docs/ref-cola.md)) y el setup ([docs/ref-setup.md](docs/ref-setup.md)). |
+| `Convert-gui-Config.cmd` | La cola en ventana **preguntando** con qué `config*.json` trabajar (el normal va directo). |
 | `Convert-Debug.cmd` / `setup-Debug.cmd` / `config.debug.json` | Conversor / editor de setup en modo debug (log detallado), sobre `config.debug.json`. |
 | `Convert.ps1` | Orquestador (clasificar / preparar / worker). |
 | `setup.ps1` | Herramientas + editor de `config.json` + limpieza. |
@@ -128,9 +132,12 @@ Todo es configurable en `config.json` (detalle en [ref-configuracion.md](docs/re
 | `Proceso\` | Trabajo: `*.job.json`, `*.lock`, temporales. |
 | `Convertido\` | Resultado final (`*_fix.mkv`). |
 | `tools\<app>\<ver>\<plat>` | Ejecutables (FFmpeg, aacgain, mkvpropedit, 7zr). |
+| `manual\` | **Manual de uso con capturas** de las ventanas (y el script que las regenera). |
 | `docs\` | Documentación detallada. |
 
 ## 📖 Documentación
+
+Para **usarlo**, el manual con capturas de las ventanas: **[`manual/`](manual/README.md)** — [primeros pasos](manual/01-primeros-pasos.md), [preparar](manual/02-preparar.md), [la cola de conversión](manual/03-convertir.md) y [qué hacer cuando algo no sale](manual/04-cuando-algo-falla.md).
 
 La documentación técnica y detallada (cómo trabaja, flujos, diagramas y **los comandos exactos** que se lanzan en cada fase) está en **[`docs/`](docs/README.md)**:
 

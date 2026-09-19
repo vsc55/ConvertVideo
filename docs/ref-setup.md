@@ -20,14 +20,17 @@ Agrupado por bloques (**Herramientas / Estado / Compatibilidad / Pruebas / Confi
 | Bloque · Opción | Qué hace |
 |---|---|
 | **Herramientas** · Instalar / gestionar herramientas | Submenú con una entrada por app (ffmpeg, aacgain, mkvtoolnix, sevenzip…) y "Reinstalar TODO". Por app: elige versión (selector ordenado de más nueva a más antigua), borra esa carpeta de versión y la (re)instala; ofrece fijarla como `selected`. Al instalar **ffmpeg** valida NVENC y, si no es compatible, **vuelve a la versión anterior** (ver abajo). Instalación: [ref-herramientas.md](ref-herramientas.md). |
+| **Herramientas** · Usar una versión YA instalada | Cambia **cuál se usa** (`downloads.<app>.selected`) entre las que ya están instaladas, **sin descargar nada**. Antes la única forma de tocar `selected` era instalando, así que volver a una versión que ya se tenía obligaba a bajarla otra vez. Solo admite versiones **instaladas**: un `selected` apuntando a una carpeta que no existe deja al conversor sin `ffmpeg`. En la ventana es el botón *Usar esta versión*. |
 | **Estado** · Ver estado | Muestra (bajo demanda): **identidad** (versión de ConvertVideo + config en uso, marcando si es alterno `-Config` o no existe); **checklist de directorios**; **versiones de herramientas** instaladas por app/plataforma (o `[NO SOPORTADO]`); **codecs por GPU (NVENC) soportados por la gráfica del sistema** (`h264`/`h265`/`av1_nvenc`) — **comprobación en vivo** (sonda real, **sin usar la caché** `gpuCache` del config, para reflejar el estado actual, p. ej. tras cambiar de GPU/driver); **estado de `Proceso\`** (jobs pendientes, bloqueos —con cuántos **caducados/huérfanos**— y temporales); y **trabajo** (nº de vídeos en `Original\` y convertidos `*_fix.<ext>` en `Convertido\`). |
 | **Compatibilidad** · Comprobar compatibilidad GPU (NVENC) | Prueba NVENC en las versiones de ffmpeg instaladas, **sin reinstalar**. |
 | **Pruebas** · Ejecutar tests unitarios | Lanza `test\unit-tests.ps1` (funciones puras: sin GPU ni ffmpeg, < 1 s) como **proceso hijo** y reporta si todo pasó o falló algún caso. Ver [ref-pruebas.md](ref-pruebas.md). |
 | **Pruebas** · Ejecutar batería de features | Lanza `test\feature-tests.ps1` (E2E; usa ffmpeg; los casos de GPU se **saltan** si no hay NVENC) como proceso hijo. Tarda más (codifica). Ver [ref-pruebas.md](ref-pruebas.md). |
 | **Pruebas** · Ejecutar batería de setup | Lanza `test\gui-tests.ps1`: los **datos** de setup (`SetupCore`) sobre un root temporal y el **editor de configuración en ventana**, dirigido sin ratón para comprobar que editar un número/enum/lista y volver al default guardan lo que deben. Sin entorno gráfico esos casos se **saltan**. |
+| **Pruebas** · Ejecutar batería de la cola | Lanza `test\gui-convert-tests.ps1`: los **datos** de la cola (`WorkerCore`) sobre un root temporal sembrado (jobs, bloqueos vivos y caducados, salidas, estado de workers) y la **ventana de la cola** (`Convert-gui`), leída sin ratón. Sin entorno gráfico esos casos se **saltan**. Ver [ref-cola.md](ref-cola.md). |
 | **Configuración** · Editar configuración | Editor navegable de todas las secciones del config en uso (ver abajo). |
+| **Configuración** · Perfiles | Crear / duplicar / editar / borrar los perfiles propios del config (sección `profiles`), que antes había que escribir a mano en el JSON. El perfil se construye con el **mismo** builder interactivo que la opción Custom del menú de perfiles y se guarda con un nombre. En la ventana es el botón *Perfiles...*, con lista y los cuatro botones; ahí salen también los **de serie**, en solo lectura y duplicables, y se elige cuál es el **predeterminado** (el que sale marcado al preparar). Detalle en [ref-perfiles.md](ref-perfiles.md). |
 | **Configuración** · Restablecer | Vuelve a los valores por defecto (conserva el catálogo `downloads`; copia en `<fichero>.bak`). |
-| **Limpieza** · Limpiar jobs / bloqueos (Proceso) | Borra `*.job.json`, `*.lock`, temporales o todo (con confirmación); las cuentas se muestran en el menú. Patrones: `Get-CvProcesoPatterns`. |
+| **Limpieza** · Limpiar jobs / bloqueos (Proceso) | Borra `*.job.json`, los ficheros de **control de los workers** (`*.lock`, `<pid>.worker.json`, `stop.flag` — ver [ref-cola.md](ref-cola.md)), temporales o todo (con confirmación); las cuentas se muestran en el menú. Patrones: `Get-CvProcesoPatterns`. |
 | **Limpieza** · Limpiar logs | Borra los `*.log` de `logs\` (excepto el de la sesión actual). |
 | Salir | — |
 
@@ -41,7 +44,7 @@ Agrupado por bloques (**Herramientas / Estado / Compatibilidad / Pruebas / Confi
 flowchart TD
     CORE["lib/SetupCore.psm1<br/>DATOS (identidad, carpetas, herramientas,<br/>GPU, Proceso, trabajo, limpieza, baterias)"]
     CON["setup.ps1 (consola)<br/>render: marcas y badges de color"]
-    GUI["lib/GuiSetup.psm1 (ventana)<br/>render: arbol, botones, panel de salida"]
+    GUI["lib/GuiSetup.psm1 (ventana)<br/>render: botones y panel de salida<br/>(+ GuiConfig.psm1: editor de config)"]
     CORE --> CON
     CORE --> GUI
     GUI -. "acciones largas" .-> TASK["setup.ps1 -Task install|tests<br/>(su propia consola)"]
@@ -106,7 +109,7 @@ Mismo contenido y **misma semántica de guardado** que el editor de consola (se 
 
 ```powershell
 setup.ps1 -Task install -App ffmpeg -Version 7.1.1 [-SetDefault]   # instala (y fija como 'selected')
-setup.ps1 -Task tests   -Suite unit|features|gui                   # lanza una bateria del catalogo
+setup.ps1 -Task tests   -Suite unit|features|gui|cola              # lanza una bateria del catalogo
 ```
 
 Las baterías salen del catálogo único `Get-CvSetupTestSuites` (`lib\SetupCore.psm1`): añadir una ahí la hace aparecer **sola** en el menú de consola, en la ventana y en `-Task`.
