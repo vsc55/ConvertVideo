@@ -68,9 +68,11 @@ function Format-CvQueueRow {
         "$($Row.Name)"
         (Format-CvSize -Kb $Row.SizeKb)
         "$($Row.StateText)"
-        # Las dos salen del JOB: sin job (sin preparar, o ya hecho y borrado) no hay nada que decir
-        # -y 'sin audio' ahi seria mentira: es que no se sabe-.
-        $(if ([bool]$Row.HasJob) { Format-CvJobBorderCell -Crop "$($Row.Crop)" -Detect ([bool]$Row.Detect) -Short } else { '' })
+        # Salen del JOB; sin job (sin preparar, o ya hecho y borrado) no hay nada que decir -y 'sin
+        # audio' ahi seria mentira: es que no se sabe-. En los ya CONVERTIDOS, los bordes se deducen
+        # comparando proporciones (BorderGuess, ver Get-CvBorderFromSizes), que es lo unico que se
+        # puede saber cuando el job ya no esta.
+        $(if ([bool]$Row.HasJob) { Format-CvJobBorderCell -Crop "$($Row.Crop)" -Detect ([bool]$Row.Detect) -Short } else { "$($Row.BorderGuess)" })
         $(if ([bool]$Row.HasJob) { Format-CvJobAudioCell -Tracks @($Row.AudioTracks) -Skip ([bool]$Row.AudioSkip) } else { '' })
         $(if ([int]$Row.WorkerPid -gt 0) { '#{0}' -f $Row.WorkerPid } else { '' })
         $prog
@@ -93,6 +95,40 @@ function Get-CvQueueSummaryLine {
     $txt = ($p -join '  -  ')
     if ($Stopping) { $txt += '   [PARADA PEDIDA: terminan el archivo en curso y no cogen mas]' }
     return $txt
+}
+
+function Test-CvQueueKeepRows {
+    <#
+        PURO. $true si hay que CONSERVAR las filas que ya se ven porque el listado que acaba de
+        llegar vacio huele a tropiezo y no a carpeta vacia.
+
+        Pasa de verdad: Get-CvFiles se traga los errores del disco (-ErrorAction SilentlyContinue) y
+        devuelve @(), asi que un momento malo -dos ffmpeg machacando el disco, el antivirus, una
+        unidad de red- vaciaba la ventana entera. La diferencia entre las dos cosas se ve mirando la
+        carpeta: si sigue ahi y con ficheros dentro, el listado mintio.
+    #>
+    param(
+        [int]$Rows       = 0,
+        [int]$Items      = 0,
+        [bool]$DirExists = $true,
+        [int]$RealFiles  = 0
+    )
+    if ($Rows -gt 0)    { return $false }   # hay filas: no hay nada que conservar
+    if ($Items -le 0)   { return $false }   # la lista ya estaba vacia
+    if (-not $DirExists) { return $false }  # la carpeta ya no esta: vaciar es lo correcto
+    return ($RealFiles -gt 0)               # hay ficheros pero el listado no los vio: tropiezo
+}
+
+function Get-CvQueueDoneProbeBudget {
+    <#
+        PURO. Cuantos archivos ya convertidos se pueden analizar en ESTE refresco para deducirles los
+        bordes: ninguno mientras haya workers vivos -la sonda son dos ffprobe por archivo (~300 ms
+        medidos) y el refresco tiene que seguir siendo barato mientras se codifica-, y lo que diga la
+        config cuando la cola esta parada.
+    #>
+    param([int]$Configured = 0, [int]$LiveWorkers = 0)
+    if ($LiveWorkers -gt 0) { return 0 }
+    return [Math]::Max(0, $Configured)
 }
 
 function Get-CvQueueProgressWidth {
@@ -796,6 +832,7 @@ function Show-CvConvertWindow {
         Infos    = @{}     # ffprobe ya hecho, por archivo: no se repite al volver a marcarlo
         Cues     = @{}     # lineas de subtitulo ya contadas, por archivo (lo lento; solo a peticion)
         Busy     = $false
+        Vacios   = 0       # veces SEGUIDAS que Original\ se ha listado vacia teniendo archivos
     }
 
     # ---- Menu contextual de la lista ----
@@ -941,9 +978,34 @@ function Show-CvConvertWindow {
 
     # ---- Refresco (lo dispara el temporizador y el boton Actualizar) ----
     $refresh = {
-        $rows    = @(Get-CvQueueStatus -Context $Context)
+        # Deducir los bordes de un archivo ya convertido cuesta dos ffprobe (~300 ms medidos), asi que
+        # solo se hace con la cola PARADA: mientras hay workers el refresco tiene que seguir siendo
+        # barato -la lista dejaba de responder por mucho menos- y ademas el disco esta ocupado. Se
+        # mira el recuento de la vuelta ANTERIOR, que para esto vale y no cuesta nada.
+        $probe = Get-CvQueueDoneProbeBudget -Configured $Context.GuiQueueDoneProbe -LiveWorkers @($st.Workers | Where-Object { $_.Alive }).Count
+        $rows    = @(Get-CvQueueStatus -Context $Context -DoneProbe $probe -DoneTolerance $Context.GuiQueueDoneTol)
         $workers = @(Get-CvWorkerStates -Context $Context)
         $live    = @($workers | Where-Object { $_.Alive })
+        # Un listado de Original\ que sale VACIO teniendo archivos a la vista es casi siempre un
+        # tropiezo, no una carpeta vacia (ver Test-CvQueueKeepRows): se mira la carpeta de otra forma
+        # -sin filtros ni FileInfo- y, si sigue habiendo ficheros, se deja la ventana como estaba.
+        if (@($rows).Count -eq 0 -and $lv.Items.Count -gt 0) {
+            $existe = $false
+            $reales = 0
+            try {
+                $dirOrig = "$($Context.Original)"
+                $existe = [System.IO.Directory]::Exists($dirOrig)
+                if ($existe) { $reales = @([System.IO.Directory]::EnumerateFiles($dirOrig)).Count }
+            } catch { $existe = $true; $reales = 1 }   # si ni eso se puede mirar, mejor no tocar nada
+            if (Test-CvQueueKeepRows -Rows 0 -Items $lv.Items.Count -DirExists $existe -RealFiles $reales) {
+                $st.Vacios++
+                Write-CvLog 'COLA' ("[AVISO] - Original se ha listado vacia teniendo {0} fichero(s); se conserva lo que hay y se reintenta ({1} vez/veces seguidas)." -f $reales, $st.Vacios)
+                return
+            }
+            $st.Vacios = 0
+        } else {
+            $st.Vacios = 0
+        }
         $st.Rows    = $rows
         $st.Workers = $workers
 
@@ -953,13 +1015,20 @@ function Show-CvConvertWindow {
         $lv.BeginUpdate()
         try {
             if ($names -ne $st.Names) {
-                $lv.Items.Clear()
+                # Se montan TODAS las filas primero y solo despues se toca la lista: si el formateo de
+                # una fila falla, la lista se queda como estaba en vez de vaciarse. Antes se limpiaba
+                # y se iban anadiendo, asi que un fallo a mitad dejaba la tabla EN BLANCO -y como el
+                # nombre de la tanda no llegaba a apuntarse, el refresco siguiente repetia el destrozo.
+                $nuevos = New-Object System.Collections.Generic.List[System.Windows.Forms.ListViewItem]
                 foreach ($r in $rows) {
                     $cells = @(Format-CvQueueRow -Row $r)
-                    $it = New-Object System.Windows.Forms.ListViewItem($cells[0])
-                    for ($i = 1; $i -lt $cells.Count; $i++) { [void]$it.SubItems.Add($cells[$i]) }
-                    [void]$lv.Items.Add($it)
+                    if (@($cells).Count -eq 0) { $cells = @("$($r.Name)") }
+                    $it = New-Object System.Windows.Forms.ListViewItem("$($cells[0])")
+                    for ($i = 1; $i -lt $cells.Count; $i++) { [void]$it.SubItems.Add("$($cells[$i])") }
+                    $nuevos.Add($it)
                 }
+                $lv.Items.Clear()
+                $lv.Items.AddRange($nuevos.ToArray())
                 $st.Names = $names
             } else {
                 for ($k = 0; $k -lt $rows.Count -and $k -lt $lv.Items.Count; $k++) {
@@ -1313,7 +1382,9 @@ function Show-CvConvertWindow {
     $timer.Add_Tick({
         if ($st.Busy) { return }
         $st.Busy = $true
-        try { & $refresh } catch {} finally { $st.Busy = $false }
+        # Si el refresco falla, se apunta en el log: tragarselo en silencio deja la ventana a medias
+        # (la lista de una vuelta y los totales de otra) sin nada que mirar despues.
+        try { & $refresh } catch { Write-CvLog 'COLA' ("[ERROR] - Refresco: {0}" -f $_) } finally { $st.Busy = $false }
     })
 
     # La columna de progreso ocupa lo que sobre: al abrir, al redimensionar la ventana y al cambiar
@@ -1328,6 +1399,10 @@ function Show-CvConvertWindow {
     $lv.Add_Resize($fitCols)
 
     $form.Add_Shown({
+        # Lo ya deducido en otras sesiones (bordes de los archivos convertidos): asi la columna sale
+        # rellena de entrada en vez de volver a sondear lo mismo cada vez que se abre la ventana.
+        if ([int]$Context.GuiQueueDoneProbe -gt 0) { [void](Import-CvDoneBorderCache -Context $Context) }
+
         # Fantasmas: ficheros de estado de workers que ya no existen. No estorban para nada salvo
         # que se releen en CADA refresco (y ahi si: diez fantasmas eran casi medio segundo por
         # vuelta). Se barren al abrir, que es cuando no molesta.
@@ -1418,6 +1493,9 @@ function Show-CvConvertWindow {
                 }))
             } catch { }
         }
+        # Y lo deducido de los bordes, para no volver a sondear lo mismo la proxima vez. Al guardarlo
+        # se tiran las entradas de archivos que ya no estan (borrados, renombrados o movidos).
+        if ([int]$Context.GuiQueueDoneProbe -gt 0) { [void](Save-CvDoneBorderCache -Context $Context) }
     })
 
     # Tema de la SESION (lo fija el lanzador con lo que diga la config, y lo cambia el boton

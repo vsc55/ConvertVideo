@@ -530,6 +530,165 @@ function Show-CvLogsWindow {
     $form.Dispose()
 }
 
+function Show-CvMaintenanceWindow {
+    <#
+        MANTENIMIENTO en un solo sitio: lo de la carpeta Proceso (jobs, bloqueos, temporales), los
+        logs viejos y lo cacheado por las ventanas. Antes cada cosa estaba en su boton y habia que ir
+        a buscarlas por separado -y una de ellas, la cache de archivos analizados, no se veia por
+        ningun lado hasta que salia el dialogo-.
+
+        Se marca lo que se quiere tirar y se limpia de una vez. Las filas y el borrado salen de
+        SetupCore (los mismos que usa la consola); aqui solo se ensena y se confirma.
+
+        Devuelve cuantos elementos se han borrado.
+    #>
+    param(
+        [Parameter(Mandatory)]$Context,
+        [string]$CurrentLog = ''
+    )
+    if (-not (Initialize-CvGui)) { return 0 }
+    $borrados = 0
+
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text          = 'Mantenimiento'
+    $form.StartPosition = 'CenterParent'
+    # Ancha a proposito: la columna de 'que se pierde' son frases, y a 720 se cortaban todas.
+    $form.Size          = New-Object System.Drawing.Size(900, 560)
+    $form.MinimumSize   = New-Object System.Drawing.Size(700, 440)
+    $form.Name          = 'cvMaint'
+
+    $grid = New-Object System.Windows.Forms.TableLayoutPanel
+    $grid.Dock        = 'Fill'
+    $grid.Padding     = New-Object System.Windows.Forms.Padding(10)
+    $grid.ColumnCount = 1
+    $grid.RowCount    = 4
+    [void]$grid.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 100)))
+    [void]$grid.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute, 24)))
+    [void]$grid.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 100)))
+    [void]$grid.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute, 44)))
+    [void]$grid.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute, 42)))
+    $form.Controls.Add($grid)
+
+    $lbl = New-Object System.Windows.Forms.Label
+    $lbl.Text     = 'Marca lo que quieras borrar:'
+    $lbl.Dock     = 'Fill'
+    $lbl.AutoSize = $false
+    $grid.Controls.Add($lbl, 0, 0)
+
+    $lv = New-Object System.Windows.Forms.ListView
+    $lv.Dock          = 'Fill'
+    $lv.View          = 'Details'
+    $lv.CheckBoxes    = $true
+    $lv.FullRowSelect = $true
+    $lv.HideSelection = $false
+    $lv.MultiSelect   = $false
+    $lv.Font          = (New-CvGuiFont 9)
+    $lv.Name          = 'cvMaintList'
+    [void]$lv.Columns.Add('Que', 300)
+    [void]$lv.Columns.Add('Cuantos', 70, 'Right')
+    [void]$lv.Columns.Add('Que se pierde', 300)
+    [void](Set-CvGuiListFillColumn -List $lv -Index 2 -Min 240)
+    [void](Set-CvGuiDoubleBuffered -Control $lv)
+    $grid.Controls.Add($lv, 0, 1)
+
+    $lblSel = New-Object System.Windows.Forms.Label
+    $lblSel.Dock      = 'Fill'
+    $lblSel.AutoSize  = $false
+    $lblSel.Name      = 'cvMaintHint'
+    $grid.Controls.Add($lblSel, 0, 2)
+
+    $bar = New-Object System.Windows.Forms.FlowLayoutPanel
+    $bar.Dock          = 'Fill'
+    $bar.FlowDirection = 'LeftToRight'
+    $bar.WrapContents  = $false
+    $grid.Controls.Add($bar, 0, 3)
+
+    $mkBtn = {
+        param([string]$Text, [string]$Name)
+        $b = New-Object System.Windows.Forms.Button
+        $b.Text         = $Text
+        $b.Height       = 30
+        $b.AutoSize     = $true
+        $b.AutoSizeMode = 'GrowAndShrink'
+        $b.MinimumSize  = New-Object System.Drawing.Size(150, 30)
+        $b.Margin       = New-Object System.Windows.Forms.Padding(0, 4, 8, 4)
+        $b.Name         = $Name
+        $bar.Controls.Add($b)
+        return $b
+    }
+    $btnDo    = & $mkBtn 'Limpiar lo marcado' 'cvMaintRun'
+    $btnClose = & $mkBtn 'Cerrar'             'cvMaintClose'
+
+    $st = @{ Items = @() }
+    $recargar = {
+        $st.Items = @(Get-CvSetupMaintenanceItems -Context $Context -CurrentLog $CurrentLog)
+        $lv.BeginUpdate()
+        try {
+            $lv.Items.Clear()
+            foreach ($i in $st.Items) {
+                $it = New-Object System.Windows.Forms.ListViewItem("$($i.Text)")
+                [void]$it.SubItems.Add("$($i.Count)")
+                [void]$it.SubItems.Add("$($i.Detail)")
+                # Lo que no tiene nada que borrar se ensena apagado: se ve que no hay, sin quitarlo.
+                if ([int]$i.Count -le 0) { $it.ForeColor = (Get-CvGuiCurrentPalette).Muted }
+                [void]$lv.Items.Add($it)
+            }
+        } finally { $lv.EndUpdate() }
+    }
+    $marcados = {
+        $ks = @()
+        for ($i = 0; $i -lt $lv.Items.Count -and $i -lt @($st.Items).Count; $i++) {
+            if ($lv.Items[$i].Checked) { $ks += "$(@($st.Items)[$i].Key)" }
+        }
+        return @($ks)
+    }
+    $refrescarPie = {
+        $ks = @(& $marcados)
+        $n = 0
+        $avisa = $false
+        foreach ($i in @($st.Items)) {
+            if ($ks -contains "$($i.Key)") { $n += [int]$i.Count; if ([bool]$i.Warn) { $avisa = $true } }
+        }
+        $btnDo.Enabled = ($ks.Count -gt 0 -and $n -gt 0)
+        $lblSel.Text = $(if ($ks.Count -eq 0) {
+            'No has marcado nada.'
+        } elseif ($avisa) {
+            ("Se borraran {0} elemento(s). OJO: entre ellos los JOBS, que habria que volver a preparar." -f $n)
+        } else {
+            ("Se borraran {0} elemento(s)." -f $n)
+        })
+        [void](Set-CvGuiRole -Control $lblSel -Role $(if ($avisa) { 'warn' } else { 'muted' }))
+    }
+    $lv.Add_ItemChecked({ & $refrescarPie })
+
+    $btnDo.Add_Click({
+        $ks = @(& $marcados)
+        if ($ks.Count -eq 0) { return }
+        $detalle = @()
+        foreach ($i in @($st.Items)) {
+            if ($ks -contains "$($i.Key)") { $detalle += ("  {0}  ({1})" -f $i.Text, $i.Count) }
+        }
+        $msg = "Se va a borrar:`n`n{0}`n`nSeguro?" -f ($detalle -join "`n")
+        if (-not (Show-CvGuiConfirm -Title 'Mantenimiento' -Message $msg)) { return }
+        $r = @(Invoke-CvSetupMaintenance -Context $Context -Keys $ks -CurrentLog $CurrentLog)
+        foreach ($x in $r) { $script:borrados += [int]$x.Removed }
+        $malos = @($r | Where-Object { -not $_.Ok })
+        if ($malos.Count -gt 0) {
+            Show-CvGuiInfo -Title 'Mantenimiento' -Message (("Algo no se pudo borrar:`n`n" + ((@($malos | ForEach-Object { "{0}: {1}" -f $_.Text, $_.Error })) -join "`n")))
+        }
+        & $recargar
+        & $refrescarPie
+    }.GetNewClosure())
+    $btnClose.Add_Click({ $form.Close() })
+
+    $form.Add_Shown({ & $recargar; & $refrescarPie })
+    $form.CancelButton = $btnClose
+    [void](Set-CvGuiTheme -Form $form)   # tema de la sesion
+    [void]$form.ShowDialog()
+    $form.Dispose()
+    return $script:borrados
+}
+
 function Show-CvCleanWindow {
     <#
         Limpieza de la carpeta Proceso: elegir QUE borrar (jobs / bloqueos / temporales / todo), ver la
@@ -641,8 +800,30 @@ function Show-CvSetupWindow {
     $form = New-Object System.Windows.Forms.Form
     $form.Text          = ("{0} {1} - Setup" -f $Context.AppName, $Context.Version)
     $form.StartPosition = 'CenterScreen'
-    $form.Size          = New-Object System.Drawing.Size(1040, 720)
     $form.MinimumSize   = New-Object System.Drawing.Size(860, 560)
+    # Se abre COMO SE DEJO (lo mismo que la cola): el tamano recordado se valida contra los minimos y
+    # contra la pantalla de hoy, y si no hay nada apuntado se usa el de la config (gui.setupWidth /
+    # gui.setupHeight). Lo manda gui.rememberLayout.
+    $pantalla = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+    $recordado = $(if ([bool]$Context.GuiRemember) { Get-CvGuiLayout -Context $Context -Key 'setup' } else { $null })
+    $tam = Resolve-CvGuiWindowSize -Layout $recordado `
+        -DefaultWidth ([int]$Context.GuiSetupWidth) -DefaultHeight ([int]$Context.GuiSetupHeight) `
+        -MinWidth 860 -MinHeight 560 -MaxWidth $pantalla.Width -MaxHeight $pantalla.Height
+    $form.Size = New-Object System.Drawing.Size([int]$tam.Width, [int]$tam.Height)
+    if ([bool]$tam.Maximized) { $form.WindowState = [System.Windows.Forms.FormWindowState]::Maximized }
+    $form.Add_FormClosing({
+        # En FormClosing una excepcion se lleva la aplicacion por delante: esto no puede lanzar.
+        if (-not [bool]$Context.GuiRemember) { return }
+        try {
+            $max = ($form.WindowState -eq [System.Windows.Forms.FormWindowState]::Maximized)
+            $rb  = $(if ($form.WindowState -eq [System.Windows.Forms.FormWindowState]::Normal) { $form.Bounds } else { $form.RestoreBounds })
+            [void](Save-CvGuiLayout -Context $Context -Key 'setup' -Layout ([ordered]@{
+                width     = [int]$rb.Width
+                height    = [int]$rb.Height
+                maximized = $max
+            }))
+        } catch { }
+    })
 
     # --- panel de acciones (izquierda) ---
     $side = New-Object System.Windows.Forms.FlowLayoutPanel
@@ -789,8 +970,14 @@ function Show-CvSetupWindow {
         & $write 'CONFIGURACION' ("{0} restablecido (copia en {0}.bak; catalogo de herramientas conservado)." -f $CfgName)
     })
 
-    & $addHeader 'Limpieza'
-    [void](& $addButton '  Limpiar jobs / bloqueos (Proceso)' {
+    # MANTENIMIENTO en un sitio: jobs, bloqueos, temporales, logs viejos y caches de las ventanas.
+    # Antes eran tres botones repartidos entre 'Limpieza' y 'Logs' y habia que ir a buscarlos.
+    & $addHeader 'Mantenimiento'
+    [void](& $addButton '  Limpiar (jobs, bloqueos, logs, caches)...' {
+        $n = Show-CvMaintenanceWindow -Context $Context -CurrentLog $CurrentLog
+        & $write 'MANTENIMIENTO' (("Borrados {0} elemento(s). Queda esto:`n`n" -f $n) + (Get-CvSetupMaintenanceText -Context $Context -CurrentLog $CurrentLog))
+    })
+    [void](& $addButton '  Limpiar Proceso fichero a fichero...' {
         Show-CvCleanWindow -Context $Context
         & $write 'ESTADO' (Get-CvSetupStatusText -Context $Context -CfgPath $CfgPath -IsAlt $IsAlt)
     })
@@ -800,16 +987,22 @@ function Show-CvSetupWindow {
         Show-CvLogsWindow -Context $Context -CurrentLog $CurrentLog
         & $write 'LOGS' ("{0} log(s) en {1}." -f @(Get-CvSetupLogFiles -Context $Context).Count, $Context.Logs)
     })
-    [void](& $addButton '  Limpiar logs' {
-        # Se excluye el log de la sesion EN CURSO: esta abierto por el transcript.
-        $logs = @(Get-CvLogFiles -Context $Context -ExceptPath $CurrentLog)
-        if ($logs.Count -eq 0) { & $write 'LOGS' 'No hay logs que eliminar.'; return }
-        if (-not (Show-CvGuiConfirm -Title 'Limpiar logs' -Message ("Se eliminaran {0} log(s) de la carpeta logs. Continuar?" -f $logs.Count))) {
-            & $write 'LOGS' 'Cancelado.'; return
-        }
-        [void](Remove-CvLogFiles -Files $logs)
-        & $write 'LOGS' ("Eliminados {0} log(s)." -f $logs.Count)
-    })
+    # Si el MENU no cabe en el alto de la ventana, se agranda hasta que quepa (sin pasarse de la
+    # pantalla). Asi anadir una opcion no deja la ultima seccion cortada detras de una barra de
+    # scroll -que es justo lo que paso al meter 'Mantenimiento'-. Si el usuario dejo un tamano
+    # apuntado, manda el suyo: lo eligio el.
+    $form.Add_Load({
+        try {
+            if ($null -ne $recordado) { return }
+            $ult = @($side.Controls)[(@($side.Controls).Count - 1)]
+            if ($null -eq $ult) { return }
+            $falta = ([int]$ult.Bottom + 12) - [int]$side.ClientSize.Height
+            if ($falta -gt 0) {
+                $libre = [System.Windows.Forms.Screen]::FromControl($form).WorkingArea.Height
+                $form.Height = [Math]::Min($libre, ([int]$form.Height + $falta))
+            }
+        } catch { }
+    }.GetNewClosure())
 
     # Estado nada mas abrir, para que la ventana no arranque vacia.
     & $write 'ESTADO' (Get-CvSetupStatusText -Context $Context -CfgPath $CfgPath -IsAlt $IsAlt)

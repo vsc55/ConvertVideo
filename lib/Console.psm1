@@ -40,8 +40,11 @@ function Get-CvStarLine { param([int]$Width = 0) Get-CvLine -Char '*' -Width $Wi
 $script:CvProgressBarWidth = -1
 function Format-CvSize {
     <#
-        PURO. Tamano LEGIBLE: '812 MB' / '2,4 GB' (vacio si no hay tamano). Se pasa -Bytes o -Kb, lo
-        que se tenga a mano (un `.Length` o lo que devuelve Get-CvQueueStatus).
+        PURO. Tamano LEGIBLE: '48 KB' / '812 MB' / '2,4 GB' (vacio si no hay tamano). Se pasa -Bytes
+        o -Kb, lo que se tenga a mano (un `.Length` o lo que devuelve Get-CvQueueStatus).
+
+        Por debajo de 1 MB se dice en KB: un punado de logs de 20 KB salia como '0 MB', que no
+        informa de nada.
 
         Vive aqui, con el resto de helpers de presentacion compartidos (Get-CvProgressBar, los
         separadores): lo usa la ventana de la cola y sirve igual para la consola. El resumen de
@@ -56,6 +59,7 @@ function Format-CvSize {
     if ($k -le 0) { return '' }
     $mb = $k / 1024.0
     if ($mb -ge 1024) { return ('{0:N1} GB' -f ($mb / 1024.0)) }
+    if ($mb -lt 1)    { return ('{0:N0} KB' -f $k) }
     return ('{0:N0} MB' -f $mb)
 }
 

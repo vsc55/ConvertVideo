@@ -101,6 +101,85 @@ function Save-CvGuiLayout {
     }
 }
 
+function Get-CvGuiCacheStatus {
+    <#
+        Que hay guardado en '<config>.gui.json' y cuanto ocupa, SIN borrar nada: lo ensena setup para
+        que se pueda decidir. Ahi dentro conviven dos cosas distintas:
+
+          - el ESTADO DE LAS VENTANAS (una clave por ventana: 'cola', 'setup'...): tamano, divisor y
+            anchos de columna;
+          - la CACHE DE ARCHIVOS ('colaBordes'): lo deducido de cada archivo ya convertido, que se
+            guarda para no repetir dos ffprobe por archivo cada vez que se abre la cola.
+
+        Devuelve @{ Path; Exists; SizeKb; Layouts; LayoutKeys; Files; Total }, donde Layouts es
+        cuantas ventanas hay apuntadas y Files cuantos archivos hay cacheados.
+    #>
+    param([Parameter(Mandatory)]$Context)
+    $p = Get-CvGuiLayoutPath -Context $Context
+    $r = [ordered]@{
+        Path       = $p
+        Exists     = (Test-Path -LiteralPath $p)
+        SizeKb     = 0
+        Layouts    = 0
+        LayoutKeys = @()
+        Files      = 0
+        Total      = 0
+    }
+    if (-not $r.Exists) { return [pscustomobject]$r }
+    try { $r.SizeKb = [math]::Round((Get-Item -LiteralPath $p).Length / 1024.0, 1) } catch { }
+    try {
+        $all = ConvertFrom-Json ((Get-Content -LiteralPath $p -Raw -Encoding UTF8))
+        foreach ($pr in @($all.PSObject.Properties)) {
+            if ($pr.Name -eq 'colaBordes') { $r.Files = @($pr.Value).Count; continue }
+            $r.Layouts++
+            $r.LayoutKeys += $pr.Name
+        }
+    } catch { }
+    $r.Total = [int]$r.Layouts + [int]$r.Files
+    return [pscustomobject]$r
+}
+
+function Clear-CvGuiCache {
+    <#
+        Borra lo guardado en '<config>.gui.json': -What 'layout' (como quedaron las ventanas),
+        'files' (lo deducido de los archivos ya convertidos) o 'all' (el fichero entero).
+
+        Es ESTADO: borrarlo no pierde nada que no se pueda volver a calcular -las ventanas vuelven a
+        abrirse con los tamanos de config.json y los bordes se vuelven a deducir-. Devuelve
+        @{ Ok; Removed; Error }, con Removed = cuantas cosas se han quitado.
+    #>
+    param(
+        [Parameter(Mandatory)]$Context,
+        [ValidateSet('layout', 'files', 'all')][string]$What = 'all'
+    )
+    $p = Get-CvGuiLayoutPath -Context $Context
+    $antes = Get-CvGuiCacheStatus -Context $Context
+    if (-not $antes.Exists) { return @{ Ok = $true; Removed = 0; Error = '' } }
+    try {
+        if ($What -eq 'all') {
+            Remove-Item -LiteralPath $p -Force -ErrorAction Stop
+            return @{ Ok = $true; Removed = [int]$antes.Total; Error = '' }
+        }
+        $all = ConvertFrom-Json ((Get-Content -LiteralPath $p -Raw -Encoding UTF8))
+        $queda = [ordered]@{}
+        $fuera = 0
+        foreach ($pr in @($all.PSObject.Properties)) {
+            $esCache = ($pr.Name -eq 'colaBordes')
+            if (($What -eq 'files' -and $esCache) -or ($What -eq 'layout' -and -not $esCache)) {
+                $fuera += $(if ($esCache) { @($pr.Value).Count } else { 1 })
+                continue
+            }
+            $queda[$pr.Name] = $pr.Value
+        }
+        # Si no queda nada dentro, mejor sin fichero que con un '{}' suelto.
+        if ($queda.Count -eq 0) { Remove-Item -LiteralPath $p -Force -ErrorAction Stop }
+        else { ([pscustomobject]$queda | ConvertTo-Json -Depth 6) | Set-Content -LiteralPath $p -Encoding UTF8 }
+        return @{ Ok = $true; Removed = $fuera; Error = '' }
+    } catch {
+        return @{ Ok = $false; Removed = 0; Error = "$_" }
+    }
+}
+
 function Get-CvGuiLayoutValue {
     <# PURO. Un campo de lo apuntado, venga como hashtable (codigo) o como objeto (JSON leido). #>
     param($Layout, [Parameter(Mandatory)][string]$Name, $Default = $null)

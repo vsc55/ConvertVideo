@@ -186,6 +186,99 @@ Assert-Eq   'Bateria case-insensitive' 'unit' (Get-CvSetupTestSuite -Suite 'UNIT
 Assert-True 'Bateria inexistente -> null' ($null -eq (Get-CvSetupTestSuite -Suite 'nope'))
 
 # ================================================================================================
+Write-Host "`nCaches de las ventanas (ver y limpiar desde setup)" -ForegroundColor Cyan
+# En <config>.gui.json conviven dos cosas: como quedo cada ventana y lo deducido de los archivos ya
+# convertidos. Setup deja borrar una, otra o las dos; cada opcion tiene que quitar SOLO lo suyo.
+# En su PROPIA carpeta: un config*.json suelto en el root temporal se cuela en el selector de
+# configuraciones que se prueba mas abajo (y ahi se cuentan los que hay).
+$cacheRoot = Join-Path $tmpRoot 'caches'
+New-Item -ItemType Directory -Path $cacheRoot -Force | Out-Null
+$cacheCfg = Join-Path $cacheRoot 'config.json'
+[void](Save-CvTextFile -Path $cacheCfg -Text '{ "behavior": { "workers": 1 } }')
+$ctxCache = New-CvContext -Root $cacheRoot -ConfigPath $cacheCfg
+function Set-CacheDePrueba {
+    [void](Save-CvGuiLayout -Context $ctxCache -Key 'cola'  -Layout ([ordered]@{ width = 1320 }))
+    [void](Save-CvGuiLayout -Context $ctxCache -Key 'setup' -Layout ([ordered]@{ width = 1020 }))
+    [void](Save-CvGuiLayout -Context $ctxCache -Key 'colaBordes' -Layout @(
+        [pscustomobject]@{ Src = 'a.mkv'; Out = 'a_fix.mkv'; Stamp = '1'; Data = @{ Text = '[x]' } }
+        [pscustomobject]@{ Src = 'b.mkv'; Out = 'b_fix.mkv'; Stamp = '2'; Data = @{ Text = '[ ]' } }
+    ))
+}
+Assert-Eq   'Caches: sin fichero, no hay nada' $false ([bool](Get-CvGuiCacheStatus -Context $ctxCache).Exists)
+Set-CacheDePrueba
+$cSt = Get-CvGuiCacheStatus -Context $ctxCache
+Assert-Eq   'Caches: dos ventanas recordadas'  2 ([int]$cSt.Layouts)
+Assert-Eq   'Caches: dos archivos analizados'  2 ([int]$cSt.Files)
+Assert-Eq   'Caches: el total suma'            4 ([int]$cSt.Total)
+Assert-True 'Caches: el texto dice donde esta' ((Get-CvSetupCacheText -Context $ctxCache) -match 'config\.gui\.json')
+# Borrar SOLO lo de los archivos: las ventanas se quedan.
+$rc = Clear-CvGuiCache -Context $ctxCache -What 'files'
+Assert-Eq   'Caches: borrar archivos quita 2'  2 ([int]$rc.Removed)
+$cSt = Get-CvGuiCacheStatus -Context $ctxCache
+Assert-Eq   'Caches: y deja las ventanas'      2 ([int]$cSt.Layouts)
+Assert-Eq   'Caches: sin archivos'             0 ([int]$cSt.Files)
+# Borrar SOLO las ventanas: los archivos se quedan.
+Set-CacheDePrueba
+$rc = Clear-CvGuiCache -Context $ctxCache -What 'layout'
+Assert-Eq   'Caches: borrar ventanas quita 2'  2 ([int]$rc.Removed)
+$cSt = Get-CvGuiCacheStatus -Context $ctxCache
+Assert-Eq   'Caches: y deja los archivos'      2 ([int]$cSt.Files)
+Assert-Eq   'Caches: sin ventanas'             0 ([int]$cSt.Layouts)
+# Y borrarlo todo se lleva el fichero.
+Set-CacheDePrueba
+$rc = Clear-CvGuiCache -Context $ctxCache -What 'all'
+Assert-Eq   'Caches: borrar todo quita 4'      4 ([int]$rc.Removed)
+Assert-Eq   'Caches: el fichero desaparece'    $false ([bool](Get-CvGuiCacheStatus -Context $ctxCache).Exists)
+# Sobre un fichero que ya no esta no puede fallar (se llama desde una ventana).
+$rc = Clear-CvGuiCache -Context $ctxCache -What 'all'
+Assert-Eq   'Caches: sin fichero no falla'     $true ([bool]$rc.Ok)
+
+# ================================================================================================
+Write-Host "`nMantenimiento (todo lo que se puede limpiar, en una lista)" -ForegroundColor Cyan
+# Antes cada cosa estaba en su boton: jobs y bloqueos por un lado, logs por otro, caches por otro.
+# Ahora sale TODO junto, con su recuento, y se limpia lo que se marque. Las dos caras leen esto.
+$mRoot = Join-Path $tmpRoot 'mant'
+foreach ($d in @('Original', 'Proceso', 'Convertido', 'logs')) { New-Item -ItemType Directory -Path (Join-Path $mRoot $d) -Force | Out-Null }
+$mCfg = Join-Path $mRoot 'config.json'
+[void](Save-CvTextFile -Path $mCfg -Text '{ "behavior": { "workers": 1 } }')
+$ctxM = New-CvContext -Root $mRoot -ConfigPath $mCfg
+Set-Content -Path (Join-Path $ctxM.Proceso 'Serie_1x01.job.json') -Value '{}' -Encoding UTF8
+Set-Content -Path (Join-Path $ctxM.Proceso 'Serie_1x02.job.json') -Value '{}' -Encoding UTF8
+Set-Content -Path (Join-Path $ctxM.Proceso 'Serie_1x01.lock') -Value 'PID=1;HOST=x' -Encoding UTF8
+$mLogViejo = Join-Path $ctxM.Logs 'Convert_20260101_1.log'
+$mLogAhora = Join-Path $ctxM.Logs 'Convert_20260102_2.log'
+Set-Content -Path $mLogViejo -Value 'viejo' -Encoding UTF8
+Set-Content -Path $mLogAhora -Value 'el de ahora' -Encoding UTF8
+[void](Save-CvGuiLayout -Context $ctxM -Key 'cola' -Layout ([ordered]@{ width = 1320 }))
+[void](Save-CvGuiLayout -Context $ctxM -Key 'colaBordes' -Layout @(
+    [pscustomobject]@{ Src = 'a.mkv'; Out = 'a_fix.mkv'; Stamp = '1'; Data = @{ Text = '[x]' } }
+))
+$mIt = @(Get-CvSetupMaintenanceItems -Context $ctxM -CurrentLog $mLogAhora)
+Assert-Eq   'Mantenimiento: seis cosas que limpiar' 6 $mIt.Count
+function Get-MCount { param([string]$K) [int](@($mIt | Where-Object { $_.Key -eq $K })[0].Count) }
+Assert-Eq   'Mantenimiento: dos jobs'       2 (Get-MCount 'jobs')
+Assert-Eq   'Mantenimiento: un bloqueo'     1 (Get-MCount 'locks')
+Assert-Eq   'Mantenimiento: un log viejo'   1 (Get-MCount 'logs')
+Assert-Eq   'Mantenimiento: una ventana'    1 (Get-MCount 'cacheLayout')
+Assert-Eq   'Mantenimiento: un archivo analizado' 1 (Get-MCount 'cacheFiles')
+Assert-Eq   'Mantenimiento: borrar jobs avisa' $true ([bool](@($mIt | Where-Object { $_.Key -eq 'jobs' })[0].Warn))
+Assert-True 'Mantenimiento: cada fila dice que se pierde' ((@($mIt | Where-Object { "$($_.Detail)".Trim() -eq '' })).Count -eq 0)
+Assert-True 'Mantenimiento: el texto lo lista' ((Get-CvSetupMaintenanceText -Context $ctxM -CurrentLog $mLogAhora) -match 'Jobs preparados')
+# Limpiar SOLO lo marcado: se van los logs viejos y la cache de archivos, y lo demas se queda.
+$mRes = @(Invoke-CvSetupMaintenance -Context $ctxM -Keys @('logs', 'cacheFiles') -CurrentLog $mLogAhora)
+Assert-Eq   'Mantenimiento: devuelve una fila por cosa' 2 $mRes.Count
+Assert-Eq   'Mantenimiento: todo fue bien' 0 @($mRes | Where-Object { -not $_.Ok }).Count
+$mIt = @(Get-CvSetupMaintenanceItems -Context $ctxM -CurrentLog $mLogAhora)
+Assert-Eq   'Mantenimiento: sin logs viejos' 0 (Get-MCount 'logs')
+Assert-Eq   'Mantenimiento: sin archivos analizados' 0 (Get-MCount 'cacheFiles')
+Assert-True 'Mantenimiento: el log en curso NO se borra' (Test-Path -LiteralPath $mLogAhora)
+Assert-Eq   'Mantenimiento: los jobs siguen' 2 (Get-MCount 'jobs')
+Assert-Eq   'Mantenimiento: la ventana recordada sigue' 1 (Get-MCount 'cacheLayout')
+# Y limpiar lo que ya no hay no falla ni cuenta de mas.
+$mRes = @(Invoke-CvSetupMaintenance -Context $ctxM -Keys @('logs') -CurrentLog $mLogAhora)
+Assert-Eq   'Mantenimiento: nada que borrar = 0' 0 ([int]$mRes[0].Removed)
+
+# ================================================================================================
 Write-Host "`nSetupCore - logs (ver, no solo borrar)" -ForegroundColor Cyan
 Assert-Eq 'Logs: al principio ninguno' 0 @(Get-CvSetupLogFiles -Context $ctx).Count
 $logA = Join-Path $ctx.Logs 'setup_20260101_1.log'

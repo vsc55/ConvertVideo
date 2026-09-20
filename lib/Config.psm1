@@ -684,8 +684,28 @@ function Get-CvConfigDefaults {
             confirmCloseWithWorkers = $true
             queueWidth        = 1320
             queueHeight       = 760
+            # Tamano de partida de la ventana de SETUP (cuando no hay nada recordado, o con
+            # rememberLayout en false).
+            setupWidth        = 1040
+            # 800 y no 720: el menu de setup ya no cabia en 720 (medido: necesita 780) y salia con
+            # barra de scroll, con la ultima seccion cortada. Aun asi, la ventana se AJUSTA sola al
+            # abrir si el menu no cabe, asi que anadir opciones no vuelve a romperlo.
+            setupHeight       = 800
             # Reparto del alto de la cola: % para la lista; el resto, para el resumen y el log.
             queueSplitPercent = 52
+            # Un archivo YA CONVERTIDO no tiene job (el worker lo borra al terminar), asi que la
+            # columna 'Bordes' se quedaba en blanco. Se puede DEDUCIR comparando la proporcion del
+            # original con la de la salida: si no cuadran, se quitaron barras. Cuesta dos ffprobe por
+            # archivo (~300 ms medidos; casi todo es ARRANCAR ffprobe, que ocupa 231 MB: leer el
+            # tamano de un archivo de 1 GB cuesta lo mismo que el de uno de 3 MB), asi que se
+            # analizan como mucho N por refresco -el resultado
+            # se cachea, asi que la lista se va rellenando sola en unos segundos- y SOLO con la cola
+            # parada: mientras hay workers, el refresco tiene que seguir siendo barato. 0 = no deducir.
+            queueDoneProbe     = 2
+            # Margen de proporcion para decidir que hubo recorte (0.01 = 1%). Por debajo caen los
+            # redondeos a tamano PAR del escalado (un pixel en 1080 es un 0,09%); por encima, los
+            # recortes de verdad (quitar 140px de barras cambia la proporcion un 15%).
+            queueDoneTolerance = 0.01
         }
         # Carpetas de trabajo: vacio = junto al programa; admite ruta absoluta o relativa.
         paths     = [ordered]@{
@@ -930,10 +950,14 @@ function Get-CvConfigHelp {
 
         'gui'                   = 'Apariencia de las ventanas (Convert-gui / setup-gui)'
         'gui/theme'             = "Aspecto de las ventanas: 'system' (sigue a Windows) / 'light' / 'dark'"
-        'gui/rememberLayout'    = 'Recordar como queda la ventana de la cola al cerrarla (en <config>.gui.json)'
+        'gui/rememberLayout'    = 'Recordar como queda la ventana de la cola al cerrarla (en <config>.gui.json, donde tambien se cachea lo deducido de los bordes)'
         'gui/confirmCloseWithWorkers' = 'Al cerrar la cola con workers codificando, preguntar que hacer (siguen vivos si no)'
         'gui/queueWidth'        = 'Ancho (px) de la ventana de la cola la primera vez'
         'gui/queueHeight'       = 'Alto (px) de la ventana de la cola la primera vez'
+        'gui/queueDoneProbe'     = 'Cuantos archivos YA CONVERTIDOS se analizan por refresco -solo con la cola parada- para deducir si llevaron recorte (0 = ninguno)'
+        'gui/queueDoneTolerance' = 'Margen de proporcion (0.01 = 1%) para decidir que a un convertido se le quitaron barras'
+        'gui/setupWidth'        = 'Ancho de partida de la ventana de setup (px)'
+        'gui/setupHeight'       = 'Alto de partida de la ventana de setup (px)'
         'gui/queueSplitPercent' = 'Porcentaje del alto para la lista de la cola (el resto, resumen y log)'
 
         'paths'            = '[av] Carpetas de trabajo (vacio = junto al programa)'

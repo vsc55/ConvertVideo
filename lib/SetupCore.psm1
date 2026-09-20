@@ -191,6 +191,148 @@ function Get-CvSetupCleanTargets {
     return @(Get-CvFiles -Dir $proc -Filters (Get-CvProcesoPatterns -What $What) -Exact)
 }
 
+function Get-CvSetupMaintenanceItems {
+    <#
+        TODO lo que se puede limpiar, en una sola lista y con su recuento: jobs, bloqueos y
+        temporales de Proceso\, logs, y lo cacheado por las ventanas. Antes cada cosa vivia en su
+        propio boton/menu y habia que ir a buscarlas de una en una.
+
+        Es DATO: no borra ni pregunta. Cada fila @{ Key; Text; Detail; Count; Warn }:
+          Key    'jobs'|'locks'|'temps'|'logs'|'cacheLayout'|'cacheFiles'
+          Text   como se ensena en la lista
+          Detail una linea de que se pierde al borrarlo
+          Count  cuantos elementos hay (0 = no hay nada que borrar)
+          Warn   $true si conviene pensarselo (borrar jobs es rehacer el PREPARAR)
+
+        -CurrentLog: el log de la sesion en curso, que NO se cuenta (esta abierto).
+    #>
+    param(
+        [Parameter(Mandatory)]$Context,
+        [string]$CurrentLog = ''
+    )
+    $out = @()
+    foreach ($par in @(
+        @{ Key = 'jobs';  Text = 'Jobs preparados (*.job.json)';            Warn = $true;  Detail = 'Lo decidido para cada archivo: habria que volver a PREPARAR.' }
+        @{ Key = 'locks'; Text = 'Bloqueos y estado de los workers';        Warn = $false; Detail = 'Lo que reparte el trabajo entre workers; con la cola parada no sirve de nada.' }
+        @{ Key = 'temps'; Text = 'Temporales de Proceso (mkv / m4a / wav)'; Warn = $false; Detail = 'Restos de conversiones a medias.' }
+    )) {
+        $out += [pscustomobject]@{
+            Key    = $par.Key
+            Text   = $par.Text
+            Detail = $par.Detail
+            Count  = @(Get-CvSetupCleanTargets -Context $Context -What $par.Key).Count
+            Warn   = [bool]$par.Warn
+        }
+    }
+    $logs = @(Get-CvSetupLogFiles -Context $Context -CurrentPath $CurrentLog | Where-Object { -not $_.IsCurrent })
+    $kb   = 0
+    foreach ($l in $logs) { $kb += [int]$l.SizeKb }
+    $out += [pscustomobject]@{
+        Key    = 'logs'
+        Text   = 'Logs de sesiones anteriores'
+        Detail = ("Ocupan {0}. El log de ESTA sesion no se toca." -f (Format-CvSize -Kb $kb))
+        Count  = $logs.Count
+        Warn   = $false
+    }
+    $c = Get-CvGuiCacheStatus -Context $Context
+    $out += [pscustomobject]@{
+        Key    = 'cacheLayout'
+        Text   = 'Cache: como quedaron las ventanas'
+        Detail = 'Tamano, divisor y anchos de columna. Volveran a abrirse con los tamanos del config.'
+        Count  = [int]$c.Layouts
+        Warn   = $false
+    }
+    $out += [pscustomobject]@{
+        Key    = 'cacheFiles'
+        Text   = 'Cache: archivos ya analizados'
+        Detail = 'Si a cada convertido se le quitaron barras. Se vuelve a deducir al abrir la cola.'
+        Count  = [int]$c.Files
+        Warn   = $false
+    }
+    return @($out)
+}
+
+function Invoke-CvSetupMaintenance {
+    <#
+        Limpia lo pedido (-Keys, las mismas claves de Get-CvSetupMaintenanceItems) y devuelve una
+        fila por clave con lo que se ha quitado: @{ Key; Text; Removed; Ok; Error }.
+
+        Borra, pero no pregunta ni pinta: confirma la UI, que es la que sabe como hacerlo.
+    #>
+    param(
+        [Parameter(Mandatory)]$Context,
+        [string[]]$Keys = @(),
+        [string]$CurrentLog = ''
+    )
+    $items = @{}
+    foreach ($i in @(Get-CvSetupMaintenanceItems -Context $Context -CurrentLog $CurrentLog)) { $items[$i.Key] = $i }
+    $res = @()
+    foreach ($k in @($Keys)) {
+        $txt = $(if ($items.ContainsKey($k)) { "$($items[$k].Text)" } else { $k })
+        $n = 0
+        $ok = $true
+        $err = ''
+        switch ($k) {
+            'jobs'  { $n = Remove-CvSetupFiles -Files (Get-CvSetupCleanTargets -Context $Context -What 'jobs') }
+            'locks' { $n = Remove-CvSetupFiles -Files (Get-CvSetupCleanTargets -Context $Context -What 'locks') }
+            'temps' { $n = Remove-CvSetupFiles -Files (Get-CvSetupCleanTargets -Context $Context -What 'temps') }
+            'logs'  {
+                $viejos = @(Get-CvSetupLogFiles -Context $Context -CurrentPath $CurrentLog | Where-Object { -not $_.IsCurrent })
+                foreach ($l in $viejos) {
+                    try { Remove-Item -LiteralPath $l.Path -Force -ErrorAction Stop; $n++ } catch { $ok = $false; $err = "$_" }
+                }
+            }
+            'cacheLayout' { $r = Clear-CvGuiCache -Context $Context -What 'layout'; $n = [int]$r.Removed; $ok = [bool]$r.Ok; $err = "$($r.Error)" }
+            'cacheFiles'  { $r = Clear-CvGuiCache -Context $Context -What 'files';  $n = [int]$r.Removed; $ok = [bool]$r.Ok; $err = "$($r.Error)" }
+            default { $ok = $false; $err = 'no se sabe que es eso' }
+        }
+        $res += [pscustomobject]@{
+            Key     = $k
+            Text    = $txt
+            Removed = $n
+            Ok      = $ok
+            Error   = $err
+        }
+    }
+    return @($res)
+}
+
+function Get-CvSetupMaintenanceText {
+    <# Las filas de mantenimiento como texto, para el panel de setup y para la consola. #>
+    param(
+        [Parameter(Mandatory)]$Context,
+        [string]$CurrentLog = ''
+    )
+    $L = New-Object System.Collections.Generic.List[string]
+    foreach ($i in @(Get-CvSetupMaintenanceItems -Context $Context -CurrentLog $CurrentLog)) {
+        $L.Add(("  {0,4}  {1}" -f $i.Count, $i.Text))
+        $L.Add(("        {0}" -f $i.Detail))
+    }
+    return ($L -join [Environment]::NewLine)
+}
+
+function Get-CvSetupCacheText {
+    <#
+        Que hay en las CACHES de las ventanas, como texto de una linea por cosa. Lo ensenan igual la
+        consola y la ventana (Get-CvGuiCacheStatus es quien lo mira; esto solo lo redacta).
+    #>
+    param([Parameter(Mandatory)]$Context)
+    $c = Get-CvGuiCacheStatus -Context $Context
+    $L = New-Object System.Collections.Generic.List[string]
+    $L.Add(("Fichero: {0}" -f $c.Path))
+    if (-not $c.Exists) {
+        $L.Add('  (no existe: no hay nada cacheado)')
+        return ($L -join [Environment]::NewLine)
+    }
+    $L.Add(("  ocupa {0} KB" -f $c.SizeKb))
+    $L.Add(("  ventanas recordadas : {0}{1}" -f $c.Layouts, $(if ($c.Layouts -gt 0) { "   ({0})" -f ((@($c.LayoutKeys)) -join ', ') } else { '' })))
+    $L.Add(("  archivos analizados : {0}   (bordes deducidos de los ya convertidos)" -f $c.Files))
+    $L.Add('')
+    $L.Add('Es ESTADO: borrarlo no pierde nada. Las ventanas volveran a abrirse con los tamanos de')
+    $L.Add('config.json y los bordes se volveran a deducir la proxima vez que se abra la cola.')
+    return ($L -join [Environment]::NewLine)
+}
+
 function Remove-CvSetupFiles {
     <# Borra los ficheros dados (best-effort) y devuelve cuantos habia. Comun a consola y ventana. #>
     param($Files)

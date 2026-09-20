@@ -402,6 +402,9 @@ Assert-Eq 'Tamano: vacio sin bytes'  ''       (Format-CvSize -Bytes 0)
 Assert-Eq 'Tamano: KB -> MB'         '800 MB' (Format-CvSize -Kb (800 * 1024))
 Assert-Eq 'Tamano: bytes -> MB'      '800 MB' (Format-CvSize -Bytes (800 * 1024 * 1024))
 Assert-True 'Tamano: pasa a GB'      ((Format-CvSize -Kb (3 * 1024 * 1024)) -match 'GB')
+# Por debajo de 1 MB, en KB: '0 MB' no informa de nada (salia asi con un punado de logs pequenos).
+Assert-Eq 'Tamano: menos de 1 MB en KB' '48 KB' (Format-CvSize -Kb 48)
+Assert-Eq 'Tamano: justo 1 MB ya es MB' '1 MB'  (Format-CvSize -Kb 1024)
 
 Assert-Eq 'encode.subtitles.dropEmpty def' $true (Get-CvConfigDefaultValue 'encode/subtitles/dropEmpty')
 # Los codecs de subtitulo y sus extensiones viven en la CONFIG (se amplian sin tocar codigo).
@@ -1158,6 +1161,9 @@ Assert-Eq 'Tema: system con Windows oscuro' 'dark'  (Resolve-CvGuiTheme -Theme '
 Assert-Eq 'Tema: system con Windows claro'  'light' (Resolve-CvGuiTheme -Theme 'system' -SystemDark $false)
 Assert-Eq 'Tema: cualquier cosa rara -> claro' 'light' (Resolve-CvGuiTheme -Theme 'azul')
 Assert-Eq 'Config: tema por defecto'    'system' "$((Get-CvConfigDefaults).gui.theme)"
+# El alto de la ventana de setup tiene que dar para el MENU entero (medido: necesita 780 px).
+Assert-True 'Config: la ventana de setup cabe con su menu' ([int](Get-CvConfigDefaults).gui.setupHeight -ge 780)
+Assert-True 'Config: y tiene ancho de partida'             ([int](Get-CvConfigDefaults).gui.setupWidth -ge 860)
 Assert-Eq 'Catalogo de temas'           3       (@(Get-CvGuiThemes)).Count
 # Las pestanas son PROPIAS (el TabControl de WinForms no se puede oscurecer): el reparto de la fila
 # y el saber donde se ha pinchado son puros, asi que se prueban aqui, sin ventana.
@@ -1176,6 +1182,36 @@ Assert-Eq   'Pestanas: sin pestanas no hay nada' -1 (Get-CvGuiTabHit -Rects @() 
 Assert-Eq   'Columna elastica: lo que sobra'     400 (Get-CvGuiFillColumnWidth -ClientWidth 800 -OtherWidths 400)
 Assert-Eq   'Columna elastica: nunca por debajo del minimo' 120 (Get-CvGuiFillColumnWidth -ClientWidth 300 -OtherWidths 400)
 Assert-Eq   'Columna elastica: minimo a medida' 250 (Get-CvGuiFillColumnWidth -ClientWidth 300 -OtherWidths 400 -Min 250)
+# Bordes DEDUCIDOS en un archivo ya convertido (sin job): recortar cambia la proporcion, reescalar
+# la conserva, asi que comparandolas se sabe si se quitaron barras.
+$bc1 = Get-CvBorderFromSizes -SrcWidth 1920 -SrcHeight 1080 -OutWidth 1920 -OutHeight 800
+Assert-Eq   'Bordes deducidos: letterbox recortado' '[x]' "$($bc1.Text)"
+Assert-True 'Bordes deducidos: y lo sabe'           ([bool]$bc1.Known)
+$bc2 = Get-CvBorderFromSizes -SrcWidth 1920 -SrcHeight 1080 -OutWidth 1280 -OutHeight 720
+Assert-Eq   'Bordes deducidos: solo reescalado'     '[ ]' "$($bc2.Text)"
+Assert-True 'Bordes deducidos: pero cambio de tamano' ([bool]$bc2.Resized)
+$bc3 = Get-CvBorderFromSizes -SrcWidth 1920 -SrcHeight 1080 -OutWidth 1920 -OutHeight 1080
+Assert-Eq   'Bordes deducidos: igual que el origen' '[ ]' "$($bc3.Text)"
+Assert-Eq   'Bordes deducidos: ni se reescalo'      $false ([bool]$bc3.Resized)
+# Pillarbox (barras a los lados): la proporcion tambien cambia, al reves.
+$bc4 = Get-CvBorderFromSizes -SrcWidth 1440 -SrcHeight 1080 -OutWidth 1080 -OutHeight 1080
+Assert-Eq   'Bordes deducidos: pillarbox'           '[x]' "$($bc4.Text)"
+# Recorte + reescalado despues: la proporcion del recorte se conserva al escalar, asi que se pilla.
+$bc5 = Get-CvBorderFromSizes -SrcWidth 1920 -SrcHeight 1080 -OutWidth 1280 -OutHeight 534
+Assert-Eq   'Bordes deducidos: recorte y luego escalado' '[x]' "$($bc5.Text)"
+# El redondeo a tamano PAR del escalado (un pixel arriba o abajo) NO puede contar como recorte.
+$bc6 = Get-CvBorderFromSizes -SrcWidth 1920 -SrcHeight 1080 -OutWidth 1280 -OutHeight 721
+Assert-Eq   'Bordes deducidos: un pixel no es recorte' '[ ]' "$($bc6.Text)"
+# Sin datos no se afirma nada (mejor la celda vacia que una mentira).
+$bc7 = Get-CvBorderFromSizes -SrcWidth 1920 -SrcHeight 1080 -OutWidth 0 -OutHeight 0
+Assert-Eq   'Bordes deducidos: sin datos, nada'     '' "$($bc7.Text)"
+Assert-Eq   'Bordes deducidos: y no lo sabe'        $false ([bool]$bc7.Known)
+# El margen manda: con uno muy fino, hasta 8px de barras cuentan.
+$bc8 = Get-CvBorderFromSizes -SrcWidth 1920 -SrcHeight 1080 -OutWidth 1920 -OutHeight 1072 -Tolerance 0.001
+Assert-Eq   'Bordes deducidos: margen fino'         '[x]' "$($bc8.Text)"
+Assert-Eq   'Bordes deducidos: margen normal'       '[ ]' "$((Get-CvBorderFromSizes -SrcWidth 1920 -SrcHeight 1080 -OutWidth 1920 -OutHeight 1072).Text)"
+Assert-Eq   'Config: cuantos convertidos se analizan por refresco' 2 ([int](Get-CvConfigDefaults).gui.queueDoneProbe)
+
 # ================================================================================================
 Write-Host "`nPiezas comunes de las ventanas" -ForegroundColor Cyan
 # HUELLA de un fichero: es lo que evita repintar un panel (o re-leer un json) cuando nada ha cambiado.

@@ -389,6 +389,49 @@ function Show-CleanMenu {
     Wait-Setup
 }
 
+function Show-MaintenanceMenu {
+    <#
+        MANTENIMIENTO en un solo sitio: jobs, bloqueos y temporales de Proceso, logs de sesiones
+        anteriores y lo cacheado por las ventanas. Antes cada cosa tenia su entrada en el menu
+        principal y habia que ir a buscarlas por separado.
+
+        Las filas y el borrado salen de SetupCore (Get-CvSetupMaintenanceItems /
+        Invoke-CvSetupMaintenance), los mismos que usa la ventana.
+    #>
+    while ($true) {
+        Clear-Host
+        Write-CvLog 'SETUP' 'Mantenimiento: esto es lo que hay ahora mismo'
+        Write-Host ''
+        Write-Host (Get-CvSetupMaintenanceText -Context $ctx -CurrentLog $logFile) -ForegroundColor Gray
+        Write-Host ''
+        $items = @(Get-CvSetupMaintenanceItems -Context $ctx -CurrentLog $logFile)
+        $ops = @()
+        foreach ($i in $items) {
+            $ops += @{
+                Value = "$($i.Key)"
+                Text  = ("{0,4}  {1}{2}" -f $i.Count, $i.Text, $(if ([bool]$i.Warn) { '   (OJO: habria que volver a preparar)' } else { '' }))
+            }
+        }
+        $ops += @{
+            Value = 'ALL'
+            Text  = ("{0,4}  TODO lo de arriba" -f (($items | Measure-Object -Property Count -Sum).Sum))
+        }
+        $sel = Select-FromList -Title 'MANTENIMIENTO (que borrar)' -Options $ops -NoneLabel 'volver' -DefaultIndex 0
+        if ("$sel" -eq '') { return }
+        $claves = $(if ("$sel" -eq 'ALL') { @($items | ForEach-Object { "$($_.Key)" }) } else { @("$sel") })
+        $cuantos = 0
+        foreach ($i in $items) { if ($claves -contains "$($i.Key)") { $cuantos += [int]$i.Count } }
+        if ($cuantos -le 0) { Write-CvLog 'SETUP' 'No hay nada que borrar ahi.'; Wait-Setup; continue }
+        Clear-Host
+        if (-not (Read-YesNo ("Borrar {0} elemento(s)?" -f $cuantos) $false)) { Write-CvLog 'SETUP' 'Cancelado.'; Wait-Setup; continue }
+        foreach ($r in @(Invoke-CvSetupMaintenance -Context $ctx -Keys $claves -CurrentLog $logFile)) {
+            if ($r.Ok) { Write-CvLog 'SETUP' ("[OK] - {0}: {1} borrado(s)." -f $r.Text, $r.Removed) }
+            else { Write-CvLog 'SETUP' ("[ERROR] - {0}: {1}" -f $r.Text, $r.Error) }
+        }
+        Wait-Setup
+    }
+}
+
 # ===========================================================================
 #  Estado general (directorios de trabajo + herramientas)
 # ===========================================================================
@@ -574,8 +617,8 @@ while (-not $exit) {
     $opts += $optResetCfg
 
     $headers[$opts.Count] = 'Limpieza'
-    $opts += 'Limpiar jobs / bloqueos (carpeta Proceso)'
-    $opts += 'Limpiar logs (carpeta logs)'
+    $opts += 'Limpiar (jobs, bloqueos, temporales, logs y caches)'
+    $opts += 'Limpiar Proceso fichero a fichero'
 
     $choice = Select-FromList -Options $opts -NoneLabel 'salir' -DefaultIndex 0 -NoneKey 'S' -Headers $headers
     if ($choice -eq '') { $exit = $true; continue }
@@ -599,11 +642,11 @@ while (-not $exit) {
     elseif ($choice -eq $optResetCfg) {
         Reset-Config                         # limpia y pausa por su cuenta
     }
-    elseif ($choice -eq 'Limpiar jobs / bloqueos (carpeta Proceso)') {
-        Show-CleanMenu                       # limpia y pausa por su cuenta
+    elseif ($choice -eq 'Limpiar (jobs, bloqueos, temporales, logs y caches)') {
+        Show-MaintenanceMenu                 # limpia y pausa por su cuenta
     }
-    elseif ($choice -eq 'Limpiar logs (carpeta logs)') {
-        Clear-Logs                           # limpia y pausa por su cuenta
+    elseif ($choice -eq 'Limpiar Proceso fichero a fichero') {
+        Show-CleanMenu                       # limpia y pausa por su cuenta
     }
     elseif ($choice -eq 'Comprobar compatibilidad GPU (NVENC de ffmpeg)') {
         Show-NvencCheck                      # limpia y pausa por su cuenta

@@ -322,6 +322,8 @@ function Get-CvQueueStateText {
 }
 
 $script:CvJobPeek    = @{}
+# Cache de la deduccion de bordes de los archivos YA CONVERTIDOS (ver Get-CvDoneBorderPeek).
+$script:CvDoneBorder = @{}
 $script:CvWorkerPeek = @{}
 
 function Get-CvJobPeek {
@@ -424,15 +426,230 @@ function Find-CvFileLog {
     return $r
 }
 
+function Get-CvBorderFromSizes {
+    <#
+        PURO. Deduce si a un archivo ya convertido se le QUITARON BARRAS, comparando la PROPORCION
+        del origen con la de la salida. Sirve cuando ya no hay job -el worker lo borra al terminar-,
+        que es justo cuando la columna 'Bordes' se quedaba vacia.
+
+        La idea es una regla de tres: recortar barras cambia la proporcion (un 1920x1080 al que se le
+        quitan 140px arriba y abajo pasa de 1,78 a 2,40), mientras que reescalar la CONSERVA. Asi
+        que si las dos proporciones cuadran, no hubo recorte; si no, lo hubo.
+
+        -Tolerance es el margen (0.01 = 1%): por debajo caen los redondeos a tamano par del escalado
+        (un pixel de diferencia en 1080 es un 0,09%), por encima los recortes de verdad.
+
+        Se pasan los tamanos MOSTRADOS (ancho x SAR) cuando el video es anamorfico, que es con los
+        que se ve la pelicula; con pixeles cuadrados son los mismos.
+
+        Devuelve @{ Known; Cropped; Resized; Text }:
+          Known    = $false si falta algun dato (entonces no se afirma nada, que es lo honesto)
+          Cropped  = se quitaron barras
+          Resized  = ademas cambio de tamano
+          Text     = '[x]' / '[ ]' / '' , lo que pone la columna
+    #>
+    param(
+        [int]$SrcWidth  = 0,
+        [int]$SrcHeight = 0,
+        [int]$OutWidth  = 0,
+        [int]$OutHeight = 0,
+        [double]$Tolerance = 0.01
+    )
+    $res = @{
+        Known   = $false
+        Cropped = $false
+        Resized = $false
+        Text    = ''
+    }
+    if ($SrcWidth -le 0 -or $SrcHeight -le 0 -or $OutWidth -le 0 -or $OutHeight -le 0) { return $res }
+    $arS = $SrcWidth / [double]$SrcHeight
+    $arO = $OutWidth / [double]$OutHeight
+    if ($arS -le 0) { return $res }
+    $res.Known   = $true
+    $res.Resized = (($OutWidth -ne $SrcWidth) -or ($OutHeight -ne $SrcHeight))
+    $res.Cropped = (([Math]::Abs($arO - $arS) / $arS) -gt [Math]::Abs($Tolerance))
+    $res.Text    = $(if ($res.Cropped) { '[x]' } else { '[ ]' })
+    return $res
+}
+
+function Get-CvDoneBorderPeek {
+    <#
+        Lo mismo pero yendo a los FICHEROS: mira el tamano del original y el de la salida (ffprobe) y
+        llama a Get-CvBorderFromSizes. Dos ffprobe por archivo, asi que:
+
+          - el resultado se CACHEA por fecha+tamano de los dos ficheros (si ninguno cambia, no se
+            vuelve a preguntar), igual que Get-CvJobPeek con el job, y esa cache se guarda en disco
+            (Import-CvDoneBorderCache / Save-CvDoneBorderCache), asi que abrir la cola otra vez no
+            vuelve a sondear lo mismo;
+          - con -CachedOnly devuelve lo que haya en la cache y $null si no hay nada, SIN tocar el
+            disco: es lo que usa el refresco de cada segundo para no pagar el analisis de golpe.
+
+        Devuelve @{ Known; Cropped; Resized; Text; SrcW; SrcH; OutW; OutH } o $null.
+    #>
+    param(
+        [Parameter(Mandatory)]$Context,
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$OutPath,
+        [double]$Tolerance = 0.01,
+        # FileInfo de los dos ficheros si quien llama ya ha listado las carpetas (lo hace el refresco
+        # de la cola): se ahorran DOS consultas al disco por fila y por vuelta, que con 20 archivos
+        # hechos son 40 por segundo para nada. Misma idea que el -Info de Get-CvJobPeek.
+        $SrcInfo = $null,
+        $OutInfo = $null,
+        [switch]$CachedOnly
+    )
+    $clave = "{0}|{1}" -f $Path, $OutPath
+    $stamp = ''
+    try {
+        $fi = $(if ($null -ne $SrcInfo) { $SrcInfo } else { Get-Item -LiteralPath $Path -ErrorAction Stop })
+        $fo = $(if ($null -ne $OutInfo) { $OutInfo } else { Get-Item -LiteralPath $OutPath -ErrorAction Stop })
+        $stamp = "{0}|{1}|{2}|{3}" -f $fi.Length, $fi.LastWriteTimeUtc.Ticks, $fo.Length, $fo.LastWriteTimeUtc.Ticks
+    } catch { return $null }
+    $hit = $script:CvDoneBorder[$clave]
+    if ($null -ne $hit -and "$($hit.Stamp)" -eq $stamp) { return $hit.Data }
+    if ($CachedOnly) { return $null }
+
+    $datos = $null
+    try {
+        $iS = Get-MediaInfo -Context $Context -File $Path
+        $iO = Get-MediaInfo -Context $Context -File $OutPath
+        $vS = @(Get-VideoStreams -Info $iS)[0]
+        $vO = @(Get-VideoStreams -Info $iO)[0]
+        if ($null -ne $vS -and $null -ne $vO) {
+            # Ancho MOSTRADO: en anamorfico el almacenado no es lo que se ve, y comparar proporciones
+            # con el almacenado daria un recorte que no existe.
+            $sw = Get-CvDisplayWidth -Width ([int]$vS.width) -Sar "$($vS.sample_aspect_ratio)"
+            $ow = Get-CvDisplayWidth -Width ([int]$vO.width) -Sar "$($vO.sample_aspect_ratio)"
+            $r = Get-CvBorderFromSizes -SrcWidth $sw -SrcHeight ([int]$vS.height) -OutWidth $ow -OutHeight ([int]$vO.height) -Tolerance $Tolerance
+            $datos = @{
+                Known   = [bool]$r.Known
+                Cropped = [bool]$r.Cropped
+                Resized = [bool]$r.Resized
+                Text    = "$($r.Text)"
+                SrcW    = [int]$sw
+                SrcH    = [int]$vS.height
+                OutW    = [int]$ow
+                OutH    = [int]$vO.height
+            }
+        }
+    } catch { $datos = $null }
+    # Tambien se cachea el 'no se pudo': si no, se reintentarian los dos ffprobe en cada refresco.
+    if ($null -eq $datos) {
+        $datos = @{
+            Known   = $false
+            Cropped = $false
+            Resized = $false
+            Text    = ''
+            SrcW    = 0
+            SrcH    = 0
+            OutW    = 0
+            OutH    = 0
+        }
+    }
+    $script:CvDoneBorder[$clave] = @{
+        Stamp = $stamp
+        Src   = $Path
+        Out   = $OutPath
+        Data  = $datos
+    }
+    return $datos
+}
+
+function Import-CvDoneBorderCache {
+    <#
+        Trae de DISCO lo ya deducido en sesiones anteriores. Sin esto, cada vez que se abre la cola
+        se vuelven a lanzar dos ffprobe por archivo hecho (~300 ms cada uno): con veinte archivos son
+        seis segundos de sondas para volver a averiguar lo mismo.
+
+        Se guarda en '<config>.gui.json' (el fichero donde ya se apunta como quedaron las ventanas),
+        con su misma regla: es ESTADO, no configuracion, y borrarlo solo obliga a recalcular.
+
+        Lo que se cachea lleva la HUELLA de los dos ficheros (tamano + fecha), asi que si el original
+        o la salida cambian, lo guardado no vale y se vuelve a mirar.
+    #>
+    param([Parameter(Mandatory)]$Context)
+    try {
+        $guardado = Get-CvGuiLayout -Context $Context -Key 'colaBordes'
+        foreach ($e in @($guardado)) {
+            if ($null -eq $e) { continue }
+            $src = "$($e.Src)"
+            $out = "$($e.Out)"
+            if ($src -eq '' -or $out -eq '') { continue }
+            $script:CvDoneBorder[("{0}|{1}" -f $src, $out)] = @{
+                Stamp = "$($e.Stamp)"
+                Src   = $src
+                Out   = $out
+                Data  = $e.Data
+            }
+        }
+    } catch { }
+    return @($script:CvDoneBorder.Keys).Count
+}
+
+function Clear-CvDoneBorderCache {
+    <# Vacia lo cacheado EN MEMORIA (no toca el disco). Lo usan las pruebas para comprobar que lo
+       guardado se recupera de verdad del fichero y no de lo que quedaba en memoria. #>
+    $script:CvDoneBorder = @{}
+    return 0
+}
+
+function Save-CvDoneBorderCache {
+    <#
+        Deja en disco lo deducido, TIRANDO lo que ya no sirve: entradas cuyo original o cuya salida
+        ya no existen (archivos borrados, renombrados o movidos a otra carpeta). Asi la cache no
+        crece para siempre con restos de lo que hubo.
+
+        No lanza nunca: se llama al cerrar la ventana, donde una excepcion se lleva la aplicacion por
+        delante. Devuelve cuantas entradas quedaron guardadas.
+    #>
+    param([Parameter(Mandatory)]$Context)
+    try {
+        $vivas = @()
+        foreach ($k in @($script:CvDoneBorder.Keys)) {
+            $e = $script:CvDoneBorder[$k]
+            if ($null -eq $e) { continue }
+            $src = "$($e.Src)"
+            $out = "$($e.Out)"
+            if ($src -eq '' -or $out -eq '') { continue }
+            if (-not (Test-Path -LiteralPath $src) -or -not (Test-Path -LiteralPath $out)) {
+                $script:CvDoneBorder.Remove($k)
+                continue
+            }
+            $vivas += [pscustomobject]@{
+                Src   = $src
+                Out   = $out
+                Stamp = "$($e.Stamp)"
+                Data  = $e.Data
+            }
+        }
+        [void](Save-CvGuiLayout -Context $Context -Key 'colaBordes' -Layout $vivas)
+        return @($vivas).Count
+    } catch {
+        return 0
+    }
+}
+
 function Get-CvQueueStatus {
     <#
         La COLA entera: una fila por video de Original\, con su estado, el worker que lo esta
         codificando (si lo hay) y el avance que ese worker publica.
 
-        No lanza ffprobe: los tamanos salen del sistema de ficheros y la duracion/ETA de lo que
-        publica el worker. Asi la ventana puede refrescar cada segundo sin coste.
+        No lanza ffprobe para nada de esto: los tamanos salen del sistema de ficheros y la
+        duracion/ETA de lo que publica el worker. Asi la ventana puede refrescar cada segundo sin
+        coste.
+
+        La UNICA excepcion es -DoneProbe: los archivos ya convertidos no tienen job, asi que para
+        saber si llevaron recorte hay que mirar el tamano del original y el de la salida. Eso cuesta
+        dos ffprobe, de modo que se analizan como mucho -DoneProbe por llamada (el resto se quedan
+        para la siguiente) y lo analizado se cachea: la columna se va rellenando sola en unos
+        segundos y el refresco no se para. Con 0 no se analiza nada.
     #>
-    param([Parameter(Mandatory)]$Context)
+    param(
+        [Parameter(Mandatory)]$Context,
+        [int]$DoneProbe = 0,
+        [double]$DoneTolerance = 0.01
+    )
+    $quedan = [Math]::Max(0, $DoneProbe)
     $workers = @(Get-CvWorkerStates -Context $Context | Where-Object { $_.Alive })
     # Las carpetas se listan UNA vez y se decide en memoria. Preguntando fichero a fichero
     # (Test-Path de la salida, del lock, del job...) eran ~90 consultas al disco por refresco y ~0,5 s;
@@ -472,6 +689,18 @@ function Get-CvQueueStatus {
         $peek = $null
         if ($hasJob) { $peek = Get-CvJobPeek -Context $Context -Name $name -Info $jInfo }
 
+        # Ya convertido y sin job: se deduce si llevo recorte comparando proporciones. Primero lo
+        # que haya en cache (gratis); si no hay nada y queda presupuesto, se analiza uno.
+        $guess = ''
+        if ($done -and -not $hasJob) {
+            $dp = Get-CvDoneBorderPeek -Context $Context -Path $f.FullName -OutPath $outPath -Tolerance $DoneTolerance -SrcInfo $f -OutInfo $oInfo -CachedOnly
+            if ($null -eq $dp -and $quedan -gt 0) {
+                $quedan--
+                $dp = Get-CvDoneBorderPeek -Context $Context -Path $f.FullName -OutPath $outPath -Tolerance $DoneTolerance -SrcInfo $f -OutInfo $oInfo
+            }
+            if ($null -ne $dp -and [bool]$dp.Known) { $guess = "$($dp.Text)" }
+        }
+
         $out += [pscustomobject]@{
             Name      = $name
             Path      = $f.FullName
@@ -483,6 +712,8 @@ function Get-CvQueueStatus {
             OutPath   = $outPath
             OutSizeKb = $outKb
             HasJob    = $hasJob
+            # Lo DEDUCIDO para un ya convertido ('' si no se sabe o no habia que deducir nada).
+            BorderGuess = $guess
             Locked    = $locked
             Stale     = $stale
             Done      = $done

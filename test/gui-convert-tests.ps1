@@ -100,6 +100,32 @@ function New-FakeVideo {
     [System.IO.File]::WriteAllBytes($p, $bytes)
     return $p
 }
+function Connect-Tools {
+    <#
+        Enlaza tools\ del proyecto dentro del root temporal para los casos que necesitan ffmpeg o
+        ffprobe de verdad. Devuelve $true si quedo enlazado.
+
+        Dos cuidados: el contexto ya CREA un tools\ vacio al montar el root (asi que hay que quitarlo
+        antes o el enlace no se crea), y un enlace NO se borra con Remove-Item -Recurse -Force: sobre
+        un punto de reparse eso puede llevarse por delante el contenido de DESTINO, es decir, las
+        herramientas del repositorio. Los enlaces se quitan con 'rmdir', que solo borra el enlace.
+    #>
+    param([string]$Dir, [string]$Target)
+    try {
+        if (Test-Path -LiteralPath $Dir) {
+            $it = Get-Item -LiteralPath $Dir -Force
+            if ($it.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+                & cmd.exe /c rmdir "$Dir" | Out-Null
+            } else {
+                Remove-Item -Recurse -Force -LiteralPath $Dir -ErrorAction Stop
+            }
+        }
+        if (Test-Path -LiteralPath $Dir) { return $false }
+        New-Item -ItemType Junction -Path $Dir -Target $Target -ErrorAction Stop | Out-Null
+        return $true
+    } catch { return $false }
+}
+
 function New-FakeLock {
     param([string]$Name, [int]$OwnerPid)
     Set-Content -Path (Join-Path $ctx.Proceso ("{0}.lock" -f $Name)) -Value ("PID={0};HOST={1}" -f $OwnerPid, $env:COMPUTERNAME) -Encoding UTF8
@@ -334,6 +360,13 @@ Assert-Eq   'Bloque: sin preparar no tiene job que quitar' 0 @($bulkPend.Drop).C
 
 # Ancho de la columna de progreso: se queda con lo que sobra a la derecha, con un minimo (es la que
 # mas informacion lleva: paso, barra, % y velocidad).
+# Un listado de Original\ que sale VACIO no puede vaciar la ventana si la carpeta sigue con
+# ficheros: Get-CvFiles se traga los errores del disco, y eso dejaba la tabla EN BLANCO.
+Assert-Eq   'Listado vacio: con ficheros dentro se conserva' $true  (Test-CvQueueKeepRows -Rows 0 -Items 23 -DirExists $true -RealFiles 23)
+Assert-Eq   'Listado vacio: carpeta vacia de verdad, se vacia' $false (Test-CvQueueKeepRows -Rows 0 -Items 23 -DirExists $true -RealFiles 0)
+Assert-Eq   'Listado vacio: carpeta que ya no esta, se vacia' $false (Test-CvQueueKeepRows -Rows 0 -Items 23 -DirExists $false -RealFiles 0)
+Assert-Eq   'Listado vacio: si la lista ya estaba vacia, nada' $false (Test-CvQueueKeepRows -Rows 0 -Items 0 -DirExists $true -RealFiles 5)
+Assert-Eq   'Listado con filas: no aplica'                  $false (Test-CvQueueKeepRows -Rows 23 -Items 23 -DirExists $true -RealFiles 23)
 Assert-Eq   'Progreso: ocupa lo que sobra'       400 (Get-CvQueueProgressWidth -ClientWidth 1100 -OtherWidths 700)
 Assert-Eq   'Progreso: ventana estrecha -> minimo' 220 (Get-CvQueueProgressWidth -ClientWidth 800 -OtherWidths 700)
 Assert-Eq   'Progreso: minimo a medida'          300 (Get-CvQueueProgressWidth -ClientWidth 400 -OtherWidths 700 -Min 300)
@@ -755,17 +788,83 @@ if (-not $sta) {
 }
 
 # ================================================================================================
+Write-Host "`nBordes de un archivo YA CONVERTIDO (necesita ffmpeg)" -ForegroundColor Cyan
+# Un archivo hecho no tiene job, asi que la columna 'Bordes' solo puede salir de comparar el original
+# con la salida. Se monta de verdad: se copia una fixture como origen y se genera la salida con
+# ffmpeg RECORTANDOLE las barras; la cola tiene que decir '[x]'.
+$toolsB = Connect-Tools -Dir (Join-Path $tmpRoot 'tools') -Target (Join-Path $Root 'tools')
+$ctxB = New-CvContext -Root $tmpRoot -ConfigPath $tmpCfg   # recontextualiza con tools\ ya enlazado
+$fixB = Join-Path $Root 'test\video-1080p-basico.mp4'
+if (-not ($toolsB -and (Test-Path -LiteralPath $fixB) -and (Test-Path -LiteralPath "$($ctxB.FFmpeg)"))) {
+    Write-Skip 'Bordes de un convertido' 'sin ffmpeg instalado o sin la fixture'
+} else {
+    # 'Serie_3x01': se le quitaron barras (1920x1080 -> 1920x800). 'Serie_3x02': misma proporcion.
+    Copy-Item -LiteralPath $fixB -Destination (Join-Path $ctxB.Original 'Serie_3x01.mp4') -Force
+    Copy-Item -LiteralPath $fixB -Destination (Join-Path $ctxB.Original 'Serie_3x02.mp4') -Force
+    $outCrop = Join-Path $ctxB.Convertido ("Serie_3x01_fix.{0}" -f $ctxB.OutExt)
+    $outIgual = Join-Path $ctxB.Convertido ("Serie_3x02_fix.{0}" -f $ctxB.OutExt)
+    & "$($ctxB.FFmpeg)" -v quiet -y -i $fixB -t 1 -vf 'crop=1920:800' -c:v libx264 -preset ultrafast -an $outCrop 2>&1 | Out-Null
+    & "$($ctxB.FFmpeg)" -v quiet -y -i $fixB -t 1 -c:v libx264 -preset ultrafast -an $outIgual 2>&1 | Out-Null
+    if (-not (Test-Path -LiteralPath $outCrop) -or -not (Test-Path -LiteralPath $outIgual)) {
+        Write-Skip 'Bordes de un convertido' 'ffmpeg no pudo generar las salidas'
+    } else {
+        # Con presupuesto 0 no se analiza nada: la celda se queda como estaba (en blanco).
+        $sin = @(Get-CvQueueStatus -Context $ctxB -DoneProbe 0) | Where-Object { $_.Name -eq 'Serie_3x01' }
+        Assert-Eq   'Bordes hechos: sin presupuesto no se deduce' '' "$($sin.BorderGuess)"
+        # La regla de cuando se puede analizar: con la cola en marcha, nunca.
+        Assert-Eq   'Bordes hechos: con workers no se analiza' 0 (Get-CvQueueDoneProbeBudget -Configured 2 -LiveWorkers 1)
+        Assert-Eq   'Bordes hechos: parada, lo que diga el config' 2 (Get-CvQueueDoneProbeBudget -Configured 2 -LiveWorkers 0)
+        Assert-Eq   'Bordes hechos: desactivado es desactivado' 0 (Get-CvQueueDoneProbeBudget -Configured 0 -LiveWorkers 0)
+        # Con presupuesto, se analizan (dos por vuelta, asi que se dan las vueltas que hagan falta).
+        $fin = $null
+        for ($v = 0; $v -lt 6; $v++) {
+            $rr = @(Get-CvQueueStatus -Context $ctxB -DoneProbe 2)
+            $fin = @{
+                Crop  = "$((@($rr | Where-Object { $_.Name -eq 'Serie_3x01' })[0]).BorderGuess)"
+                Igual = "$((@($rr | Where-Object { $_.Name -eq 'Serie_3x02' })[0]).BorderGuess)"
+            }
+            if ($fin.Crop -ne '' -and $fin.Igual -ne '') { break }
+        }
+        Assert-Eq   'Bordes hechos: al recortado le sale [x]'  '[x]' $fin.Crop
+        Assert-Eq   'Bordes hechos: al que no, [ ]'            '[ ]' $fin.Igual
+        # La cache SOBREVIVE al cierre: se guarda, se vacia la de memoria y tiene que volver del
+        # fichero sin sondar nada (con presupuesto 0).
+        Assert-True 'Bordes hechos: se guardan en disco' ((Save-CvDoneBorderCache -Context $ctxB) -ge 2)
+        [void](Clear-CvDoneBorderCache)
+        $traCero = @(Get-CvQueueStatus -Context $ctxB -DoneProbe 0) | Where-Object { $_.Name -eq 'Serie_3x01' }
+        Assert-Eq   'Bordes hechos: vaciada la memoria, no hay nada' '' "$($traCero.BorderGuess)"
+        [void](Import-CvDoneBorderCache -Context $ctxB)
+        $traDisco = @(Get-CvQueueStatus -Context $ctxB -DoneProbe 0) | Where-Object { $_.Name -eq 'Serie_3x01' }
+        Assert-Eq   'Bordes hechos: vuelve del disco sin sondar' '[x]' "$($traDisco.BorderGuess)"
+        # Y al guardar se tira lo que ya no existe (aqui, la salida borrada).
+        $antes = @(Get-CvGuiLayout -Context $ctxB -Key 'colaBordes').Count
+        Remove-Item -LiteralPath $outIgual -Force
+        [void](Save-CvDoneBorderCache -Context $ctxB)
+        $despues = @(Get-CvGuiLayout -Context $ctxB -Key 'colaBordes').Count
+        Assert-Eq   'Bordes hechos: la cache se limpia sola' ($antes - 1) $despues
+        & "$($ctxB.FFmpeg)" -v quiet -y -i $fixB -t 1 -c:v libx264 -preset ultrafast -an $outIgual 2>&1 | Out-Null
+        # Y la fila ya formateada lo ensena en su columna.
+        $filaC = @(Format-CvQueueRow -Row (@(Get-CvQueueStatus -Context $ctxB -DoneProbe 0) | Where-Object { $_.Name -eq 'Serie_3x01' })[0])
+        Assert-Eq   'Bordes hechos: en la columna de la lista' '[x]' $filaC[3]
+        # Lo analizado se CACHEA: una segunda vuelta no vuelve a lanzar ffprobe (y por eso sale
+        # relleno aunque el presupuesto sea 0).
+        $t0 = [Diagnostics.Stopwatch]::StartNew()
+        [void](@(Get-CvQueueStatus -Context $ctxB -DoneProbe 2))
+        $t0.Stop()
+        Assert-True 'Bordes hechos: la segunda vuelta no re-analiza' ($t0.ElapsedMilliseconds -lt 900)
+    }
+    Remove-Item -LiteralPath (Join-Path $ctxB.Original 'Serie_3x01.mp4') -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath (Join-Path $ctxB.Original 'Serie_3x02.mp4') -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $outCrop -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $outIgual -Force -ErrorAction SilentlyContinue
+}
+
+# ================================================================================================
 Write-Host "`nJobCore + editor de jobs (necesita ffprobe)" -ForegroundColor Cyan
 # Estos casos trabajan con un video DE VERDAD (una fixture del repo), asi que necesitan las
 # herramientas: se enlaza tools\ del proyecto en el root temporal. Sin ffprobe se saltan.
 $fixture = Join-Path $Root 'test\audio-y-subs-multiidioma.mkv'
-$toolsOk = $false
-try {
-    $tdir = Join-Path $tmpRoot 'tools'
-    if (Test-Path -LiteralPath $tdir) { Remove-Item -Recurse -Force -LiteralPath $tdir }
-    New-Item -ItemType Junction -Path $tdir -Target (Join-Path $Root 'tools') -ErrorAction Stop | Out-Null
-    $toolsOk = $true
-} catch { $toolsOk = $false }
+$toolsOk = $(if ($toolsB) { $true } else { Connect-Tools -Dir (Join-Path $tmpRoot 'tools') -Target (Join-Path $Root 'tools') })
 $ctxJob = New-CvContext -Root $tmpRoot -ConfigPath $tmpCfg      # recontextualiza con tools\ ya enlazado
 $jobInfo = $null
 $jobFile = ''

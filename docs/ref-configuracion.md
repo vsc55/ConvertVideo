@@ -51,7 +51,7 @@ Esquema completo (tras la fusión con los defaults):
   "debug":       { "enabled": false, "pausePerCommand": true },
   "test":        { "enabled": false, "minutes": 5, "betaDownmix": false, "betaOnePass": false },
   "console":     { "background": "DarkBlue", "foreground": "Yellow", "font": "Cascadia Code", "fontSize": 18, "windowWidth": 150, "windowHeight": 40, "sepWidth": 64, "progressBarWidth": 20, "asciiMarks": false },
-  "gui":         { "theme": "system", "rememberLayout": true, "confirmCloseWithWorkers": true, "queueWidth": 1320, "queueHeight": 760, "queueSplitPercent": 52 },
+  "gui":         { "theme": "system", "rememberLayout": true, "confirmCloseWithWorkers": true, "queueWidth": 1320, "queueHeight": 760, "queueSplitPercent": 52, "setupWidth": 1040, "setupHeight": 800 },
   "paths":       { "original": "", "proceso": "", "convertido": "", "logs": "" },
   "profiles":    [ { "label": "...", "videoEncoder": "...", "crf": 18, ... } ],
   "defaultProfile": "Auto",
@@ -329,6 +329,7 @@ Lo que `console` es para el modo consola, pero para `Convert-gui` / `setup-gui`.
 | `rememberLayout` | `true` | Al **cerrar** la ventana de la cola se apunta cómo quedó (tamaño, maximizada, posición del divisor y anchos de columna) y la siguiente vez se abre igual. Con `false` no se escribe nada y siempre se abre con los tamaños de aquí. |
 | `confirmCloseWithWorkers` | `true` | Al **cerrar** la cola con workers codificando, preguntar qué hacer (dejarlos en segundo plano, parada ordenada o cortarlos). Los workers son **procesos aparte**: cerrar la ventana **no los mata**, así que con `false` se cierra sin avisar y siguen codificando ocultos. Es el equivalente en ventana de `behavior.lockCloseButton`. |
 | `queueWidth` / `queueHeight` | `1320` / `760` | Tamaño (px) de la ventana de la cola **la primera vez** (o siempre, con `rememberLayout: false`). Nunca por debajo del mínimo de la ventana (860x560) ni mayor que la pantalla. |
+| `setupWidth` / `setupHeight` | `1040` / `800` | Lo mismo para la ventana de **setup**. Además, si el menú de la izquierda **no cabe** en ese alto, la ventana se agranda sola al abrir (sin pasarse de la pantalla): así añadir una opción no deja la última sección cortada detrás de una barra de desplazamiento. Si hay un tamaño recordado, manda ese. |
 | `queueSplitPercent` | `52` | Porcentaje del alto para la **lista** de la cola; el resto, para el resumen y el log. Se usa cuando no hay nada recordado. Válido 10-90. |
 
 > **Dónde se apunta.** En `<config>.gui.json`, **junto al config en uso** y con su mismo nombre (`config.json` → `config.gui.json`, `config.debug.json` → `config.debug.gui.json`): cada configuración tiene su `Original\` y su cola, y se mira de otra manera. Es un fichero de **estado, no de configuración**: se puede borrar sin más y las ventanas vuelven a abrir con los valores de aquí. Está cubierto por el `.gitignore` de `config.*json`.

@@ -297,6 +297,14 @@ function New-CvContext {
         GuiConfirmClose   = [bool]$cfg.gui.confirmCloseWithWorkers
         GuiQueueWidth     = $(if ([int]$cfg.gui.queueWidth  -gt 0) { [int]$cfg.gui.queueWidth }  else { [int]$def.gui.queueWidth })
         GuiQueueHeight    = $(if ([int]$cfg.gui.queueHeight -gt 0) { [int]$cfg.gui.queueHeight } else { [int]$def.gui.queueHeight })
+        GuiSetupWidth     = $(if ([int]$cfg.gui.setupWidth  -gt 0) { [int]$cfg.gui.setupWidth }  else { [int]$def.gui.setupWidth })
+        GuiSetupHeight    = $(if ([int]$cfg.gui.setupHeight -gt 0) { [int]$cfg.gui.setupHeight } else { [int]$def.gui.setupHeight })
+        # Deduccion de bordes en los archivos ya convertidos (ver gui.queueDoneProbe).
+        GuiQueueDoneProbe = [Math]::Max(0, [int]$cfg.gui.queueDoneProbe)
+        GuiQueueDoneTol   = $(
+            $t = [double]$cfg.gui.queueDoneTolerance
+            if ($t -gt 0) { $t } else { [double]$def.gui.queueDoneTolerance }
+        )
         GuiQueueSplit     = $(
             $p = [int]$cfg.gui.queueSplitPercent
             if ($p -ge 10 -and $p -le 90) { $p } else { [int]$def.gui.queueSplitPercent }
