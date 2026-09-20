@@ -171,6 +171,254 @@ function Resolve-CvGuiSplitDistance {
     return $d
 }
 
+function New-CvGuiRoundedPath {
+    <# Rectangulo con las esquinas redondeadas, para pintarlo o recortarlo. #>
+    param(
+        [Parameter(Mandatory)][System.Drawing.RectangleF]$Rect,
+        [float]$Radius = 4
+    )
+    $p = New-Object System.Drawing.Drawing2D.GraphicsPath
+    $d = [float]($Radius * 2)
+    $p.AddArc($Rect.X, $Rect.Y, $d, $d, 180, 90)
+    $p.AddArc(($Rect.Right - $d), $Rect.Y, $d, $d, 270, 90)
+    $p.AddArc(($Rect.Right - $d), ($Rect.Bottom - $d), $d, $d, 0, 90)
+    $p.AddArc($Rect.X, ($Rect.Bottom - $d), $d, $d, 90, 90)
+    $p.CloseFigure()
+    return $p
+}
+
+function Add-CvGuiArcArrow {
+    <#
+        La PUNTA de flecha del final de un arco. Se calcula sobre la TANGENTE de la circunferencia,
+        no a ojo: asi sale del anillo en su misma direccion y no parece un pegote pegado encima.
+    #>
+    param(
+        [Parameter(Mandatory)]$Graphics,
+        [float]$Cx,
+        [float]$Cy,
+        [float]$Radius,
+        [float]$Degrees,
+        [float]$Size,
+        [Parameter(Mandatory)]$Brush
+    )
+    $a  = [float]($Degrees * [Math]::PI / 180)
+    $px = [float]($Cx + $Radius * [Math]::Cos($a))
+    $py = [float]($Cy + $Radius * [Math]::Sin($a))
+    $tx = [float](-[Math]::Sin($a))      # tangente: hacia donde avanza el arco
+    $ty = [float]([Math]::Cos($a))
+    $nx = [float]([Math]::Cos($a))       # normal: hacia fuera del circulo
+    $ny = [float]([Math]::Sin($a))
+    $pts = @(
+        (New-Object System.Drawing.PointF(($px + $tx * $Size * 1.15), ($py + $ty * $Size * 1.15)))
+        (New-Object System.Drawing.PointF(($px - $tx * $Size * 0.35 + $nx * $Size), ($py - $ty * $Size * 0.35 + $ny * $Size)))
+        (New-Object System.Drawing.PointF(($px - $tx * $Size * 0.35 - $nx * $Size), ($py - $ty * $Size * 0.35 - $ny * $Size)))
+    )
+    $Graphics.FillPolygon($Brush, $pts)
+}
+
+function New-CvGuiAppBitmap {
+    <#
+        El icono de la APLICACION, dibujado con GDI+ igual que los de la barra: nada de .png que
+        instalar, y sale nitido a cualquier tamano y DPI porque se pinta al tamano que se pida.
+
+        Que se ve: una FLECHA CIRCULAR (convertir, volver a codificar) con un PLAY dentro (video),
+        sobre una tira de pelicula -las perforaciones de arriba y abajo-. Las dos cosas hacen falta:
+        solo el play es "un reproductor mas", y el doble triangulo que se probo antes era, ni mas ni
+        menos, el simbolo de AVANCE RAPIDO.
+
+        Las perforaciones solo se pintan de 32 px para arriba: mas abajo no hay pixeles y solo
+        ensucian; ahi se queda el anillo con el play, que es lo que aguanta a 16 px.
+    #>
+    param([int]$Size = 32)
+    [void](Initialize-CvGui)
+    $bmp = New-Object System.Drawing.Bitmap($Size, $Size)
+    $g = [System.Drawing.Graphics]::FromImage($bmp)
+    try {
+        $g.SmoothingMode   = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+        $g.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+        $g.Clear([System.Drawing.Color]::Transparent)
+        $S = [float]$Size
+
+        # La pastilla azul.
+        $m = [float]([Math]::Max(1, $S * 0.055))
+        $rect = New-Object System.Drawing.RectangleF($m, $m, ($S - 2 * $m), ($S - 2 * $m))
+        $path = New-CvGuiRoundedPath -Rect $rect -Radius ([float]($S * 0.21))
+        $br = New-Object System.Drawing.Drawing2D.LinearGradientBrush($rect,
+            [System.Drawing.Color]::FromArgb(56, 160, 245),
+            [System.Drawing.Color]::FromArgb(10, 92, 176), 90)
+        $g.FillPath($br, $path)
+        $br.Dispose()
+        $path.Dispose()
+
+        # Tira de pelicula: perforaciones arriba y abajo.
+        if ($Size -ge 32) {
+            $pw = [float]($S * 0.088)
+            $ph = [float]($S * 0.062)
+            $brP = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(140, 255, 255, 255))
+            foreach ($k in 0..2) {
+                $x = [float]($rect.X + $S * 0.118 + $k * $S * 0.265)
+                foreach ($y in @([float]($rect.Y + $S * 0.052), [float]($rect.Bottom - $S * 0.052 - $ph))) {
+                    $rp = New-Object System.Drawing.RectangleF($x, $y, $pw, $ph)
+                    $pp = New-CvGuiRoundedPath -Rect $rp -Radius ([float]($ph * 0.35))
+                    $g.FillPath($brP, $pp)
+                    $pp.Dispose()
+                }
+            }
+            $brP.Dispose()
+        }
+
+        # Anillo de conversion + play.
+        $blanco = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::White)
+        $cx = [float]($S / 2)
+        $cy = [float]($S / 2)
+        $diam = [float]($S * $(if ($Size -ge 32) { 0.54 } else { 0.60 }))
+        $r = [float]($diam / 2)
+        $pen = New-Object System.Drawing.Pen ([System.Drawing.Color]::White), ([float]($S * 0.108))
+        $pen.StartCap = [System.Drawing.Drawing2D.LineCap]::Round
+        $pen.EndCap   = [System.Drawing.Drawing2D.LineCap]::Flat
+        # OJO con los angulos: en GDI+ la Y crece HACIA ABAJO, asi que 0 grados es las 3 en punto y
+        # el arco avanza en el sentido de las agujas del reloj. El arco va de 45 a 330 grados (hueco
+        # a la derecha) y la punta va donde TERMINA -330-, no donde empieza: puesta al principio
+        # apunta al reves y parece un gancho colgando (se vio al dibujarlo a 256 px).
+        $g.DrawArc($pen, ($cx - $r), ($cy - $r), $diam, $diam, 45, 285)
+        $pen.Dispose()
+        Add-CvGuiArcArrow -Graphics $g -Cx $cx -Cy $cy -Radius $r -Degrees 330 -Size ([float]($S * 0.125)) -Brush $blanco
+
+        $t = [float]($S * $(if ($Size -ge 32) { 0.095 } else { 0.105 }))
+        $pts = @(
+            (New-Object System.Drawing.PointF([float]($cx - $t * 0.72), [float]($cy - $t)))
+            (New-Object System.Drawing.PointF([float]($cx - $t * 0.72), [float]($cy + $t)))
+            (New-Object System.Drawing.PointF([float]($cx + $t * 0.95), [float]$cy))
+        )
+        $g.FillPolygon($blanco, $pts)
+        $blanco.Dispose()
+    } finally {
+        $g.Dispose()
+    }
+    return $bmp
+}
+
+function Get-CvGuiAppFrameBytes {
+    <#
+        Un fotograma del .ico. Los grandes (128, 256) van en PNG, que es como se hace desde Vista y
+        ahorra la mitad del fichero; los PEQUENOS van en DIB, el formato clasico.
+
+        Conviene saberlo antes de "arreglar" nada: Icon.ToBitmap() de .NET NO sabe sacar un fotograma
+        en PNG (revienta con "el intervalo solicitado se extiende mas alla del final de la matriz"),
+        y eso no quiere decir que el .ico este mal - Windows lo pinta perfectamente-. Con los
+        pequenos en DIB, que son los que se usan en la ventana, .NET tambien los lee.
+
+        El DIB de un icono lleva la cabecera con el ALTO DOBLE (la imagen y su mascara), los pixeles
+        de abajo arriba y, detras, la mascara AND a ceros (la transparencia ya va en el canal alfa).
+    #>
+    param([Parameter(Mandatory)]$Bitmap)
+    $s = $Bitmap.Width
+    if ($s -ge 128) {
+        $ms = New-Object System.IO.MemoryStream
+        $Bitmap.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
+        $b = $ms.ToArray()
+        $ms.Dispose()
+        return , $b
+    }
+    $rect = New-Object System.Drawing.Rectangle(0, 0, $s, $s)
+    $datos = $Bitmap.LockBits($rect, [System.Drawing.Imaging.ImageLockMode]::ReadOnly, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+    $buf = New-Object byte[] ($datos.Stride * $s)
+    [System.Runtime.InteropServices.Marshal]::Copy($datos.Scan0, $buf, 0, $buf.Length)
+    $Bitmap.UnlockBits($datos)
+
+    $filaMascara = [int]([Math]::Floor(($s + 31) / 32) * 4)   # la mascara va alineada a 4 bytes
+    $out = New-Object System.IO.MemoryStream
+    $w = New-Object System.IO.BinaryWriter $out
+    $w.Write([uint32]40)                       # tamano de la cabecera
+    $w.Write([int32]$s)                        # ancho
+    $w.Write([int32]($s * 2))                  # alto: imagen + mascara
+    $w.Write([uint16]1)                        # planos
+    $w.Write([uint16]32)                       # bits por pixel
+    $w.Write([uint32]0)                        # sin compresion
+    $w.Write([uint32](($s * $s * 4) + ($filaMascara * $s)))
+    $w.Write([int32]0)                         # resolucion horizontal (da igual)
+    $w.Write([int32]0)                         # resolucion vertical
+    $w.Write([uint32]0)                        # colores usados
+    $w.Write([uint32]0)                        # colores importantes
+    for ($y = $s - 1; $y -ge 0; $y--) { $w.Write($buf, ($y * $datos.Stride), ($s * 4)) }
+    $w.Write((New-Object byte[] ($filaMascara * $s)))
+    $w.Flush()
+    $b = $out.ToArray()
+    $w.Dispose()
+    $out.Dispose()
+    return , $b
+}
+
+function Get-CvGuiAppIconBytes {
+    <#
+        El icono de la aplicacion como fichero .ICO en memoria, con VARIOS tamanos dentro: Windows
+        coge el que necesita en cada sitio (16 en la barra de titulo, 32 en Alt+Tab, 256 en el
+        explorador), y asi ninguno sale de reescalar otro.
+
+        Se monta el contenedor a mano -cabecera, una entrada por tamano y los fotogramas detras-
+        porque System.Drawing no sabe guardar un .ico de varios tamanos (Icon.Save escribe el que le
+        den). Cada fotograma, con Get-CvGuiAppFrameBytes.
+    #>
+    param([int[]]$Sizes = @(16, 24, 32, 48, 64, 128, 256))
+    [void](Initialize-CvGui)
+    $tam = @($Sizes | Sort-Object)
+    $marcos = @()
+    foreach ($s in $tam) {
+        $bmp = New-CvGuiAppBitmap -Size $s
+        $marcos += , (Get-CvGuiAppFrameBytes -Bitmap $bmp)
+        $bmp.Dispose()
+    }
+    $out = New-Object System.IO.MemoryStream
+    $w = New-Object System.IO.BinaryWriter $out
+    $w.Write([uint16]0)              # reservado
+    $w.Write([uint16]1)              # tipo: 1 = icono
+    $w.Write([uint16]$tam.Count)
+    $offset = 6 + (16 * $tam.Count)  # cabecera + tabla de entradas
+    for ($i = 0; $i -lt $tam.Count; $i++) {
+        # 256 se escribe como 0: en la tabla el tamano es un BYTE.
+        $b = [byte]$(if ($tam[$i] -ge 256) { 0 } else { $tam[$i] })
+        $w.Write($b)                 # ancho
+        $w.Write($b)                 # alto
+        $w.Write([byte]0)            # colores de la paleta (0 = sin paleta)
+        $w.Write([byte]0)            # reservado
+        $w.Write([uint16]1)          # planos
+        $w.Write([uint16]32)         # bits por pixel
+        $w.Write([uint32]$marcos[$i].Length)
+        $w.Write([uint32]$offset)
+        $offset += $marcos[$i].Length
+    }
+    foreach ($m in $marcos) { $w.Write($m) }
+    $w.Flush()
+    $bytes = $out.ToArray()
+    $w.Dispose()
+    $out.Dispose()
+    return , $bytes
+}
+
+function Get-CvGuiAppIcon {
+    <# El icono de la aplicacion listo para una ventana. Se monta UNA vez y se reparte. #>
+    if ($null -ne $script:CvGuiAppIcon) { return $script:CvGuiAppIcon }
+    try {
+        $ms = New-Object System.IO.MemoryStream (, (Get-CvGuiAppIconBytes))
+        $script:CvGuiAppIcon = New-Object System.Drawing.Icon $ms
+        $ms.Dispose()
+    } catch { $script:CvGuiAppIcon = $null }
+    return $script:CvGuiAppIcon
+}
+
+function Set-CvGuiAppIcon {
+    <#
+        Le pone a la ventana el icono de la aplicacion. Sin esto sale el de WinForms (el formulario
+        gris de toda la vida), que es lo que se veia en la barra de titulo y en Alt+Tab.
+    #>
+    param([Parameter(Mandatory)]$Form)
+    try {
+        $ico = Get-CvGuiAppIcon
+        if ($null -ne $ico) { $Form.Icon = $ico }
+    } catch { }
+    return $Form
+}
+
 function Get-CvGuiIconGlyphs {
     <#
         PURO. Que glifo de 'Segoe MDL2 Assets' -la fuente de iconos de Windows 10/11- le toca a cada
@@ -1364,7 +1612,8 @@ function Add-CvGuiTabChanged {
 function Set-CvGuiTheme {
     <#
         Aplica el tema a una ventana ENTERA, justo antes de ensenarla: colores por control, barra de
-        titulo oscura (DWM), y las cabeceras de lista y barras de scroll en oscuro.
+        titulo oscura (DWM), las cabeceras de lista y barras de scroll en oscuro, y el icono de la
+        aplicacion (que no depende del tema, pero este es el sitio por el que pasan todas).
 
         -Theme es lo que diga la config ('system' / 'light' / 'dark'); sin el, el de la sesion. La
         barra de titulo se pide en Shown ademas de ahora: antes de que la ventana tenga handle, DWM
@@ -1376,6 +1625,9 @@ function Set-CvGuiTheme {
     )
     $nombre = $(if ("$Theme" -ne '') { Set-CvGuiThemeDefault -Theme $Theme } else { Get-CvGuiThemeName })
     $pal = Get-CvGuiPalette -Theme $nombre
+    # El icono de la aplicacion se pone aqui porque es el unico sitio por el que pasan TODAS las
+    # ventanas; no depende del tema (es el mismo en claro y en oscuro).
+    [void](Set-CvGuiAppIcon -Form $Form)
     [void](Set-CvGuiThemeControl -Control $Form -Palette $pal)
     $oscuro = ($nombre -eq 'dark')
     $poner = {

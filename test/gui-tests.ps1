@@ -832,6 +832,20 @@ if (-not $sta) {
     # El separador de la barra tiene que seguir VIENDOSE tras aplicar el tema DOS veces (se aplica al
     # montar la ventana y otra vez en 'Shown'): cuando se reconocia por su color, la segunda pasada
     # lo pintaba del color del fondo y las lineas de la barra desaparecian.
+    # El icono de la aplicacion: dibujado (no hay .png que instalar) y en la ventana.
+    $icoB = New-CvGuiAppBitmap -Size 32
+    Assert-Eq   'Icono: sale del tamano pedido' '32x32' ("{0}x{1}" -f $icoB.Width, $icoB.Height)
+    $pintados = 0
+    for ($ix = 0; $ix -lt 32; $ix += 2) {
+        for ($iy = 0; $iy -lt 32; $iy += 2) { if ($icoB.GetPixel($ix, $iy).A -gt 10) { $pintados++ } }
+    }
+    Assert-True 'Icono: tiene dibujo'           ($pintados -gt 100)
+    $icoB.Dispose()
+    $icoBytes = Get-CvGuiAppIconBytes -Sizes @(16, 32)
+    Assert-Eq   'Icono .ico: es un icono'       1 ([int][BitConverter]::ToUInt16($icoBytes, 2))
+    Assert-Eq   'Icono .ico: con los dos tamanos' 2 ([int][BitConverter]::ToUInt16($icoBytes, 4))
+    Assert-True 'Icono .ico: el primero es de 16' ([int]$icoBytes[6] -eq 16)
+    Assert-True 'Tema: la ventana lleva el icono' ($null -ne $fT.Icon)
     Assert-Eq   'Separador: del color del borde'  "$($palD.Border)" "$($sepT.BackColor)"
     [void](Set-CvGuiTheme -Form $fT -Theme 'dark')
     Assert-Eq   'Separador: y sigue tras repetir el tema' "$($palD.Border)" "$($sepT.BackColor)"

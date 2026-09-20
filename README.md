@@ -1,5 +1,7 @@
 # ConvertVideo
 
+<img src="manual/img/logo.png#gh-light-mode-only" alt="ConvertVideo" width="420"><img src="manual/img/logo-oscuro.png#gh-dark-mode-only" alt="ConvertVideo" width="420">
+
 ![PowerShell](https://img.shields.io/badge/PowerShell-5.1%2B-5391FE)
 ![Platform](https://img.shields.io/badge/platform-Windows-0078D6)
 [![Release](https://img.shields.io/github/v/release/vsc55/ConvertVideo)](https://github.com/vsc55/ConvertVideo/releases)

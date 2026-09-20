@@ -1,5 +1,7 @@
 # Manual de uso — ConvertVideo
 
+<img src="img/logo.png#gh-light-mode-only" alt="ConvertVideo" width="420"><img src="img/logo-oscuro.png#gh-dark-mode-only" alt="ConvertVideo" width="420">
+
 Cómo se usa el programa **con ventanas**: preparar las herramientas, decidir qué se le hace a cada vídeo y codificar la cola viendo el progreso. Con capturas de las pantallas de verdad.
 
 Esto es el "qué veo y qué hago". Si lo que buscas es **cómo funciona por dentro** (flujos, comandos exactos de ffmpeg, formato del job, referencia de `config.json` clave a clave), eso vive en [`docs/`](../docs/README.md) y desde aquí se enlaza donde toca.
