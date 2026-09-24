@@ -5,7 +5,7 @@
 
 function Get-CvVersion {
     <# Version del proyecto (fuente unica; la usan Convert.ps1 y setup.ps1). #>
-    '4.7.0'
+    '4.7.1'
 }
 
 function Get-CvAppName {
@@ -299,6 +299,11 @@ function New-CvContext {
         GuiQueueHeight    = $(if ([int]$cfg.gui.queueHeight -gt 0) { [int]$cfg.gui.queueHeight } else { [int]$def.gui.queueHeight })
         GuiSetupWidth     = $(if ([int]$cfg.gui.setupWidth  -gt 0) { [int]$cfg.gui.setupWidth }  else { [int]$def.gui.setupWidth })
         GuiSetupHeight    = $(if ([int]$cfg.gui.setupHeight -gt 0) { [int]$cfg.gui.setupHeight } else { [int]$def.gui.setupHeight })
+        # Ritmo de la cola: repintado del progreso, y relectura de carpetas cuando no hay nada
+        # en marcha (0 = solo a peticion). Ver gui.queueRefreshMs / queueIdleRefreshMs.
+        GuiQueueRefreshMs = $(if ([int]$cfg.gui.queueRefreshMs -ge 200) { [int]$cfg.gui.queueRefreshMs } else { [int]$def.gui.queueRefreshMs })
+        GuiQueueIdleMs    = [Math]::Max(0, [int]$cfg.gui.queueIdleRefreshMs)
+        GuiQueueOnActivate = [bool]$cfg.gui.queueRefreshOnActivate
         # Deduccion de bordes en los archivos ya convertidos (ver gui.queueDoneProbe).
         GuiQueueDoneProbe = [Math]::Max(0, [int]$cfg.gui.queueDoneProbe)
         GuiQueueDoneTol   = $(

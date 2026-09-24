@@ -701,6 +701,18 @@ function Get-CvConfigDefaults {
             # analizan como mucho N por refresco -el resultado
             # se cachea, asi que la lista se va rellenando sola en unos segundos- y SOLO con la cola
             # parada: mientras hay workers, el refresco tiene que seguir siendo barato. 0 = no deducir.
+            # Cada cuanto se REPINTA la cola mientras hay workers: solo se lee el estado que ellos
+            # publican (Proceso\*.worker.json), no las carpetas de archivos.
+            queueRefreshMs     = 1000
+            # Y cada cuanto se RELEEN LAS CARPETAS sin nada en marcha. 0 = nunca: la lista se
+            # actualiza cuando la pides (boton Actualizar), cuando la propia ventana hace algo
+            # (preparar, iniciar, limpiar), cuando un worker cambia de archivo o termina, y al
+            # volver a la ventana. Leer tres carpetas cada pocos segundos para nada solo estorba,
+            # y mas si Original\ esta en red.
+            queueIdleRefreshMs = 0
+            # Releer al volver a la ventana: recoge lo que hayas dejado en Original\ mientras
+            # estabas en otra cosa, sin tener que acordarte de pulsar Actualizar.
+            queueRefreshOnActivate = $true
             queueDoneProbe     = 2
             # Margen de proporcion para decidir que hubo recorte (0.01 = 1%). Por debajo caen los
             # redondeos a tamano PAR del escalado (un pixel en 1080 es un 0,09%); por encima, los
@@ -954,6 +966,9 @@ function Get-CvConfigHelp {
         'gui/confirmCloseWithWorkers' = 'Al cerrar la cola con workers codificando, preguntar que hacer (siguen vivos si no)'
         'gui/queueWidth'        = 'Ancho (px) de la ventana de la cola la primera vez'
         'gui/queueHeight'       = 'Alto (px) de la ventana de la cola la primera vez'
+        'gui/queueRefreshMs'     = 'Cada cuantos ms se repinta el progreso mientras hay workers (no relee las carpetas)'
+        'gui/queueIdleRefreshMs' = 'Cada cuantos ms se releen las carpetas sin nada en marcha (0 = solo cuando lo pidas)'
+        'gui/queueRefreshOnActivate' = 'Releer las carpetas al volver a la ventana de la cola'
         'gui/queueDoneProbe'     = 'Cuantos archivos YA CONVERTIDOS se analizan por refresco -solo con la cola parada- para deducir si llevaron recorte (0 = ninguno)'
         'gui/queueDoneTolerance' = 'Margen de proporcion (0.01 = 1%) para decidir que a un convertido se le quitaron barras'
         'gui/setupWidth'        = 'Ancho de partida de la ventana de setup (px)'

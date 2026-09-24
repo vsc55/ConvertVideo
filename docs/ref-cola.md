@@ -181,6 +181,36 @@ Para codificar **solo unos cuantos**, márcalos en la lista (Ctrl+clic) y pulsa 
 
 Entre la cola y la zona de abajo hay un **divisor arrastrable**, con su **agarre** pintado (la línea con tres puntos) para que se vea que se puede mover: se reparte el alto como se quiera (un resumen largo pide sitio; mirar la cola entera, también). De serie la zona de abajo se lleva algo menos de la mitad (`gui.queueSplitPercent`).
 
+### Cuándo se relee el disco
+
+La lista de archivos **no se relee sola**: para eso está *Actualizar*. Las carpetas (`Original\`, `Proceso\`, `Convertido\`) se leen enteras solo cuando hay algo que mirar:
+
+| Cuándo | Qué se lee |
+| --- | --- |
+| Al abrir la ventana, y con *Actualizar* | Las tres carpetas (refresco completo). |
+| Al volver a la ventana desde otra cosa | Ídem — así aparece lo que hayas dejado en `Original\` (`gui.queueRefreshOnActivate`). |
+| Después de cada acción de la ventana | Preparar, iniciar, parar, limpiar, borrar un job… cada una refresca al terminar. |
+| Mientras hay workers, cada segundo (`gui.queueRefreshMs`) | **Solo** `Proceso\*.worker.json`, que es lo único que se mueve: paso, %, ETA y velocidad. Las carpetas no se tocan. |
+| Cuando un worker coge otro archivo, termina, arranca o se muere | Refresco completo: eso sí cambia la lista. Lo detecta la **huella** de los workers (`Get-CvWorkerSignature`: pid + archivo + estado), no el porcentaje. |
+| Sin nada en marcha | Nada: el temporizador se **para**. Con `gui.queueIdleRefreshMs` distinto de 0 se puede pedir un latido cada tantos ms. |
+
+Medido con la ventana abierta y un worker publicando progreso: **0** relecturas de carpetas en 5 s codificando, **1** cuando el worker termina (la fila pasa a *Hecho*), **0** en 6 s con la cola parada y **1** al pulsar *Actualizar*. Antes eran tres listados de carpeta por segundo — justo mientras el disco está ocupado convirtiendo, y peor aún si `Original\` está en red.
+
+### Cuándo se relee el disco
+
+La lista de archivos **no se relee sola**: para eso está *Actualizar*. Las carpetas (`Original\`, `Proceso\`, `Convertido\`) se leen enteras solo cuando hay algo que mirar:
+
+| Cuándo | Qué se lee |
+| --- | --- |
+| Al abrir la ventana, y con *Actualizar* | Las tres carpetas (refresco completo). |
+| Al volver a la ventana desde otra cosa | Ídem — así aparece lo que hayas dejado en `Original\` (`gui.queueRefreshOnActivate`). |
+| Después de cada acción de la ventana | Preparar, iniciar, parar, limpiar, borrar un job… cada una refresca al terminar. |
+| Mientras hay workers, cada segundo (`gui.queueRefreshMs`) | **Solo** `Proceso\*.worker.json`, que es lo único que se mueve: paso, %, ETA y velocidad. Las carpetas no se tocan. |
+| Cuando un worker coge otro archivo, termina, arranca o se muere | Refresco completo: eso sí cambia la lista. Lo detecta la **huella** de los workers (`Get-CvWorkerSignature`: pid + archivo + estado), no el porcentaje. |
+| Sin nada en marcha | Nada: el temporizador se **para**. Con `gui.queueIdleRefreshMs` distinto de 0 se puede pedir un latido cada tantos ms. |
+
+Medido con la ventana abierta y un worker publicando progreso: **0** relecturas de carpetas en 5 s codificando, **1** cuando el worker termina (la fila pasa a *Hecho*), **0** en 6 s con la cola parada y **1** al pulsar *Actualizar*. Antes eran tres listados de carpeta por segundo — justo mientras el disco está ocupado convirtiendo, y peor aún si `Original\` está en red.
+
 **La ventana se abre como la dejaste.** Al cerrarla se apunta su tamaño, si estaba maximizada, dónde quedó el divisor y los anchos de columna, y la siguiente vez se aplica todo. Se guarda en `<config>.gui.json` (junto al config en uso), y se puede desactivar con `gui.rememberLayout = false`; los tamaños de partida son `gui.queueWidth` / `queueHeight` / `queueSplitPercent` — ver [ref-configuracion.md](ref-configuracion.md#gui--apariencia-de-las-ventanas). Lo recordado se valida al abrir: nunca deja la ventana más pequeña que su mínimo ni más grande que la pantalla de hoy, ni el divisor fuera de los mínimos de los paneles.
 
 Dos columnas salen del **job** (no de `ffprobe`), para ver de un vistazo qué le va a pasar a cada archivo y cuáles conviene repasar **después** de codificar:

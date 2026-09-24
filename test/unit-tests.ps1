@@ -391,7 +391,7 @@ Assert-Eq   'all sin duplicados'       $all.Count ($all | Select-Object -Unique)
 # ================================================================================================
 Write-Host "`nFuentes unicas (Context / Profile)" -ForegroundColor Cyan
 Assert-Eq 'Get-CvAppName' 'ConvertVideo' (Get-CvAppName)
-Assert-Eq 'Get-CvVersion' '4.7.0'        (Get-CvVersion)
+Assert-Eq 'Get-CvVersion' '4.7.1'        (Get-CvVersion)
 Assert-Eq 'perfiles de serie = 13' 13 ((Get-CvProfiles | ForEach-Object { $_.Profiles } | Measure-Object).Count)
 # Los perfiles de serie con changeSize '1920:-2' (RESIZE fijo) deben ser solo-reduce (NoUpscale).
 $rzProfs = @(Get-CvProfiles | ForEach-Object { $_.Profiles } | Where-Object { "$($_.ChangeSize)" -ne '' })
@@ -1211,6 +1211,23 @@ $bc8 = Get-CvBorderFromSizes -SrcWidth 1920 -SrcHeight 1080 -OutWidth 1920 -OutH
 Assert-Eq   'Bordes deducidos: margen fino'         '[x]' "$($bc8.Text)"
 Assert-Eq   'Bordes deducidos: margen normal'       '[ ]' "$((Get-CvBorderFromSizes -SrcWidth 1920 -SrcHeight 1080 -OutWidth 1920 -OutHeight 1072).Text)"
 Assert-Eq   'Config: cuantos convertidos se analizan por refresco' 2 ([int](Get-CvConfigDefaults).gui.queueDoneProbe)
+# La lista NO se relee sola: el temporizador solo repinta el progreso mientras hay workers, y sin
+# nada en marcha se para (0 = solo cuando lo pidas). La huella de los workers es lo que decide si
+# hace falta releer las carpetas.
+Assert-Eq   'Config: ritmo del progreso'      1000 ([int](Get-CvConfigDefaults).gui.queueRefreshMs)
+Assert-Eq   'Config: parada, no relee sola'   0    ([int](Get-CvConfigDefaults).gui.queueIdleRefreshMs)
+Assert-Eq   'Config: relee al volver a la ventana' $true ([bool](Get-CvConfigDefaults).gui.queueRefreshOnActivate)
+$w1 = @([pscustomobject]@{ Pid = 10; File = 'Serie_1x01'; Status = 'working' })
+$w2 = @([pscustomobject]@{ Pid = 10; File = 'Serie_1x01'; Status = 'working' })
+Assert-Eq   'Huella: el porcentaje no cuenta' (Get-CvWorkerSignature -Workers $w1) (Get-CvWorkerSignature -Workers $w2)
+$w3 = @([pscustomobject]@{ Pid = 10; File = 'Serie_1x02'; Status = 'working' })
+Assert-True 'Huella: cambiar de archivo si'  ((Get-CvWorkerSignature -Workers $w1) -ne (Get-CvWorkerSignature -Workers $w3))
+$w4 = @([pscustomobject]@{ Pid = 10; File = 'Serie_1x01'; Status = 'done' })
+Assert-True 'Huella: terminar tambien'       ((Get-CvWorkerSignature -Workers $w1) -ne (Get-CvWorkerSignature -Workers $w4))
+Assert-True 'Huella: un worker mas'          ((Get-CvWorkerSignature -Workers $w1) -ne (Get-CvWorkerSignature -Workers ($w1 + $w3)))
+Assert-Eq   'Huella: sin workers, vacia'     '' (Get-CvWorkerSignature -Workers @())
+# El orden en que lleguen los workers no puede cambiar la huella (si no, releeria por nada).
+Assert-Eq   'Huella: no depende del orden' (Get-CvWorkerSignature -Workers ($w1 + $w3)) (Get-CvWorkerSignature -Workers ($w3 + $w1))
 
 # ================================================================================================
 Write-Host "`nPiezas comunes de las ventanas" -ForegroundColor Cyan

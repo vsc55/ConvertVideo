@@ -833,6 +833,7 @@ function Show-CvConvertWindow {
         Cues     = @{}     # lineas de subtitulo ya contadas, por archivo (lo lento; solo a peticion)
         Busy     = $false
         Vacios   = 0       # veces SEGUIDAS que Original\ se ha listado vacia teniendo archivos
+        LiveSig  = ''      # huella de los workers vivos (pid+archivo+estado): si cambia, algo paso
     }
 
     # ---- Menu contextual de la lista ----
@@ -976,6 +977,22 @@ function Show-CvConvertWindow {
     # Al cambiar de pestana se rehace: si se viene del log, ahora si toca el ffprobe.
     [void](Add-CvGuiTabChanged -Tabs $tabs -Action ({ & $updateSummary $true }.GetNewClosure()))
 
+    # Ritmo del temporizador: mientras hay workers, el del progreso (gui.queueRefreshMs); sin nada
+    # en marcha, lo que diga gui.queueIdleRefreshMs, y con 0 se PARA del todo -la lista se actualiza
+    # cuando la pides-.
+    $ritmo = {
+        $vivos = @($st.Workers | Where-Object { $_.Alive }).Count
+        if ($vivos -gt 0) {
+            $timer.Interval = [int]$Context.GuiQueueRefreshMs
+            if (-not $timer.Enabled) { $timer.Start() }
+            return
+        }
+        $idle = [int]$Context.GuiQueueIdleMs
+        if ($idle -le 0) { $timer.Stop(); return }
+        $timer.Interval = $idle
+        if (-not $timer.Enabled) { $timer.Start() }
+    }
+
     # ---- Refresco (lo dispara el temporizador y el boton Actualizar) ----
     $refresh = {
         # Deducir los bordes de un archivo ya convertido cuesta dos ffprobe (~300 ms medidos), asi que
@@ -1093,10 +1110,48 @@ function Show-CvConvertWindow {
             [void](Update-CvGuiLogView -TextBox $txtLog -State $st -Path "$($st.LogPath)")
         }
 
-        # Ritmo del refresco: 1 s mientras haya workers (el progreso se mueve) y 3 s cuando no hay
-        # nada en marcha, que es cuando repintar por repintar solo molesta.
-        $want = if ($live.Count -gt 0) { 1000 } else { 3000 }
-        if ($timer.Interval -ne $want) { $timer.Interval = $want }
+        $st.LiveSig = Get-CvWorkerSignature -Workers $live
+        & $ritmo
+    }
+
+    # ---- Refresco LIGERO: lo unico que se mueve solo ----
+    # Releer las tres carpetas cada segundo no tiene sentido -la lista de archivos no cambia sola- y
+    # ademas se hace justo cuando el disco esta ocupado codificando. Asi que mientras hay workers
+    # solo se lee lo que ELLOS publican (Proceso\*.worker.json) y se repintan sus filas. La lista se
+    # relee cuando cambia algo de verdad: un worker coge otro archivo, termina o se muere (la huella
+    # cambia), o cuando lo pides tu (Actualizar), o al volver a la ventana.
+    $refreshLive = {
+        $workers = @(Get-CvWorkerStates -Context $Context)
+        $live    = @($workers | Where-Object { $_.Alive })
+        $sig     = Get-CvWorkerSignature -Workers $live
+        if ($sig -ne $st.LiveSig) { & $refresh; return }   # algo cambio de estado: relectura completa
+        $st.Workers = $workers
+        # Solo las filas que estan codificando: se les mete el avance publicado y se repintan.
+        $porArchivo = @{}
+        foreach ($w in $live) { if ("$($w.File)" -ne '') { $porArchivo["$($w.File)"] = $w } }
+        $lv.BeginUpdate()
+        try {
+            for ($k = 0; $k -lt @($st.Rows).Count -and $k -lt $lv.Items.Count; $k++) {
+                $r = @($st.Rows)[$k]
+                $w = $porArchivo["$($r.Name)"]
+                if ($null -eq $w) { continue }
+                $r.WorkerPid = [int]$w.Pid
+                $r.Step      = "$($w.Step)"
+                $r.Percent   = [int]$w.Percent
+                $r.Eta       = "$($w.Eta)"
+                $r.Speed     = "$($w.Speed)"
+                $cells = @(Format-CvQueueRow -Row $r)
+                $it = $lv.Items[$k]
+                for ($i = 0; $i -lt $cells.Count; $i++) {
+                    if ($it.SubItems[$i].Text -ne $cells[$i]) { $it.SubItems[$i].Text = $cells[$i] }
+                }
+            }
+        } finally { $lv.EndUpdate() }
+        # El log que se sigue si se va escribiendo (eso tambien se mueve solo).
+        if ($chkFollow.Checked -and $st.LogPath) {
+            [void](Update-CvGuiLogView -TextBox $txtLog -State $st -Path "$($st.LogPath)")
+        }
+        & $ritmo
     }
 
     # ---- Acciones ----
@@ -1188,6 +1243,15 @@ function Show-CvConvertWindow {
     })
 
     $btnRefresh.Add_Click($refresh)
+    # Al volver a la ventana se releen las carpetas: recoge lo que hayas dejado en Original\ mientras
+    # estabas en otra cosa (gui.queueRefreshOnActivate). Sin workers el temporizador esta parado, asi
+    # que este es el momento natural para mirar.
+    $form.Add_Activated({
+        if (-not [bool]$Context.GuiQueueOnActivate) { return }
+        if ($st.Busy) { return }
+        $st.Busy = $true
+        try { & $refresh } catch { Write-CvLog 'COLA' ("[ERROR] - Refresco al volver: {0}" -f $_) } finally { $st.Busy = $false }
+    })
     $cmbLog.Add_SelectedIndexChanged({ $txtLog.Text = ''; $st.LogStamp = '' })   # el refresco lo recarga
     $btnLogOpen.Add_Click({ [void](Open-CvGuiPath -Path "$($st.LogPath)" -Title 'Log') })
 
@@ -1384,7 +1448,8 @@ function Show-CvConvertWindow {
         $st.Busy = $true
         # Si el refresco falla, se apunta en el log: tragarselo en silencio deja la ventana a medias
         # (la lista de una vuelta y los totales de otra) sin nada que mirar despues.
-        try { & $refresh } catch { Write-CvLog 'COLA' ("[ERROR] - Refresco: {0}" -f $_) } finally { $st.Busy = $false }
+        # El temporizador hace el refresco LIGERO; ese decide si hace falta el completo.
+        try { & $refreshLive } catch { Write-CvLog 'COLA' ("[ERROR] - Refresco: {0}" -f $_) } finally { $st.Busy = $false }
     })
 
     # La columna de progreso ocupa lo que sobre: al abrir, al redimensionar la ventana y al cambiar

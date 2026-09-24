@@ -206,6 +206,21 @@ function Get-CvWorkerStates {
     return @($out | Sort-Object Pid)
 }
 
+function Get-CvWorkerSignature {
+    <#
+        PURO. Huella de lo que estan haciendo los workers: pid + archivo + estado de cada uno. Si no
+        cambia, no ha pasado NADA que obligue a releer las carpetas -solo se mueve el porcentaje-, y
+        la ventana se ahorra listar Original\, Proceso\ y Convertido\ cada segundo.
+
+        Cambia cuando un worker coge otro archivo, termina, arranca o se muere: justo los momentos en
+        los que la lista tiene algo nuevo que contar.
+    #>
+    param($Workers = @())
+    return ((@(@($Workers) | Where-Object { $null -ne $_ } | ForEach-Object {
+        "{0}|{1}|{2}" -f [int]$_.Pid, "$($_.File)", "$($_.Status)"
+    } | Sort-Object)) -join ';')
+}
+
 function Remove-CvWorkerStates {
     <# Borra los ficheros de estado indicados (los huerfanos de workers muertos). Devuelve cuantos. #>
     param($States)
