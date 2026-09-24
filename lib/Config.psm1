@@ -701,6 +701,7 @@ function Get-CvConfigDefaults {
             # analizan como mucho N por refresco -el resultado
             # se cachea, asi que la lista se va rellenando sola en unos segundos- y SOLO con la cola
             # parada: mientras hay workers, el refresco tiene que seguir siendo barato. 0 = no deducir.
+            queueDoneProbe     = 2
             # Cada cuanto se REPINTA la cola mientras hay workers: solo se lee el estado que ellos
             # publican (Proceso\*.worker.json), no las carpetas de archivos.
             queueRefreshMs     = 1000
@@ -713,7 +714,18 @@ function Get-CvConfigDefaults {
             # Releer al volver a la ventana: recoge lo que hayas dejado en Original\ mientras
             # estabas en otra cosa, sin tener que acordarte de pulsar Actualizar.
             queueRefreshOnActivate = $true
-            queueDoneProbe     = 2
+            # Que la lista SIGA al archivo que se esta codificando: si se sale de la zona visible,
+            # se mueve sola para dejarlo a la vista. Si te has ido tu a mirar otra parte de la
+            # lista, no se mueve (vuelve a engancharse cuando vuelves a tenerlo a la vista).
+            queueFollowWorker  = $true
+            # Cuanto se espera a que un worker recien abierto publique su estado. En ese hueco no
+            # hay workers vivos pero SI hay algo que esperar: el temporizador sigue mirando (y el
+            # boton Iniciar sigue apagado) hasta que aparezca o se acabe el plazo.
+            queueStartGraceSec = 20
+            # Cuanto se queda QUIETA la lista despues de que la toques (marcar filas, teclas). Se
+            # persigue al archivo en curso, pero no mientras estas eligiendo: moverla bajo el raton
+            # a mitad de un Ctrl/Mayus+clic acaba seleccionando lo que no querias.
+            queueFollowHoldSec = 3
             # Margen de proporcion para decidir que hubo recorte (0.01 = 1%). Por debajo caen los
             # redondeos a tamano PAR del escalado (un pixel en 1080 es un 0,09%); por encima, los
             # recortes de verdad (quitar 140px de barras cambia la proporcion un 15%).
@@ -969,6 +981,9 @@ function Get-CvConfigHelp {
         'gui/queueRefreshMs'     = 'Cada cuantos ms se repinta el progreso mientras hay workers (no relee las carpetas)'
         'gui/queueIdleRefreshMs' = 'Cada cuantos ms se releen las carpetas sin nada en marcha (0 = solo cuando lo pidas)'
         'gui/queueRefreshOnActivate' = 'Releer las carpetas al volver a la ventana de la cola'
+        'gui/queueFollowWorker'  = 'La lista se mueve sola para no perder de vista el archivo que se esta codificando (salvo si te has ido tu a otra parte)'
+        'gui/queueStartGraceSec' = 'Segundos que se espera a que un worker recien abierto publique su estado (la cola sigue mirando en ese hueco)'
+        'gui/queueFollowHoldSec' = 'Segundos que la lista se queda quieta despues de que la toques (no se mueve mientras eliges filas)'
         'gui/queueDoneProbe'     = 'Cuantos archivos YA CONVERTIDOS se analizan por refresco -solo con la cola parada- para deducir si llevaron recorte (0 = ninguno)'
         'gui/queueDoneTolerance' = 'Margen de proporcion (0.01 = 1%) para decidir que a un convertido se le quitaron barras'
         'gui/setupWidth'        = 'Ancho de partida de la ventana de setup (px)'

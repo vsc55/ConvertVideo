@@ -192,24 +192,21 @@ La lista de archivos **no se relee sola**: para eso está *Actualizar*. Las carp
 | Después de cada acción de la ventana | Preparar, iniciar, parar, limpiar, borrar un job… cada una refresca al terminar. |
 | Mientras hay workers, cada segundo (`gui.queueRefreshMs`) | **Solo** `Proceso\*.worker.json`, que es lo único que se mueve: paso, %, ETA y velocidad. Las carpetas no se tocan. |
 | Cuando un worker coge otro archivo, termina, arranca o se muere | Refresco completo: eso sí cambia la lista. Lo detecta la **huella** de los workers (`Get-CvWorkerSignature`: pid + archivo + estado), no el porcentaje. |
+| Al abrir workers, mientras **nacen** | Solo `Proceso\*.worker.json`, al mismo ritmo, hasta que el primero publique su estado (o se agote `gui.queueStartGraceSec`, 20 s). Entre pulsar *Iniciar* y que un worker aparezca pasan unos segundos, y en ese hueco no hay nadie vivo pero sí hay algo que esperar. |
 | Sin nada en marcha | Nada: el temporizador se **para**. Con `gui.queueIdleRefreshMs` distinto de 0 se puede pedir un latido cada tantos ms. |
 
 Medido con la ventana abierta y un worker publicando progreso: **0** relecturas de carpetas en 5 s codificando, **1** cuando el worker termina (la fila pasa a *Hecho*), **0** en 6 s con la cola parada y **1** al pulsar *Actualizar*. Antes eran tres listados de carpeta por segundo — justo mientras el disco está ocupado convirtiendo, y peor aún si `Original\` está en red.
 
-### Cuándo se relee el disco
+Los **botones** no esperan a nada de esto: el texto de *Iniciar* (`Iniciar (N elegidos)`), el de *Preparar pendientes*, y qué está disponible y qué no, se recalculan al marcar filas, con lo ya leído y sin tocar el disco.
 
-La lista de archivos **no se relee sola**: para eso está *Actualizar*. Las carpetas (`Original\`, `Proceso\`, `Convertido\`) se leen enteras solo cuando hay algo que mirar:
+**La lista sigue al archivo que se está codificando.** Con la cola larga, la fila en curso se va por debajo de la zona visible y deja de verse justo lo único que se mueve. La lista se desplaza sola para dejarla a la vista, pero **solo cuando hay un motivo nuevo**, y nunca mientras la estás usando:
 
-| Cuándo | Qué se lee |
-| --- | --- |
-| Al abrir la ventana, y con *Actualizar* | Las tres carpetas (refresco completo). |
-| Al volver a la ventana desde otra cosa | Ídem — así aparece lo que hayas dejado en `Original\` (`gui.queueRefreshOnActivate`). |
-| Después de cada acción de la ventana | Preparar, iniciar, parar, limpiar, borrar un job… cada una refresca al terminar. |
-| Mientras hay workers, cada segundo (`gui.queueRefreshMs`) | **Solo** `Proceso\*.worker.json`, que es lo único que se mueve: paso, %, ETA y velocidad. Las carpetas no se tocan. |
-| Cuando un worker coge otro archivo, termina, arranca o se muere | Refresco completo: eso sí cambia la lista. Lo detecta la **huella** de los workers (`Get-CvWorkerSignature`: pid + archivo + estado), no el porcentaje. |
-| Sin nada en marcha | Nada: el temporizador se **para**. Con `gui.queueIdleRefreshMs` distinto de 0 se puede pedir un latido cada tantos ms. |
+- Se mueve cuando se pone a codificar **otro archivo** (o el primero, al abrir). Con varios workers intenta enseñar el bloque entero de filas en curso; si no cabe, manda la primera.
+- **No** se mueve si la fila en curso se sale de la vista por cualquier otro motivo (cambias el tamaño de la ventana, aparecen archivos nuevos por encima): mover la lista por su cuenta mientras la miras es peor que no seguir a nadie.
+- **No** se mueve mientras tienes el ratón apretado ni durante unos segundos después de tocarla (`gui.queueFollowHoldSec`, 3 s). Esto es lo que evita el efecto raro de que un *Ctrl/Mayús+clic* acabe seleccionando lo que no era porque la lista ha dado un salto en medio: el resumen de la fila marcada llama a `DoEvents` mientras lee el archivo, y ahí es donde entraba el temporizador.
+- Si el que ha movido el scroll eres **tú** y has dejado la fila en curso fuera de la vista, se suelta y no da tirones mientras miras otra parte; vuelve a engancharse en cuanto la tienes otra vez delante.
 
-Medido con la ventana abierta y un worker publicando progreso: **0** relecturas de carpetas en 5 s codificando, **1** cuando el worker termina (la fila pasa a *Hecho*), **0** en 6 s con la cola parada y **1** al pulsar *Actualizar*. Antes eran tres listados de carpeta por segundo — justo mientras el disco está ocupado convirtiendo, y peor aún si `Original\` está en red.
+Se apaga del todo con `gui.queueFollowWorker = false`.
 
 **La ventana se abre como la dejaste.** Al cerrarla se apunta su tamaño, si estaba maximizada, dónde quedó el divisor y los anchos de columna, y la siguiente vez se aplica todo. Se guarda en `<config>.gui.json` (junto al config en uso), y se puede desactivar con `gui.rememberLayout = false`; los tamaños de partida son `gui.queueWidth` / `queueHeight` / `queueSplitPercent` — ver [ref-configuracion.md](ref-configuracion.md#gui--apariencia-de-las-ventanas). Lo recordado se valida al abrir: nunca deja la ventana más pequeña que su mínimo ni más grande que la pantalla de hoy, ni el divisor fuera de los mínimos de los paneles.
 

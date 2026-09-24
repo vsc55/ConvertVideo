@@ -304,6 +304,12 @@ function New-CvContext {
         GuiQueueRefreshMs = $(if ([int]$cfg.gui.queueRefreshMs -ge 200) { [int]$cfg.gui.queueRefreshMs } else { [int]$def.gui.queueRefreshMs })
         GuiQueueIdleMs    = [Math]::Max(0, [int]$cfg.gui.queueIdleRefreshMs)
         GuiQueueOnActivate = [bool]$cfg.gui.queueRefreshOnActivate
+        # La lista persigue al archivo en curso (ver gui.queueFollowWorker).
+        GuiQueueFollow     = [bool]$cfg.gui.queueFollowWorker
+        # Plazo de gracia al arrancar workers (ver gui.queueStartGraceSec).
+        GuiQueueStartGrace = $(if ([int]$cfg.gui.queueStartGraceSec -gt 0) { [int]$cfg.gui.queueStartGraceSec } else { [int]$def.gui.queueStartGraceSec })
+        # Cuanto se queda quieta la lista tras tocarla (ver gui.queueFollowHoldSec). 0 es valido.
+        GuiQueueFollowHold = [Math]::Max(0, [int]$cfg.gui.queueFollowHoldSec)
         # Deduccion de bordes en los archivos ya convertidos (ver gui.queueDoneProbe).
         GuiQueueDoneProbe = [Math]::Max(0, [int]$cfg.gui.queueDoneProbe)
         GuiQueueDoneTol   = $(

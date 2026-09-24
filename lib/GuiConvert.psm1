@@ -131,6 +131,128 @@ function Get-CvQueueDoneProbeBudget {
     return [Math]::Max(0, $Configured)
 }
 
+function Get-CvQueueWorkingRange {
+    <#
+        PURO. Primera y ultima fila que se estan CODIFICANDO (-1 las dos si ninguna). Con varios
+        workers hay varias filas en curso y lo que interesa es el bloque entero, no una sola.
+    #>
+    param($Rows)
+    $first = -1
+    $last  = -1
+    $k = 0
+    $nombres = @()
+    foreach ($r in @($Rows)) {
+        if ("$($r.State)" -eq 'working') {
+            if ($first -lt 0) { $first = $k }
+            $last = $k
+            $nombres += "$($r.Name)"
+        }
+        $k++
+    }
+    return @{
+        First = $first
+        Last  = $last
+        # Clave por NOMBRE, no por posicion: es lo que dice si se esta codificando OTRA cosa (que es
+        # cuando hay que moverse). Que la fila cambie de sitio al aparecer un archivo nuevo no lo es.
+        Key   = ($nombres -join '|')
+    }
+}
+
+function Get-CvQueueFollowPlan {
+    <#
+        PURO. Si la lista tiene que moverse sola para no perder de vista la fila que se esta
+        codificando, y si sigue enganchada a ella.
+
+        La regla es la del que mira: la lista PERSIGUE al worker mientras no te hayas ido tu a otra
+        parte. Lo uno se distingue de lo otro por el scroll: si la primera fila visible ha cambiado
+        y no ha sido la ventana (-Top distinto de -LastTop), has sido tu, y entonces se sigue solo
+        si has dejado la fila en curso a la vista. Volver a tenerla delante vuelve a engancharla.
+
+        La lista se mueve POCO a proposito, solo cuando hay un motivo nuevo:
+        - -Changed: se esta codificando OTRO archivo (o el primero). Que la fila se salga de la vista
+          por cualquier otro motivo no mueve nada: mover la lista por su cuenta mientras la usas es
+          peor que no seguir a nadie.
+        - -Busy: la estas tocando ahora mismo (raton apretado, o acabas de marcar filas). Entonces no
+          se mueve NADA y tampoco se da por visto el archivo: se vuelve a mirar cuando la sueltes.
+          Pasaba de verdad: el resumen de la fila marcada llama a DoEvents, el temporizador entraba
+          ahi mismo y la lista daba un salto a mitad de un Ctrl/Mayus+clic -seleccionando lo que no
+          era-.
+
+        -Index   fila que se esta codificando (-1: ninguna)
+        -Top     primera fila visible; -Visible cuantas caben a la vez
+        -LastTop la primera fila visible del refresco anterior; -1 = sin dato (lista recien
+                 reconstruida, que empieza arriba), y eso NO cuenta como que hayas movido tu.
+    #>
+    param(
+        [int]$Index      = -1,
+        [int]$Top        = 0,
+        [int]$Visible    = 0,
+        [int]$LastTop    = -1,
+        [bool]$Following = $true,
+        [bool]$Changed   = $true,
+        [bool]$Busy      = $false,
+        [bool]$Enabled   = $true
+    )
+    if (-not $Enabled) {
+        return @{
+            Follow = $false
+            Scroll = $false
+            Hold   = $false
+        }
+    }
+    if ($Busy) {
+        return @{
+            Follow = $Following
+            Scroll = $false
+            Hold   = $true      # ni se mueve ni se apunta nada: se decide cuando sueltes
+        }
+    }
+    $dentro = ($Index -ge 0) -and ($Index -ge $Top) -and ($Index -lt ($Top + $Visible))
+    $follow = $Following
+    if ($Index -ge 0 -and $LastTop -ge 0 -and $Top -ne $LastTop) { $follow = $dentro }
+    return @{
+        Follow = $follow
+        Scroll = ($follow -and ($Index -ge 0) -and (-not $dentro) -and $Changed)
+        Hold   = $false
+    }
+}
+
+function Get-CvQueueTickPlan {
+    <#
+        PURO. Si el temporizador tiene que estar en marcha y a que ritmo.
+
+        - Con workers vivos: el ritmo del progreso (-RefreshMs).
+        - ARRANCANDO: se acaba de pulsar Iniciar y ningun worker ha publicado su estado todavia. En
+          ese hueco no hay nadie vivo pero SI hay algo que esperar; sin esto el temporizador se
+          paraba justo despues de arrancar y la fila no pasaba a 'Codificando' hasta que se pulsaba
+          Actualizar a mano.
+        - Sin nada de lo anterior: lo que diga -IdleMs, y con 0 se PARA (la lista se actualiza a
+          peticion, ver Get-CvWorkerSignature).
+    #>
+    param(
+        [int]$Live      = 0,
+        [bool]$Starting = $false,
+        [int]$RefreshMs = 1000,
+        [int]$IdleMs    = 0
+    )
+    if ($Live -gt 0 -or $Starting) {
+        return @{
+            Enabled  = $true
+            Interval = $RefreshMs
+        }
+    }
+    if ($IdleMs -le 0) {
+        return @{
+            Enabled  = $false
+            Interval = $RefreshMs
+        }
+    }
+    return @{
+        Enabled  = $true
+        Interval = $IdleMs
+    }
+}
+
 function Get-CvQueueProgressWidth {
     <#
         PURO. Ancho de la columna de PROGRESO: se queda con todo el espacio que sobra a la derecha
@@ -834,6 +956,11 @@ function Show-CvConvertWindow {
         Busy     = $false
         Vacios   = 0       # veces SEGUIDAS que Original\ se ha listado vacia teniendo archivos
         LiveSig  = ''      # huella de los workers vivos (pid+archivo+estado): si cambia, algo paso
+        Live     = 0       # workers vivos en la ultima vuelta (lo miran los botones)
+        Follow   = $true   # la lista persigue al archivo en curso (se suelta si te vas tu a otra parte)
+        FollowKey = ''     # archivo(s) en curso que ya se dieron por vistos (solo se mueve si cambian)
+        Touch    = 0       # ticks de la ultima vez que tocaste la lista (no se mueve mientras eliges)
+        LastTop  = -1      # primera fila visible en el refresco anterior (-1: sin dato)
     }
 
     # ---- Menu contextual de la lista ----
@@ -973,24 +1100,97 @@ function Show-CvConvertWindow {
             $txtSum.Text = ("No se pudieron contar las lineas: {0}" -f $_.Exception.Message)
         }
     })
-    $lv.Add_SelectedIndexChanged({ & $updateSummary $false })
+    # 'La estas usando': con el raton APRETADO (un Mayus+clic o un arrastre a medias) o durante unos
+    # segundos despues de tocarla (gui.queueFollowHoldSec). Mientras, la lista no se mueve sola.
+    $tocando = {
+        if ([System.Windows.Forms.Control]::MouseButtons -ne [System.Windows.Forms.MouseButtons]::None) { return $true }
+        if ([double]$st.Touch -le 0) { return $false }
+        return (((([datetime]::UtcNow.Ticks - $st.Touch) / 10000000)) -lt [int]$Context.GuiQueueFollowHold)
+    }
+    $toque = { $st.Touch = [datetime]::UtcNow.Ticks }
+    $lv.Add_MouseDown($toque)
+    $lv.Add_MouseUp($toque)
+    $lv.Add_KeyDown($toque)
+
+    # 'Arrancando': entre que se pulsa Iniciar y el worker publica su estado pasan unos segundos.
+    $arrancando = {
+        if ([double]$st.StartedAt -le 0) { return $false }
+        return (((([datetime]::UtcNow.Ticks - $st.StartedAt) / 10000000)) -lt [int]$Context.GuiQueueStartGrace)
+    }
+
+    # ---- Botones: lo que depende de la SELECCION y del estado ya conocido ----
+    # No lee el disco: sale de las filas de la ultima vuelta ($st.Rows) y de lo que haya marcado. Va
+    # aparte del refresco a proposito -antes estaba dentro, y al dejar la ventana de refrescarse
+    # sola el texto de 'Iniciar' no se enteraba de lo que marcabas hasta pulsar Actualizar-.
+    $updateButtons = {
+        $filas  = @($st.Rows)
+        $totals = Get-CvQueueTotals -Rows $filas
+        # 'Iniciar' trabaja con lo SELECCIONADO si hay algo en cola marcado; si no, con toda la cola.
+        # El texto del boton lo dice, para que no haya sorpresas.
+        $selQ = @(@(& $selected) | Where-Object { $_.State -eq 'queued' })
+        $btnStart.Text = $(if ($selQ.Count -gt 0) { 'Iniciar ({0} elegidos)' -f $selQ.Count } else { 'Iniciar' })
+        # Cuando se puede arrancar (y por que no), en una funcion pura: Get-CvQueueStartState.
+        $ss = Get-CvQueueStartState -Queued ([int]$totals.Queued) -Live ([int]$st.Live) `
+                                    -Stopping ([bool]$st.Stopping) -JustStarted ([bool](& $arrancando))
+        $btnStart.Enabled = [bool]$ss.Enabled
+        $tipBar.SetToolTip($btnStart, "$($ss.Tip)")
+        $btnStop.Enabled  = ([int]$st.Live -gt 0) -and (-not [bool]$st.Stopping)
+        $btnKill.Enabled  = ([int]$st.Live -gt 0)
+        # 'Editar job': con una fila elegida vale la suya; sin elegir nada, el primero que este sin
+        # preparar. Solo se apaga si no hay ninguno de los dos casos.
+        $btnEdit.Enabled  = ($null -ne (& $editable))
+        # 'Preparar pendientes' lleva el recuento: es el flujo normal cuando llega material nuevo.
+        $btnPrepAll.Text    = $(if ([int]$totals.Pending -gt 0) { 'Preparar pendientes ({0})' -f $totals.Pending } else { 'Preparar pendientes' })
+        $btnPrepAll.Enabled = ([int]$totals.Pending -gt 0)
+    }
+    $lv.Add_SelectedIndexChanged({ $st.Touch = [datetime]::UtcNow.Ticks; & $updateSummary $false; & $updateButtons })
     # Al cambiar de pestana se rehace: si se viene del log, ahora si toca el ffprobe.
     [void](Add-CvGuiTabChanged -Tabs $tabs -Action ({ & $updateSummary $true }.GetNewClosure()))
 
-    # Ritmo del temporizador: mientras hay workers, el del progreso (gui.queueRefreshMs); sin nada
-    # en marcha, lo que diga gui.queueIdleRefreshMs, y con 0 se PARA del todo -la lista se actualiza
-    # cuando la pides-.
+    # Ritmo del temporizador: mientras hay workers -o mientras se espera a los que se acaban de
+    # abrir-, el del progreso (gui.queueRefreshMs); sin nada en marcha, lo que diga
+    # gui.queueIdleRefreshMs, y con 0 se PARA del todo -la lista se actualiza cuando la pides-.
+    # La decision, en una funcion pura: Get-CvQueueTickPlan.
     $ritmo = {
-        $vivos = @($st.Workers | Where-Object { $_.Alive }).Count
-        if ($vivos -gt 0) {
-            $timer.Interval = [int]$Context.GuiQueueRefreshMs
-            if (-not $timer.Enabled) { $timer.Start() }
-            return
-        }
-        $idle = [int]$Context.GuiQueueIdleMs
-        if ($idle -le 0) { $timer.Stop(); return }
-        $timer.Interval = $idle
+        $plan = Get-CvQueueTickPlan -Live @($st.Workers | Where-Object { $_.Alive }).Count `
+                                    -Starting ([bool](& $arrancando)) `
+                                    -RefreshMs ([int]$Context.GuiQueueRefreshMs) -IdleMs ([int]$Context.GuiQueueIdleMs)
+        if (-not [bool]$plan.Enabled) { $timer.Stop(); return }
+        $timer.Interval = [int]$plan.Interval
         if (-not $timer.Enabled) { $timer.Start() }
+    }
+
+    # ---- Seguir con la lista al archivo que se esta codificando ----
+    # Si la fila en curso se sale de la zona visible, la lista se mueve para dejarla a la vista; si
+    # te has ido tu a mirar otra parte, se calla (Get-CvQueueFollowPlan). Cuantas filas caben se
+    # MIDE de la propia lista: el alto de fila y el de la cabecera cambian con la fuente y el DPI.
+    $followRow = {
+        # El resumen de la fila marcada llama a DoEvents mientras lee el archivo, y el temporizador
+        # entra AHI. Mover la lista en ese momento es moverla a mitad de tu clic: ni tocarla.
+        if ($st.SumBusy) { return }
+        if ($lv.Items.Count -eq 0) { $st.LastTop = -1; return }
+        $rango = Get-CvQueueWorkingRange -Rows @($st.Rows)
+        $idx   = [int]$rango.First
+        $top   = -1
+        try { if ($null -ne $lv.TopItem) { $top = [int]$lv.TopItem.Index } } catch { $top = -1 }
+        if ($top -lt 0 -or $top -ge $lv.Items.Count) { $st.LastTop = -1; return }
+        $b    = $lv.Items[$top].Bounds
+        $alto = [int]$b.Height
+        $vis  = $(if ($alto -gt 0) { [int][Math]::Floor(($lv.ClientSize.Height - [int]$b.Top) / $alto) } else { 0 })
+        $plan = Get-CvQueueFollowPlan -Index $idx -Top $top -Visible $vis -LastTop ([int]$st.LastTop) `
+                                      -Following ([bool]$st.Follow) -Changed ("$($rango.Key)" -ne "$($st.FollowKey)") `
+                                      -Busy ([bool](& $tocando)) -Enabled ([bool]$Context.GuiQueueFollow)
+        if ([bool]$plan.Hold) { return }   # la estas usando: se vuelve a mirar cuando la sueltes
+        $st.Follow    = [bool]$plan.Follow
+        $st.FollowKey = "$($rango.Key)"
+        if ([bool]$plan.Scroll -and $idx -ge 0 -and $idx -lt $lv.Items.Count) {
+            # Primero la ULTIMA en curso y luego la primera: con varios workers se ve el bloque
+            # entero si cabe, y si no cabe manda la primera (que es la que lleva mas rato).
+            $fin = [int]$rango.Last
+            if ($fin -ge 0 -and $fin -lt $lv.Items.Count) { $lv.Items[$fin].EnsureVisible() }
+            $lv.Items[$idx].EnsureVisible()
+        }
+        try { $st.LastTop = $(if ($null -ne $lv.TopItem) { [int]$lv.TopItem.Index } else { -1 }) } catch { $st.LastTop = -1 }
     }
 
     # ---- Refresco (lo dispara el temporizador y el boton Actualizar) ----
@@ -1047,6 +1247,7 @@ function Show-CvConvertWindow {
                 $lv.Items.Clear()
                 $lv.Items.AddRange($nuevos.ToArray())
                 $st.Names = $names
+                $st.LastTop = -1   # la lista vuelve arriba sola: no cuenta como scroll tuyo
             } else {
                 for ($k = 0; $k -lt $rows.Count -and $k -lt $lv.Items.Count; $k++) {
                     $cells = @(Format-CvQueueRow -Row $rows[$k])
@@ -1066,31 +1267,15 @@ function Show-CvConvertWindow {
         $stopping = Test-CvWorkerStop -Context $Context
         $st.Stopping = $stopping
         $st.Running  = ($live.Count -gt 0)
+        $st.Live     = $live.Count
         # La bandera de parada la retira la ventana cuando ya no queda ningun worker: asi no se queda
         # puesta y mata la siguiente ejecucion sin que se sepa por que.
         if ($stopping -and $live.Count -eq 0) { Clear-CvWorkerStop -Context $Context; $stopping = $false; $st.Stopping = $false }
         $lblTot.Text = Get-CvQueueSummaryLine -Totals (Get-CvQueueTotals -Rows $rows) -Workers $live.Count -Stopping $stopping
 
-        $totals = Get-CvQueueTotals -Rows $rows
-        # 'Iniciar' trabaja con lo SELECCIONADO si hay algo en cola marcado; si no, con toda la cola.
-        # El texto del boton lo dice, para que no haya sorpresas.
-        $selQ = @(@(& $selected) | Where-Object { $_.State -eq 'queued' })
-        $btnStart.Text    = $(if ($selQ.Count -gt 0) { 'Iniciar ({0} elegidos)' -f $selQ.Count } else { 'Iniciar' })
-        # Cuando se puede arrancar (y por que no), en una funcion pura: Get-CvQueueStartState.
-        # 'Arrancando' vale hasta que se vea el primer worker (o 20 s, por si ninguno llego a nacer).
-        $justStarted = ($st.StartedAt -gt 0) -and ((([datetime]::UtcNow.Ticks - $st.StartedAt) / 10000000) -lt 20)
+        # El plazo de gracia del arranque se acaba en cuanto se ve el primer worker.
         if ($live.Count -gt 0) { $st.StartedAt = 0 }
-        $ss = Get-CvQueueStartState -Queued ([int]$totals.Queued) -Live $live.Count -Stopping $stopping -JustStarted $justStarted
-        $btnStart.Enabled = [bool]$ss.Enabled
-        $tipBar.SetToolTip($btnStart, "$($ss.Tip)")
-        $btnStop.Enabled  = ($live.Count -gt 0) -and (-not $stopping)
-        $btnKill.Enabled  = ($live.Count -gt 0)
-        # 'Editar job': con una fila elegida vale la suya; sin elegir nada, el primero que este sin
-        # preparar. Solo se apaga si no hay ninguno de los dos casos.
-        $btnEdit.Enabled  = ($null -ne (& $editable))
-        # 'Preparar pendientes' lleva el recuento: es el flujo normal cuando llega material nuevo.
-        $btnPrepAll.Text    = $(if ([int]$totals.Pending -gt 0) { 'Preparar pendientes ({0})' -f $totals.Pending } else { 'Preparar pendientes' })
-        $btnPrepAll.Enabled = ([int]$totals.Pending -gt 0)
+        & $updateButtons
 
         # Selector de logs: se rehace solo si cambio la lista (mantiene la eleccion del usuario).
         $choices = @(Get-CvConvertLogChoices -Context $Context -Workers $workers)
@@ -1111,6 +1296,7 @@ function Show-CvConvertWindow {
         }
 
         $st.LiveSig = Get-CvWorkerSignature -Workers $live
+        & $followRow
         & $ritmo
     }
 
@@ -1126,6 +1312,8 @@ function Show-CvConvertWindow {
         $sig     = Get-CvWorkerSignature -Workers $live
         if ($sig -ne $st.LiveSig) { & $refresh; return }   # algo cambio de estado: relectura completa
         $st.Workers = $workers
+        $st.Live    = $live.Count
+        & $updateButtons
         # Solo las filas que estan codificando: se les mete el avance publicado y se repintan.
         $porArchivo = @{}
         foreach ($w in $live) { if ("$($w.File)" -ne '') { $porArchivo["$($w.File)"] = $w } }
@@ -1151,6 +1339,7 @@ function Show-CvConvertWindow {
         if ($chkFollow.Checked -and $st.LogPath) {
             [void](Update-CvGuiLogView -TextBox $txtLog -State $st -Path "$($st.LogPath)")
         }
+        & $followRow
         & $ritmo
     }
 

@@ -372,6 +372,79 @@ Assert-Eq   'Progreso: ventana estrecha -> minimo' 220 (Get-CvQueueProgressWidth
 Assert-Eq   'Progreso: minimo a medida'          300 (Get-CvQueueProgressWidth -ClientWidth 400 -OtherWidths 700 -Min 300)
 Assert-True 'Progreso: nunca negativo'           ((Get-CvQueueProgressWidth -ClientWidth 0 -OtherWidths 700) -gt 0)
 
+# El temporizador: con workers, el ritmo del progreso; ARRANCANDO (recien pulsado Iniciar, ningun
+# worker ha publicado todavia) tambien, porque si no se paraba justo en ese hueco y la fila no
+# pasaba a 'Codificando' hasta pulsar Actualizar a mano; y parado, lo que diga la config.
+$tkVivos = Get-CvQueueTickPlan -Live 2 -RefreshMs 1000 -IdleMs 0
+Assert-True 'Ritmo: con workers, en marcha'      ([bool]$tkVivos.Enabled)
+Assert-Eq   'Ritmo: con workers, el del progreso' 1000 ([int]$tkVivos.Interval)
+$tkArr = Get-CvQueueTickPlan -Live 0 -Starting $true -RefreshMs 1000 -IdleMs 0
+Assert-True 'Ritmo: arrancando, sigue mirando'   ([bool]$tkArr.Enabled)
+Assert-Eq   'Ritmo: arrancando, mismo ritmo'     1000 ([int]$tkArr.Interval)
+$tkPara = Get-CvQueueTickPlan -Live 0 -RefreshMs 1000 -IdleMs 0
+Assert-Eq   'Ritmo: parada y sin latido, se para' $false ([bool]$tkPara.Enabled)
+$tkIdle = Get-CvQueueTickPlan -Live 0 -RefreshMs 1000 -IdleMs 10000
+Assert-True 'Ritmo: con latido configurado, sigue' ([bool]$tkIdle.Enabled)
+Assert-Eq   'Ritmo: y al ritmo del latido'       10000 ([int]$tkIdle.Interval)
+
+
+# La lista SIGUE al archivo que se esta codificando: si se sale de la zona visible se mueve sola,
+# y si te has ido tu a mirar otra parte se calla (Get-CvQueueFollowPlan).
+$rngUno = Get-CvQueueWorkingRange -Rows $rows
+Assert-Eq   'En curso: la fila que se codifica' 1 ([int]$rngUno.First)
+Assert-Eq   'En curso: y es la unica'           1 ([int]$rngUno.Last)
+$rngDos = Get-CvQueueWorkingRange -Rows @(
+    [pscustomobject]@{ State = 'done' }
+    [pscustomobject]@{ State = 'working' }
+    [pscustomobject]@{ State = 'queued' }
+    [pscustomobject]@{ State = 'working' }
+)
+Assert-Eq   'En curso: con varios workers, el bloque' '1|3' (@($rngDos.First, $rngDos.Last) -join '|')
+$rngCero = Get-CvQueueWorkingRange -Rows @([pscustomobject]@{ State = 'queued' })
+Assert-Eq   'En curso: nada codificando' '-1|-1' (@($rngCero.First, $rngCero.Last) -join '|')
+
+# Se va por debajo de la zona visible (10 filas a la vista, la fila 30 en curso): hay que moverse.
+$plFuera = Get-CvQueueFollowPlan -Index 30 -Top 0 -Visible 10 -LastTop 0
+Assert-True 'Seguir: fila en curso fuera -> se mueve' ([bool]$plFuera.Scroll)
+$plDentro = Get-CvQueueFollowPlan -Index 5 -Top 0 -Visible 10 -LastTop 0
+Assert-Eq   'Seguir: si ya se ve, no se toca' $false ([bool]$plDentro.Scroll)
+# Te has ido TU a otra parte (el scroll cambio sin que lo moviera la ventana): se suelta.
+$plUser = Get-CvQueueFollowPlan -Index 30 -Top 0 -Visible 10 -LastTop 25
+Assert-Eq   'Seguir: te vas tu -> se suelta'   $false ([bool]$plUser.Follow)
+Assert-Eq   'Seguir: y no te devuelve el scroll' $false ([bool]$plUser.Scroll)
+# Y vuelves a tenerla delante: se engancha otra vez.
+$plBack = Get-CvQueueFollowPlan -Index 30 -Top 28 -Visible 10 -LastTop 0 -Following $false
+Assert-True 'Seguir: vuelves a ella -> se engancha' ([bool]$plBack.Follow)
+# La lista RECIEN reconstruida vuelve arriba sola: eso no es que hayas movido tu (-LastTop -1).
+$plRebuild = Get-CvQueueFollowPlan -Index 30 -Top 0 -Visible 10 -LastTop -1
+Assert-True 'Seguir: reconstruir la lista no cuenta como scroll tuyo' ([bool]$plRebuild.Scroll)
+# Ya suelta, el temporizador no la vuelve a enganchar solo.
+$plSuelta = Get-CvQueueFollowPlan -Index 30 -Top 0 -Visible 10 -LastTop 0 -Following $false
+Assert-Eq   'Seguir: suelta, sigue suelta' $false ([bool]$plSuelta.Scroll)
+Assert-Eq   'Seguir: sin nada codificando, nada' $false ([bool](Get-CvQueueFollowPlan -Index -1 -Top 0 -Visible 10 -LastTop 5).Scroll)
+Assert-Eq   'Seguir: apagado en config, nada'    $false ([bool](Get-CvQueueFollowPlan -Index 30 -Top 0 -Visible 10 -LastTop 0 -Enabled $false).Scroll)
+# La lista se mueve POCO: solo cuando se pone a codificar OTRO archivo. Que la fila en curso se
+# salga de la vista por cualquier otro motivo no la mueve (moverla mientras la usas es peor).
+Assert-Eq   'Seguir: mismo archivo, no se mueve' $false ([bool](Get-CvQueueFollowPlan -Index 30 -Top 0 -Visible 10 -LastTop 0 -Changed $false).Scroll)
+# Y mientras la estas usando (raton apretado o acabas de marcar filas) no se mueve NADA: ni siquiera
+# se da por visto el archivo, para volver a mirarlo cuando la sueltes.
+$plBusy = Get-CvQueueFollowPlan -Index 30 -Top 0 -Visible 10 -LastTop 0 -Busy $true
+Assert-Eq   'Seguir: la estas usando, no se mueve' $false ([bool]$plBusy.Scroll)
+Assert-True 'Seguir: y no da nada por visto'       ([bool]$plBusy.Hold)
+Assert-Eq   'Seguir: libre, no queda nada pendiente' $false ([bool](Get-CvQueueFollowPlan -Index 30 -Top 0 -Visible 10 -LastTop 0).Hold)
+# La clave del bloque en curso va por NOMBRE: cambiar de archivo si cuenta, moverse de fila no.
+$kA = Get-CvQueueWorkingRange -Rows @(
+    [pscustomobject]@{ State = 'queued';  Name = 'Serie_1x01' }
+    [pscustomobject]@{ State = 'working'; Name = 'Serie_1x02' }
+)
+$kB = Get-CvQueueWorkingRange -Rows @(
+    [pscustomobject]@{ State = 'queued';  Name = 'Serie_1x00' }
+    [pscustomobject]@{ State = 'queued';  Name = 'Serie_1x01' }
+    [pscustomobject]@{ State = 'working'; Name = 'Serie_1x02' }
+)
+Assert-Eq   'En curso: la clave no cambia al bajar de fila' "$($kA.Key)" "$($kB.Key)"
+Assert-True 'En curso: pero si al cambiar de archivo' ("$($kA.Key)" -ne "$((Get-CvQueueWorkingRange -Rows @([pscustomobject]@{ State = 'working'; Name = 'Serie_1x03' })).Key)")
+
 # Cuando se puede pulsar 'Iniciar': con workers YA en marcha NO (volver a pulsarlo abriria otro
 # grupo entero de workers sobre la misma cola).
 Assert-True 'Iniciar: con cola y sin workers'  (Get-CvQueueStartState -Queued 3 -Live 0).Enabled
@@ -499,7 +572,8 @@ if (-not $sta) {
             foreach ($k in 0..($lv.Items.Count - 1)) {
                 if ($lv.Items[$k].SubItems[2].Text -eq 'En cola') { $lv.Items[$k].Selected = $true }
             }
-            $f.Controls.Find('cvRefresh', $true)[0].PerformClick()
+            # SIN pulsar Actualizar: marcar una fila tiene que bastar (la ventana ya no se refresca
+            # sola, asi que si el texto dependiera del refresco no se enteraria hasta pulsarlo).
             $script:startTextSel = "$($bSt.Text)"
             # El menu contextual tiene que ofrecer lo mismo que el boton sobre lo elegido.
             $menu = $lv.ContextMenuStrip
@@ -1402,6 +1476,110 @@ if ($null -eq $jobInfo) {
         # Y la cola ya lo ve preparado, que es el efecto que se busca.
         Assert-Eq   'Recorrido: la cola lo ve en cola' 'queued' (@(Get-CvQueueStatus -Context $ctxJob) | Where-Object { $_.Name -eq 'Serie_3x01' }).State
     }
+}
+
+# ================================================================================================
+Write-Host "`nGuiConvert - la lista sigue al archivo que se esta codificando" -ForegroundColor Cyan
+# Con la cola larga, el archivo en curso se va por debajo de la zona visible y ya no se ve lo unico
+# que se mueve. La lista tiene que moverse SOLA para dejarlo a la vista... salvo que te hayas ido tu
+# a mirar otra parte, que entonces no puede dar tirones. Se monta una cola larga de verdad y se
+# comprueba con el scroll REAL de la ventana (TopItem), no con la funcion pura.
+if (-not $sta) {
+    Write-Skip 'Ventana: seguir al que se codifica' 'el host no es STA (usa -Sta)'
+} elseif (-not (Initialize-CvGui)) {
+    Write-Skip 'Ventana: seguir al que se codifica' 'sin entorno grafico'
+} else {
+    # El unico que se codifica tiene que ser el ULTIMO de la lista (si no, ya se ve al abrir).
+    Remove-Item -LiteralPath (Join-Path $ctx.Proceso 'Serie_1x02.lock') -Force -ErrorAction SilentlyContinue
+    foreach ($i in 1..30) { [void](New-FakeVideo -Name ('Serie_5x{0:d2}' -f $i) -Kb 8) }
+    [void](New-FakeVideo -Name 'Serie_9x99' -Kb 8)
+    Set-Content -Path (Join-Path $ctx.Proceso 'Serie_9x99.job.json') -Value '{}' -Encoding UTF8
+    New-FakeLock -Name 'Serie_9x99' -OwnerPid $PID      # este proceso hace de worker vivo
+    Set-CvWorkerFile -Context $ctx -File 'Serie_9x99'
+    # Ventana baja a proposito: asi caben pocas filas y el que se codifica queda fuera.
+    [void](Save-CvGuiLayout -Context $ctx -Key 'cola' -Layout ([ordered]@{
+        width     = 1000
+        height    = 600
+        maximized = $false
+        split     = 300
+        cols      = @(240, 90, 130, 55, 150, 70, 300, 80)
+    }))
+    $script:foErr   = ''
+    $script:foWaits = 0
+    $script:foIdx   = -1
+    $script:foFit   = 0
+    $script:foRows  = 0
+    $script:foTop1  = -1
+    $script:foSee1  = $false
+    $script:foTop2  = -1
+    $script:foTop3  = -1
+    $script:foTopBusy = -1
+    $t4 = New-Object System.Windows.Forms.Timer
+    $t4.Interval = 300
+    $t4.Add_Tick({
+        $fs = @([System.Windows.Forms.Application]::OpenForms)
+        $lvs = $(if ($fs.Count -gt 0) { @($fs[0].Controls.Find('cvQueue', $true)) } else { @() })
+        if ($lvs.Count -eq 0 -or $lvs[0].Items.Count -lt 31) {
+            $script:foWaits++
+            if ($script:foWaits -gt 60) { $t4.Stop(); $script:foErr = 'la ventana no llego a montarse'; $fs | ForEach-Object { $_.Close() } }
+            return
+        }
+        $t4.Stop()
+        try {
+            $f  = $fs[0]
+            $lv = $lvs[0]
+            $script:foRows = $lv.Items.Count
+            for ($k = 0; $k -lt $lv.Items.Count; $k++) { if ($lv.Items[$k].Text -eq 'Serie_9x99') { $script:foIdx = $k } }
+            # Cuantas filas caben: se mide de la propia lista (igual que hace la ventana).
+            $bt = $lv.Items[[int]$lv.TopItem.Index].Bounds
+            $script:foFit = [int][Math]::Floor(($lv.ClientSize.Height - [int]$bt.Top) / [Math]::Max(1, [int]$bt.Height))
+            # 1) Al abrir: la lista se ha movido sola y la fila en curso se VE entera.
+            $script:foTop1 = [int]$lv.TopItem.Index
+            $rb = $lv.Items[[int]$script:foIdx].Bounds
+            $script:foSee1 = ([int]$rb.Top -ge 0 -and [int]$rb.Bottom -le [int]$lv.ClientSize.Height)
+            # 2) Se pone a codificar OTRO archivo, arriba del todo... pero acabo de MARCAR una fila:
+            # mientras estoy usando la lista no se puede mover (si no, un Ctrl/Mayus+clic acaba
+            # seleccionando lo que no era).
+            Remove-Item -LiteralPath (Join-Path $ctx.Proceso 'Serie_9x99.lock') -Force -ErrorAction SilentlyContinue
+            New-FakeLock -Name 'Serie_1x02' -OwnerPid $PID
+            Set-CvWorkerFile -Context $ctx -File 'Serie_1x02'
+            $lv.Items[[int]$script:foIdx].Selected = $true      # tocar la lista (marca $st.Touch)
+            $f.Controls.Find('cvRefresh', $true)[0].PerformClick()
+            $script:foTopBusy = [int]$lv.TopItem.Index
+            # 3) Y en cuanto la suelto (gui.queueFollowHoldSec), se va a por el archivo nuevo.
+            $esperaHasta = [datetime]::UtcNow.AddSeconds(6)
+            while ([datetime]::UtcNow -lt $esperaHasta -and [int]$lv.TopItem.Index -gt 2) {
+                [System.Windows.Forms.Application]::DoEvents()
+                Start-Sleep -Milliseconds 100
+            }
+            $script:foTop3 = [int]$lv.TopItem.Index
+            # 4) Me voy YO al principio de la lista: el siguiente refresco NO puede devolverme.
+            $lv.EnsureVisible(0)
+            $f.Controls.Find('cvRefresh', $true)[0].PerformClick()
+            $script:foTop2 = [int]$lv.TopItem.Index
+            $f.Close()
+        } catch {
+            $script:foErr = "$_"
+            foreach ($fm in @([System.Windows.Forms.Application]::OpenForms)) { $fm.Close() }
+        }
+    })
+    $t4.Start()
+    [void](Show-CvConvertWindow -Context $ctx -Root $tmpRoot -CfgPath $tmpCfg -CfgName 'config.json')
+    Assert-Eq   'Seguir: ventana sin excepciones' '' $script:foErr
+    if ($script:foFit -ge $script:foRows) {
+        Write-Skip 'Ventana: seguir al que se codifica' ("caben las {0} filas: no hay scroll que probar" -f $script:foRows)
+    } else {
+        Assert-True 'Seguir: el que se codifica esta abajo del todo' ($script:foIdx -ge $script:foFit)
+        Assert-True 'Seguir: al abrir, la lista se ha movido sola'   ($script:foTop1 -gt 0)
+        Assert-True 'Seguir: y la fila en curso se ve entera'        $script:foSee1
+        Assert-Eq   'Seguir: mientras la usas, no se mueve' $script:foTop1 $script:foTopBusy
+        Assert-True 'Seguir: al soltarla, va al archivo nuevo'    ($script:foTop3 -le 2)
+        Assert-Eq   'Seguir: si te vas tu, no te devuelve'        0  $script:foTop2
+    }
+    foreach ($i in 1..30) { Remove-Item -LiteralPath (Join-Path $ctx.Original ('Serie_5x{0:d2}.mkv' -f $i)) -Force -ErrorAction SilentlyContinue }
+    Remove-Item -LiteralPath (Join-Path $ctx.Original 'Serie_9x99.mkv') -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath (Join-Path $ctx.Proceso 'Serie_9x99.lock') -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath (Join-Path $ctx.Proceso 'Serie_9x99.job.json') -Force -ErrorAction SilentlyContinue
 }
 
 Remove-CvWorkerState -Context $ctx
