@@ -629,6 +629,28 @@ if (Test-Group 'job') {
     [void](Show-CvProfileEditorWindow -Context $ctx -Prof (Get-ShotProfile -Ctx $ctx -Match 'h265|x265') -CfgPath $cfgJ)
     Stop-Flow
 
+    # Editar VARIOS jobs a la vez: lo que se cambia de golpe y lo que se queda como esta en cada uno.
+    # Los jobs se escriben a mano (no hace falta analizar nada: el dialogo solo lee los .job.json).
+    foreach ($n in @('Serie_1x01', 'Serie_1x02', 'Serie_1x03', 'Serie_1x04')) {
+        $recB = ConvertTo-CvJobRecord -Context $ctx -File $file `
+            -Prof (Get-ShotProfile -Ctx $ctx -Match 'h265|x265') -VideoIndex 0 `
+            -AudioTracks @([pscustomobject]@{ Index = 1; Is51 = $false; Sync = 0; Lang = 'spa'; Default = $true })
+        Write-CvJob -Context $ctx -Name $n -Job $recB
+    }
+    Start-Flow -Body {
+        $f = Get-TopForm
+        if ($null -eq $f -or "$($f.Name)" -ne 'cvJobBulk') { Wait-Step; return }
+        $shotTimer.Stop()
+        # Marcado el caso tipico: que todos copien el video en vez de recodificarlo.
+        $f.Controls.Find('cvBulkVal_videoCopy', $true)[0].SelectedIndex = 1
+        $f.Controls.Find('cvBulkChk_videoCopy', $true)[0].Checked = $true
+        [System.Windows.Forms.Application]::DoEvents()
+        Save-Shot -Form $f -Name 'job-bloque'
+        $f.Controls.Find('cvBulkCancel', $true)[0].PerformClick()   # aqui solo se venia a retratar
+    }
+    [void](Show-CvJobBulkWindow -Context $ctx -Names @('Serie_1x01', 'Serie_1x02', 'Serie_1x03', 'Serie_1x04'))
+    Stop-Flow
+
     Remove-ShotRoot -Path $ctx.Root
 }
 

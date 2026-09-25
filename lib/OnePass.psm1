@@ -22,6 +22,10 @@ function Test-CvOnePassEligible {
             previa —barata, como el pipeline por etapas— y aplica 'volume=XdB' en el filtergraph). Solo
             'aacgain' queda fuera: aplica ReplayGain sobre el .m4a intermedio, que en una pasada no existe.
           - Sin tone-mapping HDR->SDR (usa un hw device Vulkan/libplacebo que complica el filtergraph).
+          - 'Quedarse con el original si engorda' SI es compatible: aqui no hay un momento intermedio
+            donde mirar el video codificado, asi que se comprueba con el fichero YA hecho (mas
+            grande que la entrada) y se le cambia el video por el original con un remux
+            (Invoke-CvVideoSwap). Ver Get-CvVideoSwapArgs.
     #>
     param([Parameter(Mandatory)]$Context, [Parameter(Mandatory)]$Job, [Parameter(Mandatory)]$Prof)
     if (-not $Context.BetaOnePass) { return [pscustomobject]@{ Ok = $false; Reason = 'beta desactivada (test.betaOnePass)' } }

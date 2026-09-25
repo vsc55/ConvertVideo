@@ -181,7 +181,23 @@ Assert-Eq 'Fila en cola'      'queued'  (Get-Row 'Serie_1x03').State
 Assert-Eq 'Fila sin preparar' 'pending' (Get-Row 'Serie_1x04').State
 Assert-Eq 'Fila huerfana'     'stale'   (Get-Row 'Serie_1x05').State
 Assert-True 'Fila hecho: tamano de salida' ((Get-Row 'Serie_1x01').OutSizeKb -ge 0)
-Assert-True 'Fila hecho: 100%'             ((Get-Row 'Serie_1x01').Percent -eq 100)
+Assert-Eq   'Fila hecho: 100%'             ((Get-Row 'Serie_1x01').Percent -eq 100) $true
+# Si la salida se quedo con el video ORIGINAL (recodificar la engordaba), la fila lo dice: es lo
+# unico que no se ve mirando el tamano, y el job ya no existe para contarlo.
+$kvFila = [pscustomobject]@{
+    Name = 'Serie_1x01'
+    State = 'done'
+    StateText = 'Hecho'
+    SizeKb = 2048
+    OutSizeKb = 2000
+    HasJob = $false
+    BorderGuess = ''
+    VideoGuess = 'original'
+}
+Assert-True 'Fila hecho: dice que el video es el original' ((@(Format-CvQueueRow -Row $kvFila)[6]) -match '\[video ORIGINAL\]')
+$kvFila.VideoGuess = ''
+# OJO: -match no distingue mayusculas, y la celda ya dice '% del original'; se busca la marca entera.
+Assert-Eq   'Fila hecho: sin marca no dice nada' $false ((@(Format-CvQueueRow -Row $kvFila)[6]) -match '\[video ORIGINAL\]')
 # La fila que esta en curso trae el progreso del worker que la publica (no hay que buscarlo aparte).
 $r02 = Get-Row 'Serie_1x02'
 Assert-Eq 'Fila en curso: worker'   $PID    $r02.WorkerPid
@@ -403,35 +419,35 @@ Assert-Eq   'En curso: con varios workers, el bloque' '1|3' (@($rngDos.First, $r
 $rngCero = Get-CvQueueWorkingRange -Rows @([pscustomobject]@{ State = 'queued' })
 Assert-Eq   'En curso: nada codificando' '-1|-1' (@($rngCero.First, $rngCero.Last) -join '|')
 
-# Se va por debajo de la zona visible (10 filas a la vista, la fila 30 en curso): hay que moverse.
-$plFuera = Get-CvQueueFollowPlan -Index 30 -Top 0 -Visible 10 -LastTop 0
+# La fila en curso NO se ve: hay que ir a por ella.
+$plFuera = Get-CvQueueFollowPlan -HasRow $true -Visible $false
 Assert-True 'Seguir: fila en curso fuera -> se mueve' ([bool]$plFuera.Scroll)
-$plDentro = Get-CvQueueFollowPlan -Index 5 -Top 0 -Visible 10 -LastTop 0
+$plDentro = Get-CvQueueFollowPlan -HasRow $true -Visible $true
 Assert-Eq   'Seguir: si ya se ve, no se toca' $false ([bool]$plDentro.Scroll)
-# Te has ido TU a otra parte (el scroll cambio sin que lo moviera la ventana): se suelta.
-$plUser = Get-CvQueueFollowPlan -Index 30 -Top 0 -Visible 10 -LastTop 25
+# Te has ido TU a otra parte (el scroll esta en otro sitio y no lo movio la ventana): se suelta.
+$plUser = Get-CvQueueFollowPlan -HasRow $true -Visible $false -Moved $true
 Assert-Eq   'Seguir: te vas tu -> se suelta'   $false ([bool]$plUser.Follow)
 Assert-Eq   'Seguir: y no te devuelve el scroll' $false ([bool]$plUser.Scroll)
 # Y vuelves a tenerla delante: se engancha otra vez.
-$plBack = Get-CvQueueFollowPlan -Index 30 -Top 28 -Visible 10 -LastTop 0 -Following $false
+$plBack = Get-CvQueueFollowPlan -HasRow $true -Visible $true -Moved $true -Following $false
 Assert-True 'Seguir: vuelves a ella -> se engancha' ([bool]$plBack.Follow)
-# La lista RECIEN reconstruida vuelve arriba sola: eso no es que hayas movido tu (-LastTop -1).
-$plRebuild = Get-CvQueueFollowPlan -Index 30 -Top 0 -Visible 10 -LastTop -1
+# La lista RECIEN reconstruida vuelve arriba sola: eso no es que hayas movido tu (-Moved $false).
+$plRebuild = Get-CvQueueFollowPlan -HasRow $true -Visible $false -Moved $false
 Assert-True 'Seguir: reconstruir la lista no cuenta como scroll tuyo' ([bool]$plRebuild.Scroll)
 # Ya suelta, el temporizador no la vuelve a enganchar solo.
-$plSuelta = Get-CvQueueFollowPlan -Index 30 -Top 0 -Visible 10 -LastTop 0 -Following $false
+$plSuelta = Get-CvQueueFollowPlan -HasRow $true -Visible $false -Following $false
 Assert-Eq   'Seguir: suelta, sigue suelta' $false ([bool]$plSuelta.Scroll)
-Assert-Eq   'Seguir: sin nada codificando, nada' $false ([bool](Get-CvQueueFollowPlan -Index -1 -Top 0 -Visible 10 -LastTop 5).Scroll)
-Assert-Eq   'Seguir: apagado en config, nada'    $false ([bool](Get-CvQueueFollowPlan -Index 30 -Top 0 -Visible 10 -LastTop 0 -Enabled $false).Scroll)
+Assert-Eq   'Seguir: sin nada codificando, nada' $false ([bool](Get-CvQueueFollowPlan -HasRow $false -Visible $false).Scroll)
+Assert-Eq   'Seguir: apagado en config, nada'    $false ([bool](Get-CvQueueFollowPlan -HasRow $true -Visible $false -Enabled $false).Scroll)
 # La lista se mueve POCO: solo cuando se pone a codificar OTRO archivo. Que la fila en curso se
 # salga de la vista por cualquier otro motivo no la mueve (moverla mientras la usas es peor).
-Assert-Eq   'Seguir: mismo archivo, no se mueve' $false ([bool](Get-CvQueueFollowPlan -Index 30 -Top 0 -Visible 10 -LastTop 0 -Changed $false).Scroll)
+Assert-Eq   'Seguir: mismo archivo, no se mueve' $false ([bool](Get-CvQueueFollowPlan -HasRow $true -Visible $false -Changed $false).Scroll)
 # Y mientras la estas usando (raton apretado o acabas de marcar filas) no se mueve NADA: ni siquiera
 # se da por visto el archivo, para volver a mirarlo cuando la sueltes.
-$plBusy = Get-CvQueueFollowPlan -Index 30 -Top 0 -Visible 10 -LastTop 0 -Busy $true
+$plBusy = Get-CvQueueFollowPlan -HasRow $true -Visible $false -Busy $true
 Assert-Eq   'Seguir: la estas usando, no se mueve' $false ([bool]$plBusy.Scroll)
 Assert-True 'Seguir: y no da nada por visto'       ([bool]$plBusy.Hold)
-Assert-Eq   'Seguir: libre, no queda nada pendiente' $false ([bool](Get-CvQueueFollowPlan -Index 30 -Top 0 -Visible 10 -LastTop 0).Hold)
+Assert-Eq   'Seguir: libre, no queda nada pendiente' $false ([bool](Get-CvQueueFollowPlan -HasRow $true -Visible $false).Hold)
 # La clave del bloque en curso va por NOMBRE: cambiar de archivo si cuenta, moverse de fila no.
 $kA = Get-CvQueueWorkingRange -Rows @(
     [pscustomobject]@{ State = 'queued';  Name = 'Serie_1x01' }
@@ -633,6 +649,31 @@ if (-not $sta) {
             $script:dblBuf = [bool]([System.Windows.Forms.Control].GetProperty('DoubleBuffered', $dbFlags).GetValue($lv, $null))
             # Los AJUSTES (workers, ver consolas) ya no estan en la barra: viven en la pestana
             # 'Opciones', abajo con el resumen y el log.
+            # Opciones: 'si el video recodificado engorda, quedarse con el original'. Es el valor de
+            # PARTIDA de los jobs nuevos, asi que se guarda en el config al marcarlo.
+            $bKp = @($f.Controls.Find('cvKeepOriginal', $true))
+            $script:keepChk = $bKp.Count
+            if ($bKp.Count -eq 1) {
+                $script:keepAntes    = [bool]$bKp[0].Checked
+                $bKp[0].Checked      = $true
+                $script:keepGuardado = [bool](Read-CvConfigFile -Path $tmpCfg).encode.video.keepOriginalIfBigger
+                $script:keepEnCtx    = [bool]$ctx.KeepOriginal
+                $bKp[0].Checked      = $script:keepAntes
+            }
+            # La ayuda larga se ata al ANCHO DISPONIBLE (parte en varias lineas) en vez de llevar un
+            # ancho fijo: con un ancho fijo se cortaba el texto y encima sobraba sitio a la derecha.
+            # La pestana Opciones tiene que estar A LA VISTA para medirla: una pagina oculta no se
+            # reparte el ancho de la ventana (se queda con el de diseno, 180 px).
+            [void](Select-CvGuiTab -Tabs $tabs -Index (@($tabs.Tag.Texts).Count - 1))
+            [System.Windows.Forms.Application]::DoEvents()
+            $hKp = @($f.Controls.Find('cvKeepHelp', $true))
+            if ($hKp.Count -eq 1) {
+                $script:keepHelpMax  = [int]$hKp[0].MaximumSize.Width
+                $script:keepHelpPan  = [int]$hKp[0].Parent.ClientSize.Width
+                $script:keepHelpAlto = [int]$hKp[0].Height
+                $script:keepHelpAuto = [bool]$hKp[0].AutoSize
+            }
+            [void](Select-CvGuiTab -Tabs $tabs -Index 0)   # se deja como estaba
             $script:defWork  = [int]$f.Controls.Find('cvWorkers', $true)[0].Value
             $script:optChk   = @($f.Controls.Find('cvShowConsoles', $true)).Count
             $script:consoleBtn = @($f.Controls.Find('cvPrepare', $true)).Count
@@ -673,6 +714,14 @@ if (-not $sta) {
     # (antes lo estaba y cada pulsacion abria otro grupo de workers).
     Assert-Eq   'Ventana: Iniciar apagado con workers vivos' $false $script:canStart
     Assert-Eq   'Ventana: Iniciar sin seleccion'    'Iniciar' $script:startText
+    # Opciones: la casilla del video original esta, arranca con lo que diga el config y al marcarla
+    # se guarda (los jobs que se preparen despues nacen con ese valor).
+    Assert-Eq   'Opciones: casilla del video original' 1 $script:keepChk
+    Assert-Eq   'Opciones: arranca como el config'     $false $script:keepAntes
+    Assert-True 'Opciones: al marcarla se guarda'      $script:keepGuardado
+    Assert-True 'Opciones: y la ventana ya lo sabe'    $script:keepEnCtx
+    Assert-True 'Opciones: la ayuda se ata al ancho disponible' ($script:keepHelpMax -gt 400 -and $script:keepHelpMax -le $script:keepHelpPan)
+    Assert-True 'Opciones: y crece a lo alto lo que haga falta' ($script:keepHelpAuto -and $script:keepHelpAlto -gt 14)
     Assert-Eq   'Ventana: Iniciar con 1 elegido'    'Iniciar (1 elegidos)' $script:startTextSel
     Assert-True 'Menu: ofrece codificar lo elegido' ($script:menuItems -match 'Codificar solo este')
     Assert-True 'Menu: ofrece cortar solo esta codificacion' ($script:menuItems -match 'Cortar la codificacion')
@@ -1581,6 +1630,132 @@ if (-not $sta) {
     Remove-Item -LiteralPath (Join-Path $ctx.Proceso 'Serie_9x99.lock') -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath (Join-Path $ctx.Proceso 'Serie_9x99.job.json') -Force -ErrorAction SilentlyContinue
 }
+
+
+# ================================================================================================
+Write-Host "`nEditar los jobs de varias filas a la vez" -ForegroundColor Cyan
+# Tres archivos con jobs DISTINTOS (cada uno con su pista de audio y sus subtitulos). Se cambia en
+# bloque una sola cosa y hay que comprobar las dos mitades: que cambia en todos, y que lo de cada
+# uno sigue intacto.
+foreach ($i in 1..3) {
+    [void](New-FakeVideo -Name ('Serie_6x0{0}' -f $i) -Kb 8)
+    $recB = ConvertTo-CvJobRecord -Context $ctx -File (Join-Path $ctx.Original ('Serie_6x0{0}.mkv' -f $i)) `
+        -Prof (New-CvProfile -VideoEncoder 'libx265' -Crf 28 -AudioEncoder 'aac_coder' -AudioBitrate '128k') `
+        -VideoIndex 0 -Crop ('1920:800:0:14{0}' -f $i) -Resize '1280:-2' -Hdr ($i -eq 2) `
+        -AudioTracks @([pscustomobject]@{ Index = $i; Is51 = $false; Sync = (0.1 * $i); Lang = 'spa'; Default = $true }) `
+        -Subtitles @(@{ index = $i; forced = $false })
+    Write-CvJob -Context $ctx -Name ('Serie_6x0{0}' -f $i) -Job $recB
+}
+$bkRows = @(@(Get-CvQueueStatus -Context $ctx) | Where-Object { $_.Name -match '^Serie_6x' })
+Assert-Eq   'Bloque: los tres en cola' 3 @($bkRows | Where-Object { $_.State -eq 'queued' }).Count
+# La regla de cuando es una accion EN BLOQUE: con una sola fila, no (para eso esta el editor normal).
+Assert-Eq   'Bloque: con una fila no aplica' 0 @((Get-CvQueueBulkActions -Rows @($bkRows[0])).Edit).Count
+Assert-Eq   'Bloque: con tres, las tres'     3 @((Get-CvQueueBulkActions -Rows $bkRows).Edit).Count
+Assert-True 'Bloque: y lo dice en el menu'   ((Get-CvQueueBulkActions -Rows $bkRows).EditText -match 'los 3 jobs')
+# Lo que se esta codificando NO se toca: el worker ya leyo su job.
+$bkConCurso = @($bkRows + @(@(Get-CvQueueStatus -Context $ctx) | Where-Object { $_.State -eq 'working' }))
+Assert-Eq   'Bloque: deja fuera lo que se codifica' 3 @((Get-CvQueueBulkActions -Rows $bkConCurso).Edit).Count
+
+$bkRes = Set-CvJobsBulk -Context $ctx -Names @('Serie_6x01', 'Serie_6x02', 'Serie_6x03') -Changes @{ videoCopy = $true }
+Assert-Eq   'Bloque: cambiados los tres' 3 ([int]$bkRes.Done)
+Assert-Eq   'Bloque: ninguno fallo'      0 ([int]$bkRes.Failed)
+foreach ($i in 1..3) {
+    $jb = Read-CvJob -Context $ctx -Name ('Serie_6x0{0}' -f $i)
+    Assert-Eq ('Bloque: {0} copia el video' -f $i)      $true ([bool]$jb.video.skip)
+    Assert-Eq ('Bloque: {0} conserva su pista' -f $i)   $i    ([int]@(Get-CvJobAudioTracks $jb.audio)[0].Index)
+    Assert-Eq ('Bloque: {0} conserva su retardo' -f $i) (0.1 * $i) ([double]@(Get-CvJobAudioTracks $jb.audio)[0].Sync)
+    Assert-Eq ('Bloque: {0} conserva sus subtitulos' -f $i) 1 (@($jb.subtitles).Count)
+    Assert-Eq ('Bloque: {0} conserva su recorte' -f $i) ('1920:800:0:14{0}' -f $i) "$($jb.video.crop)"
+    Assert-Eq ('Bloque: {0} conserva su HDR' -f $i)     ($i -eq 2) ([bool]$jb.video.hdr)
+}
+# Un nombre que no existe se cuenta como fallo y no se lleva por delante a los demas.
+$bkMal = Set-CvJobsBulk -Context $ctx -Names @('Serie_6x01', 'NoExiste_9x99') -Changes @{ crop = '' }
+Assert-Eq   'Bloque: sigue con los demas' 1 ([int]$bkMal.Done)
+Assert-Eq   'Bloque: y cuenta el que falla' 1 ([int]$bkMal.Failed)
+Assert-Eq   'Bloque: recorte quitado' '' "$((Read-CvJob -Context $ctx -Name 'Serie_6x01').video.crop)"
+Assert-Eq   'Bloque: al de al lado no le toca' '1920:800:0:142' "$((Read-CvJob -Context $ctx -Name 'Serie_6x02').video.crop)"
+# Sin marcar nada no se escribe nada.
+$bkNada = Set-CvJobsBulk -Context $ctx -Names @('Serie_6x02') -Changes @{}
+Assert-Eq   'Bloque: sin nada marcado, no toca nada' 0 ([int]$bkNada.Done)
+
+# --- La VENTANA de verdad: se marca 'Video -> Copiar' y se aplica (sin raton).
+if (-not $sta) {
+    Write-Skip 'Ventana: editar jobs en bloque' 'el host no es STA (usa -Sta)'
+} elseif (-not (Initialize-CvGui)) {
+    Write-Skip 'Ventana: editar jobs en bloque' 'sin entorno grafico'
+} else {
+    [void](Set-CvJobsBulk -Context $ctx -Names @('Serie_6x01', 'Serie_6x02', 'Serie_6x03') -Changes @{ videoCopy = $false })
+    $script:bwErr   = ''
+    $script:bwTry   = 0
+    $script:bwApply0 = $null
+    $script:bwApply1 = $null
+    $script:bwList  = 0
+    $script:bwMsg   = ''
+    $tb = New-Object System.Windows.Forms.Timer
+    $tb.Interval = 300
+    $tb.Add_Tick({
+        $script:bwTry++
+        try {
+            $w = @([System.Windows.Forms.Application]::OpenForms | Where-Object { $_.Name -eq 'cvJobBulk' })
+            if ($w.Count -eq 0) {
+                if ($script:bwTry -gt 40) { $tb.Stop(); $script:bwErr = 'no se abrio la ventana' }
+                return
+            }
+            $tb.Stop()
+            $f = $w[0]
+            $script:bwList = $f.Controls.Find('cvBulkList', $true)[0].Items.Count
+            # Sin marcar nada no se puede aplicar (no habria nada que hacer).
+            $script:bwApply0 = [bool]$f.Controls.Find('cvBulkApply', $true)[0].Enabled
+            $cmb = $f.Controls.Find('cvBulkVal_videoCopy', $true)[0]
+            $cmb.SelectedIndex = 1                                      # 'Copiar (sin recodificar)'
+            $f.Controls.Find('cvBulkChk_videoCopy', $true)[0].Checked = $true
+            $script:bwApply1 = [bool]$f.Controls.Find('cvBulkApply', $true)[0].Enabled
+            $script:bwMsg    = "$($f.Controls.Find('cvBulkMsg', $true)[0].Text)"
+            $f.Controls.Find('cvBulkApply', $true)[0].PerformClick()
+        } catch {
+            $tb.Stop()
+            $script:bwErr = "$_"
+            foreach ($fm in @([System.Windows.Forms.Application]::OpenForms)) { $fm.Close() }
+        }
+    })
+    $tb.Start()
+    $bwHecho = Show-CvJobBulkWindow -Context $ctx -Names @('Serie_6x01', 'Serie_6x02', 'Serie_6x03')
+    Assert-Eq   'Ventana bloque: sin excepciones' '' $script:bwErr
+    Assert-Eq   'Ventana bloque: ensena los tres archivos' 3 $script:bwList
+    Assert-Eq   'Ventana bloque: sin marcar nada no deja aplicar' $false $script:bwApply0
+    Assert-True 'Ventana bloque: al marcar, se puede aplicar'     $script:bwApply1
+    Assert-True 'Ventana bloque: dice lo que va a cambiar'        ($script:bwMsg -match 'video -> copiar')
+    Assert-True 'Ventana bloque: aplico'                          $bwHecho
+    Assert-Eq   'Ventana bloque: los tres copian el video' 3 @(1..3 | Where-Object { [bool](Read-CvJob -Context $ctx -Name ('Serie_6x0{0}' -f $_)).video.skip }).Count
+    Assert-Eq   'Ventana bloque: y cada uno con su pista' '1,2,3' ((@(1..3 | ForEach-Object { [int]@(Get-CvJobAudioTracks (Read-CvJob -Context $ctx -Name ('Serie_6x0{0}' -f $_)).audio)[0].Index })) -join ',')
+}
+foreach ($i in 1..3) {
+    Remove-Item -LiteralPath (Join-Path $ctx.Original ('Serie_6x0{0}.mkv' -f $i)) -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath (Join-Path $ctx.Proceso ('Serie_6x0{0}.job.json' -f $i)) -Force -ErrorAction SilentlyContinue
+}
+
+# ================================================================================================
+Write-Host "`nLa lista de 'codificar solo estos' llega entera al worker" -ForegroundColor Cyan
+# REGRESION de verdad: 'powershell -File' NO interpreta lo que le pasa, cada argumento llega como
+# cadena literal. Con los nombres separados por comas el worker recibia UN solo nombre ('A,B,C'),
+# no encontraba ninguno y se moria sin codificar nada: se veian arrancar los workers y ya. Aqui se
+# abre un proceso DE VERDAD con los argumentos que arma la ventana y se mira que llegan los tres.
+$onlyEco = Join-Path $tmpRoot 'eco-only.ps1'
+Set-Content -Path $onlyEco -Encoding UTF8 -Value @(
+    'param([string[]]$Only = @(), [switch]$WorkerOnly, [switch]$Unattended, [string]$Config = "")'
+    ('Import-Module (Join-Path "{0}" "lib\WorkerCore.psm1") -Force -DisableNameChecking' -f $Root)
+    '$n = @(Expand-CvOnlyList -Values $Only)'
+    'Write-Output ("{0}|{1}" -f $n.Count, ($n -join ";"))'
+)
+$onlyNombres = @('Serie_1x01', 'Mi Serie 1x05', 'Peli_[2024], version larga')
+$onlyArgv = @(Get-CvConvertWorkerArgs -Root $tmpRoot -Only $onlyNombres)
+# Se cambia solo el script de destino: el resto de la linea es la que se usa de verdad.
+$onlyArgv = @($onlyArgv | ForEach-Object { if ("$_" -like '*Convert.ps1*') { '"{0}"' -f $onlyEco } else { $_ } })
+$onlySal = Join-Path $tmpRoot 'eco-only.txt'
+[void](Start-Process -FilePath 'powershell.exe' -ArgumentList $onlyArgv -NoNewWindow -Wait -RedirectStandardOutput $onlySal)
+$onlyLeido = "$(@(Get-Content -LiteralPath $onlySal -ErrorAction SilentlyContinue) -join '')".Trim()
+Assert-Eq 'Only: llegan los tres nombres enteros' ("3|" + ($onlyNombres -join ';')) $onlyLeido
+Remove-Item -LiteralPath $onlyEco, $onlySal -Force -ErrorAction SilentlyContinue
 
 Remove-CvWorkerState -Context $ctx
 

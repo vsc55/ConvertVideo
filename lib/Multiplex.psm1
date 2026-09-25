@@ -164,6 +164,10 @@ function Get-CvMultiplexArgs {
     $ffArgs += (Get-CvAttachmentMapArgs -Attachments $Plan.KeepAtt -InputIndex $Plan.OrigInput)
 
     $ffArgs += @('-c:v','copy','-c:a','copy')
+    # Marca en la SALIDA que el video es el ORIGINAL porque recodificarlo no compensaba
+    # (encode.video.keepOriginalIfBigger). Es la unica forma de saberlo despues: el job ya no existe
+    # cuando la cola ensena la fila como 'Hecho', y la ventana lo lee de aqui con un ffprobe.
+    if ([bool]$Plan.VideoFromSource) { $ffArgs += @('-metadata', 'CV_VIDEO=original') }
     if ($Plan.KeepAtt.Count -gt 0) { $ffArgs += @('-c:t','copy') }
     # Modo pruebas: acotar la salida final. Imprescindible en perfil copy (el video se copia del
     # original a longitud COMPLETA, mientras el audio recodificado ya viene a TestLimit); tambien
@@ -189,7 +193,10 @@ function Invoke-Multiplex {
         # Pistas de audio a incluir (multipista): [{Source='temp'|'copy'; File; Index; Lang; Title; Default}].
         # La DEFAULT va PRIMERO (asi las ordena el worker). Vacio + AudioSkipped -> copy clasico de 0:a:0.
         $AudioTracks = @(),
-        [int]$VideoIndex = -1
+        [int]$VideoIndex = -1,
+        # El video es el ORIGINAL porque recodificarlo no compensaba (no porque el perfil sea copy):
+        # se marca en la salida para que la cola lo pueda ensenar despues.
+        [bool]$VideoFromSource = $false
     )
     $name  = [System.IO.Path]::GetFileNameWithoutExtension($File)
     $out   = Get-OutputPath $Context $name
@@ -243,6 +250,7 @@ function Invoke-Multiplex {
         HasSubs    = $hasSubs
         # ¿El original tiene audio? (para el copy clásico: una fuente MUDA da salida solo-vídeo).
         HasOrigAudio = (@(Get-AudioStreams -Info $Info).Count -gt 0)
+        VideoFromSource = [bool]$VideoFromSource
     }
     $ffArgs = Get-CvMultiplexArgs -Context $Context -Info $Info -Plan $plan
 
@@ -260,7 +268,118 @@ function Invoke-Multiplex {
     }
     # Limpiar las etiquetas DURATION que anade el muxer de Matroska (mkvpropedit).
     Remove-CvMkvTags -Context $Context -File $out
+    # ...y reponer la marca del video original, que esa limpieza borra con todo lo demas.
+    if ($VideoFromSource) { Set-CvMkvVideoMark -Context $Context -File $out }
     return $true
+}
+
+function Get-CvVideoSwapArgs {
+    <#
+        PURO. Comando para CAMBIARLE a una salida ya hecha su pista de video por la del ORIGINAL,
+        dejando todo lo demas (audio, subtitulos, adjuntos, capitulos) tal cual: todo se copia, no se
+        recodifica nada. Es lo que permite aplicar 'si engorda, quedate el original' cuando el
+        fichero final ya esta escrito de una sola pasada.
+
+        El video entra por el input 1 (el original) y el resto por el 0 (la salida ya hecha). Al
+        video se le re-fija idioma/titulo como hace el multiplex, para que no arrastre los del
+        origen, y se marca el fichero (CV_VIDEO) igual que en el camino por etapas.
+    #>
+    param(
+        [Parameter(Mandatory)]$Context,
+        [Parameter(Mandatory)][string]$OutFile,
+        [Parameter(Mandatory)][string]$SrcFile,
+        [Parameter(Mandatory)][string]$TmpFile,
+        [int]$VideoIndex = -1
+    )
+    $vmap = $(if ($VideoIndex -ge 0) { "1:{0}" -f $VideoIndex } else { '1:v:0' })
+    $a = @('-hide_banner', '-y')
+    if ([int]$Context.Threads -gt 0) { $a += @('-threads', "$($Context.Threads)") }
+    $a += @('-i', $OutFile, '-i', $SrcFile)
+    $a += @('-map', $vmap, '-map', '0:a?', '-map', '0:s?', '-map', '0:t?')
+    $a += @('-map_metadata', '0', '-map_chapters', '0')
+    $a += @('-metadata:s:v', 'title=', '-metadata:s:v', 'language=und')
+    $a += @('-metadata', 'CV_VIDEO=original')
+    $a += @('-c', 'copy', '-f', 'matroska', $TmpFile)
+    return ,$a
+}
+
+function Invoke-CvVideoSwap {
+    <#
+        Le cambia a la salida su video por el del ORIGINAL (remux, sin recodificar) y la sustituye.
+        Devuelve $true si la salida quedo cambiada; si algo falla, se deja la salida como estaba (que
+        es valida: solo ocupa mas de lo que nos gustaria).
+    #>
+    param(
+        [Parameter(Mandatory)]$Context,
+        [Parameter(Mandatory)][string]$File,
+        [Parameter(Mandatory)][string]$OutFile,
+        [int]$VideoIndex = -1
+    )
+    $name = [System.IO.Path]::GetFileNameWithoutExtension($File)
+    $tmp  = Join-Path $Context.Proceso ("{0}.swap.mkv" -f $name)
+    if (Test-Path -LiteralPath $tmp) { Remove-Item -Force -LiteralPath $tmp -ErrorAction SilentlyContinue }
+    $ffArgs = Get-CvVideoSwapArgs -Context $Context -OutFile $OutFile -SrcFile $File -TmpFile $tmp -VideoIndex $VideoIndex
+    Start-CvStep $Context 'MULTIPLEX' 'Cambiando el video por el original...'
+    $code = Invoke-ToolShow -Exe $Context.FFmpeg -Arguments $ffArgs -Context $Context
+    $ok = (($code -eq 0) -and (Test-Path -LiteralPath $tmp) -and ((Get-Item -LiteralPath $tmp).Length -gt 0))
+    if (-not $ok) {
+        Stop-CvStep $Context 'MULTIPLEX' $false -FailMsg ("[AVISO] - no se pudo cambiar el video (ffmpeg {0}); se deja la salida recodificada" -f $code)
+        if (Test-Path -LiteralPath $tmp) { Remove-Item -Force -LiteralPath $tmp -ErrorAction SilentlyContinue }
+        return $false
+    }
+    try {
+        Remove-Item -Force -LiteralPath $OutFile -ErrorAction Stop
+        Move-Item -LiteralPath $tmp -Destination $OutFile -Force -ErrorAction Stop
+    } catch {
+        Stop-CvStep $Context 'MULTIPLEX' $false -FailMsg ("[AVISO] - no se pudo sustituir la salida: {0}" -f $_.Exception.Message)
+        if (Test-Path -LiteralPath $tmp) { Remove-Item -Force -LiteralPath $tmp -ErrorAction SilentlyContinue }
+        return $false
+    }
+    $mbTxt = ("({0} MB)" -f (Format-CvMb -Bytes (Get-Item -LiteralPath $OutFile).Length))
+    Stop-CvStep $Context 'MULTIPLEX' $true -Extra $mbTxt -OkMsg ("[OK] - video ORIGINAL puesto en la salida  {0}" -f $mbTxt)
+    # Misma pareja que en el multiplex: limpiar etiquetas y reponer la marca (la limpieza la borra).
+    Remove-CvMkvTags -Context $Context -File $OutFile
+    Set-CvMkvVideoMark -Context $Context -File $OutFile
+    return $true
+}
+
+function Set-CvMkvVideoMark {
+    <#
+        Vuelve a poner en la salida la marca de que su video es el ORIGINAL (CV_VIDEO), DESPUES de la
+        limpieza de etiquetas. Hace falta porque Remove-CvMkvTags borra TODAS las etiquetas del MKV
+        ('mkvpropedit --tags all:', que es como se quitan los DURATION que escribe el muxer de
+        ffmpeg) y se llevaba tambien la marca que acababa de escribir el multiplex -MEDIDO: ffmpeg la
+        escribia y el fichero acababa sin ella-.
+
+        Sin limpieza de etiquetas (postprocess.stripTags = false) no hay nada que reponer: la que
+        escribio ffmpeg sigue ahi. Sin mkvpropedit disponible, tampoco se limpio nada. Fail-soft: la
+        marca es informativa (la cola la ensena), asi que un fallo aqui no invalida la conversion.
+    #>
+    param([Parameter(Mandatory)]$Context, [Parameter(Mandatory)][string]$File)
+    if (-not $Context.StripTags) { return }
+    $mpe = "$($Context.MkvPropEdit)"
+    if ([string]::IsNullOrWhiteSpace($mpe) -or -not (Test-Path -LiteralPath $mpe)) { return }
+    $xml = Join-Path $Context.Proceso ("{0}.tags.xml" -f [System.IO.Path]::GetFileNameWithoutExtension($File))
+    try {
+        $texto = @(
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<Tags>'
+            '  <Tag>'
+            '    <Simple>'
+            '      <Name>CV_VIDEO</Name>'
+            '      <String>original</String>'
+            '    </Simple>'
+            '  </Tag>'
+            '</Tags>'
+        ) -join [Environment]::NewLine
+        [void](Save-CvTextFile -Path $xml -Text $texto)
+        $r = Invoke-ToolCapture -Exe $mpe -Arguments @($File, '--tags', ("global:{0}" -f $xml)) -Context $Context
+        if ($r.ExitCode -ne 0) { Write-CvLog 'MULTIPLEX' ("[AVISO] - no se pudo marcar la salida como video original (mkvpropedit {0})" -f $r.ExitCode) }
+    } catch {
+        Write-CvLog 'MULTIPLEX' ("[AVISO] - no se pudo marcar la salida como video original: {0}" -f $_.Exception.Message)
+    } finally {
+        if (Test-Path -LiteralPath $xml) { Remove-Item -Force -LiteralPath $xml -ErrorAction SilentlyContinue }
+    }
 }
 
 function Remove-CvMkvTags {

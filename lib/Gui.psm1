@@ -975,6 +975,32 @@ function Get-CvGuiCurrentPalette {
     return $script:CvGuiPalette
 }
 
+function Set-CvGuiWrapLabel {
+    <#
+        Ata una etiqueta de AYUDA al ancho de su contenedor: usa TODO el ancho disponible y parte en
+        las lineas que haga falta en vez de cortarse. Con AutoSize y MaximumSize.Width, WinForms
+        envuelve el texto y le da el alto que necesite; el ancho se recalcula al redimensionar la
+        ventana (un ancho fijo se queda corto en una ventana ancha y sobra en una estrecha).
+
+        -Gap es lo que se deja por los lados (margen del contenedor).
+    #>
+    param(
+        [Parameter(Mandatory)]$Label,
+        [Parameter(Mandatory)]$Container,
+        [int]$Gap = 24,
+        [int]$Min = 120
+    )
+    $Label.AutoSize = $true
+    $ajustar = {
+        $w = [int]$Container.ClientSize.Width - $Gap
+        if ($w -lt $Min) { $w = $Min }
+        if ([int]$Label.MaximumSize.Width -ne $w) { $Label.MaximumSize = New-Object System.Drawing.Size($w, 0) }
+    }.GetNewClosure()
+    & $ajustar
+    $Container.Add_ClientSizeChanged($ajustar)
+    return $Label
+}
+
 function Set-CvGuiRole {
     <#
         Marca un control con su ROL de mensaje y le pone el color que le toca AHORA. La marca va en

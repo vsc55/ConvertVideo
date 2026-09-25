@@ -1778,6 +1778,126 @@ $muxSilentStr = ((Get-CvMultiplexArgs -Context $muxCtx -Info $muxInfo -Plan $mux
 Assert-Eq 'GOLDEN multiplex mudo sin -map a:0'      $false ($muxSilentStr -match '-map 1:a:0')
 Assert-Eq 'GOLDEN multiplex mudo sin map_metadata a' $false ($muxSilentStr -match '-map_metadata:s:a:0')
 Assert-True 'GOLDEN multiplex mudo mapea video'      ($muxSilentStr -match '-map 0:v:0')
+# ================================================================================================
+Write-Host "`nRecodificar que engorda: quedarse con el video ORIGINAL" -ForegroundColor Cyan
+# Config: de serie NO se toca nada (es una opcion), y el 1.00 dice "solo si sale mas grande".
+Assert-Eq   'Config: no se queda el original de serie' $false ([bool](Get-CvConfigDefaults).encode.video.keepOriginalIfBigger)
+Assert-Eq   'Config: proporcion 1.00'                  1.0   ([double](Get-CvConfigDefaults).encode.video.keepOriginalRatio)
+
+# Cuanto ocupa la pista de video sin leer el fichero entero. Por orden: tag de mkvmerge, bit_rate,
+# tag BPS y, si no hay nada, el tamano del archivo como cota superior (conservador).
+$kvTag = [pscustomobject]@{
+    format  = [pscustomobject]@{ duration = '100' }
+    streams = @([pscustomobject]@{ index = 0; codec_type = 'video'; tags = [pscustomobject]@{ NUMBER_OF_BYTES = '12345678' } })
+}
+$rTag = Get-CvVideoStreamBytes -Info $kvTag
+Assert-Eq   'Tamano pista: del tag de mkvmerge' 12345678 ([long]$rTag.Bytes)
+Assert-Eq   'Tamano pista: y lo dice'           'tag'    "$($rTag.From)"
+$kvBr = [pscustomobject]@{
+    format  = [pscustomobject]@{ duration = '100' }
+    streams = @([pscustomobject]@{ index = 0; codec_type = 'video'; bit_rate = '8000' })
+}
+$rBr = Get-CvVideoStreamBytes -Info $kvBr
+Assert-Eq   'Tamano pista: por bit_rate x duracion' 100000 ([long]$rBr.Bytes)
+Assert-Eq   'Tamano pista: y lo dice'               'bitrate' "$($rBr.From)"
+$kvBps = [pscustomobject]@{
+    format  = [pscustomobject]@{ duration = '100' }
+    streams = @([pscustomobject]@{ index = 0; codec_type = 'video'; tags = [pscustomobject]@{ BPS = '8000' } })
+}
+Assert-Eq   'Tamano pista: por el tag BPS' 100000 ([long](Get-CvVideoStreamBytes -Info $kvBps).Bytes)
+$kvNada = [pscustomobject]@{
+    format  = [pscustomobject]@{ duration = '100' }
+    streams = @([pscustomobject]@{ index = 0; codec_type = 'video' })
+}
+$rArch = Get-CvVideoStreamBytes -Info $kvNada -FileBytes 999
+Assert-Eq   'Tamano pista: sin datos, el archivo como tope' 999 ([long]$rArch.Bytes)
+Assert-Eq   'Tamano pista: y lo dice'                       'archivo' "$($rArch.From)"
+Assert-Eq   'Tamano pista: sin nada de nada, 0' 0 ([long](Get-CvVideoStreamBytes -Info $kvNada).Bytes)
+Assert-Eq   'Tamano pista: sin info, 0'         0 ([long](Get-CvVideoStreamBytes -Info $null).Bytes)
+
+# Cuando el original SIRVE de sustituto: solo si la imagen no cambia.
+Assert-True 'Imagen intacta: recodificar y ya' ([bool](Get-CvVideoPictureState).Untouched)
+Assert-Eq   'Imagen intacta: con recorte no'   $false ([bool](Get-CvVideoPictureState -Crop '1920:800:0:140' -SrcWidth 1920 -SrcHeight 1080).Untouched)
+Assert-Eq   'Imagen intacta: con escalado no'  $false ([bool](Get-CvVideoPictureState -Resize '1280:-2' -SrcWidth 1920 -SrcHeight 1080).Untouched)
+Assert-Eq   'Imagen intacta: con tone-mapping no' $false ([bool](Get-CvVideoPictureState -Hdr $true -TonemapHdr 'auto').Untouched)
+Assert-True 'Imagen intacta: HDR sin tonemapear si' ([bool](Get-CvVideoPictureState -Hdr $true -TonemapHdr 'off').Untouched)
+# El fps solo descalifica si CAMBIA (forceFps viene puesto de serie: forzar 23.976 sobre un origen
+# que ya va a 23.976 no cambia nada).
+Assert-True 'Imagen intacta: mismo fps forzado' ([bool](Get-CvVideoPictureState -SrcFps 23.976 -OutFps 23.976).Untouched)
+Assert-Eq   'Imagen intacta: 30 -> 23.976 no'   $false ([bool](Get-CvVideoPictureState -SrcFps 30 -OutFps 23.976).Untouched)
+Assert-True 'Imagen intacta: fps desconocido no estorba' ([bool](Get-CvVideoPictureState -SrcFps 0 -OutFps 23.976).Untouched)
+# Y dice QUE la cambia (va al log, para no tener que adivinar por que no se sustituyo).
+$imgR = Get-CvVideoPictureState -Resize '1280:-2' -SrcFps 30 -OutFps 23.976 -SrcWidth 1920 -SrcHeight 1080
+Assert-True 'Imagen: cuenta el escalado' ("$($imgR.Reason)" -match 'escalado 1280:-2')
+Assert-True 'Imagen: y el cambio de fps' ("$($imgR.Reason)" -match 'fps 30')
+# LO IMPORTANTE (caso real): un perfil con ChangeSize 1920:-2 sobre un video que YA es de 1920 pide
+# un escalado que no escala nada; eso no puede impedir quedarse con el original.
+Assert-True 'Escalado: al mismo tamano no es tocar la imagen' ([bool](Get-CvVideoPictureState -Resize '1920:-2' -SrcWidth 1920 -SrcHeight 1080).Untouched)
+Assert-True 'Escalado: sin escalado, tampoco'  (Test-CvResizeNoop -Resize '' -SrcWidth 1920 -SrcHeight 1080)
+Assert-True 'Escalado: 1920:1080 sobre 1920x1080' (Test-CvResizeNoop -Resize '1920:1080' -SrcWidth 1920 -SrcHeight 1080)
+Assert-Eq   'Escalado: 1280:-2 sobre 1920 si escala' $false (Test-CvResizeNoop -Resize '1280:-2' -SrcWidth 1920 -SrcHeight 1080)
+Assert-Eq   'Escalado: sin medidas no se sabe'       $false (Test-CvResizeNoop -Resize '1920:-2')
+Assert-Eq   'Escalado: alto impar con -2 redondea'   $false (Test-CvResizeNoop -Resize '1920:-2' -SrcWidth 1920 -SrcHeight 1081)
+Assert-Eq   'Escalado: raro (-2:-2) no se sabe'      $false (Test-CvResizeNoop -Resize '-2:-2' -SrcWidth 1920 -SrcHeight 1080)
+# Lo mismo con un recorte que abarca el fotograma entero.
+Assert-True 'Recorte: el fotograma entero no recorta' (Test-CvCropNoop -Crop '1920:1080:0:0' -SrcWidth 1920 -SrcHeight 1080)
+Assert-Eq   'Recorte: de verdad si'                   $false (Test-CvCropNoop -Crop '1920:800:0:140' -SrcWidth 1920 -SrcHeight 1080)
+Assert-True 'Recorte: sin recorte, nada'              (Test-CvCropNoop -Crop '' -SrcWidth 1920 -SrcHeight 1080)
+
+# La decision.
+$kpSi = Get-CvVideoKeepPlan -EncodedBytes 2000 -OriginalBytes 1000 -Enabled $true
+Assert-True 'Engorda: se queda el original'   ([bool]$kpSi.UseOriginal)
+Assert-True 'Engorda: y cuenta por que'       ("$($kpSi.Reason)" -match 'no compensa')
+Assert-Eq   'Adelgaza: se queda lo codificado' $false ([bool](Get-CvVideoKeepPlan -EncodedBytes 500 -OriginalBytes 1000 -Enabled $true).UseOriginal)
+Assert-Eq   'Justo igual: no es mas grande'    $false ([bool](Get-CvVideoKeepPlan -EncodedBytes 1000 -OriginalBytes 1000 -Enabled $true).UseOriginal)
+# Con la proporcion se puede pedir que AHORRE algo, no solo que no engorde.
+Assert-True 'Proporcion: si no ahorra un 5%, original' ([bool](Get-CvVideoKeepPlan -EncodedBytes 960 -OriginalBytes 1000 -Enabled $true -Ratio 0.95).UseOriginal)
+Assert-Eq   'Proporcion: si ahorra mas, lo codificado' $false ([bool](Get-CvVideoKeepPlan -EncodedBytes 900 -OriginalBytes 1000 -Enabled $true -Ratio 0.95).UseOriginal)
+Assert-Eq   'Apagado: no se compara nada'      $false ([bool](Get-CvVideoKeepPlan -EncodedBytes 2000 -OriginalBytes 1000).UseOriginal)
+$kpToc = Get-CvVideoKeepPlan -EncodedBytes 2000 -OriginalBytes 1000 -Enabled $true -Untouched $false
+Assert-Eq   'Imagen cambiada: no se sustituye' $false ([bool]$kpToc.UseOriginal)
+Assert-True 'Imagen cambiada: y dice por que'  ("$($kpToc.Reason)" -match 'la imagen cambia')
+$kpNs = Get-CvVideoKeepPlan -EncodedBytes 2000 -OriginalBytes 0 -Enabled $true
+Assert-Eq   'Sin tamanos no se decide'         $false ([bool]$kpNs.UseOriginal)
+Assert-True 'Sin tamanos: y lo dice'           ("$($kpNs.Reason)" -match 'no se sabe')
+
+# En el JOB: se decide por archivo, y un job de antes de la opcion hereda lo que diga la config.
+$kjCtx = [pscustomobject]@{ FFmpegVersion = '7.1.1'; AacGainVersion = '1.9' }
+$kjRec = ConvertTo-CvJobRecord -Context $kjCtx -File 'X:\a.mkv' -Prof ([pscustomobject]@{ VideoEncoder = 'libx265' }) -KeepOriginal $true
+Assert-Eq   'Job: lleva keepOriginal'          $true ([bool]$kjRec.video.keepOriginal)
+Assert-Eq   'Job: keepOriginal de serie'       $false ([bool](ConvertTo-CvJobRecord -Context $kjCtx -File 'X:\a.mkv' -Prof ([pscustomobject]@{ VideoEncoder = 'libx265' })).video.keepOriginal)
+Assert-Eq   'Job viejo: manda la config (si)'  $true  (Get-CvJobKeepOriginal -Job ([pscustomobject]@{ video = [pscustomobject]@{ skip = $false } }) -Default $true)
+Assert-Eq   'Job viejo: manda la config (no)'  $false (Get-CvJobKeepOriginal -Job ([pscustomobject]@{ video = [pscustomobject]@{ skip = $false } }) -Default $false)
+Assert-Eq   'Job nuevo: manda el job'          $false (Get-CvJobKeepOriginal -Job ([pscustomobject]@{ video = [pscustomobject]@{ keepOriginal = $false } }) -Default $true)
+Assert-Eq   'Job nuevo: manda el job (si)'     $true  (Get-CvJobKeepOriginal -Job ([pscustomobject]@{ video = [pscustomobject]@{ keepOriginal = $true } }) -Default $false)
+Assert-Eq   'Sin job: manda el defecto'        $true  (Get-CvJobKeepOriginal -Job $null -Default $true)
+
+# La SALIDA queda marcada, que es lo unico que sobrevive (el job se borra al terminar).
+$muxPlanKeep = [pscustomobject]@{ File='X:\in.mkv'; Out='X:\out.mkv'; VideoSrc='X:\in.mkv'; Vmap='0:v:0'
+    TempAudio=@(); CopyAudio=@(); LegacyCopy=$true; Subs=@(); KeepAtt=@(); OrigInput=1; ChapInput=0; NeedOrig=$true; HasSubs=$false; HasOrigAudio=$true
+    VideoFromSource=$true }
+Assert-True 'Multiplex: marca el video original' (((Get-CvMultiplexArgs -Context $muxCtx -Info $muxInfo -Plan $muxPlanKeep) -join ' ') -match ([regex]::Escape('-metadata CV_VIDEO=original')))
+Assert-Eq   'Multiplex: sin marca si no aplica'  $false (((Get-CvMultiplexArgs -Context $muxCtx -Info $muxInfo -Plan $muxPlanCopy) -join ' ') -match 'CV_VIDEO')
+# Y la cola la lee de la salida.
+Assert-Eq   'Marca: se lee de la salida' 'original' (Get-CvOutputVideoSource -Info ([pscustomobject]@{ format = [pscustomobject]@{ tags = [pscustomobject]@{ CV_VIDEO = 'original' } } }))
+Assert-Eq   'Marca: en minusculas tambien' 'original' (Get-CvOutputVideoSource -Info ([pscustomobject]@{ format = [pscustomobject]@{ tags = [pscustomobject]@{ cv_video = 'ORIGINAL' } } }))
+Assert-Eq   'Marca: salida normal, nada'  '' (Get-CvOutputVideoSource -Info ([pscustomobject]@{ format = [pscustomobject]@{ tags = [pscustomobject]@{ title = 'x' } } }))
+Assert-Eq   'Marca: sin tags, nada'       '' (Get-CvOutputVideoSource -Info ([pscustomobject]@{ format = [pscustomobject]@{} }))
+Assert-Eq   'Marca: sin info, nada'       '' (Get-CvOutputVideoSource -Info $null)
+
+# La beta de UNA PASADA sigue sirviendo con la opcion puesta: alli no hay un momento intermedio
+# donde mirar el video, asi que se compara el FICHERO ya hecho y se le cambia el video con un remux.
+$kpCtx1 = [pscustomobject]@{ BetaOnePass = $true; SyncAdelay = $true; VolumeMethod = 'loudnorm'; TonemapHdr = 'off'; KeepOriginal = $true }
+$kpJob1 = [pscustomobject]@{ video = [pscustomobject]@{ skip = $false; hdr = $false; keepOriginal = $true }; audio = [pscustomobject]@{ skip = $false } }
+Assert-True 'Una pasada: vale con keepOriginal' ([bool](Test-CvOnePassEligible -Context $kpCtx1 -Job $kpJob1 -Prof ([pscustomobject]@{ AudioCodec = 'aac' })).Ok)
+# El cambiazo: el video sale del ORIGINAL (input 1) y todo lo demas de la salida ya hecha (input 0),
+# copiando (no se recodifica nada) y dejando la marca.
+$swCtx = [pscustomobject]@{ Threads = 4 }
+# OJO: devuelve ',$a' (como los demas emisores), asi que NO se envuelve en @() al leerlo.
+$swArgs = (Get-CvVideoSwapArgs -Context $swCtx -OutFile 'X:\out.mkv' -SrcFile 'X:\in.mkv' -TmpFile 'X:\tmp.mkv' -VideoIndex 2)
+Assert-Eq 'GOLDEN cambiazo de video' '-hide_banner -y -threads 4 -i X:\out.mkv -i X:\in.mkv -map 1:2 -map 0:a? -map 0:s? -map 0:t? -map_metadata 0 -map_chapters 0 -metadata:s:v title= -metadata:s:v language=und -metadata CV_VIDEO=original -c copy -f matroska X:\tmp.mkv' ($swArgs -join ' ')
+Assert-True 'Cambiazo: sin indice, la primera de video' (((Get-CvVideoSwapArgs -Context $swCtx -OutFile 'X:\out.mkv' -SrcFile 'X:\in.mkv' -TmpFile 'X:\tmp.mkv') -join ' ') -match ([regex]::Escape('-map 1:v:0')))
+
 
 # ================================================================================================
 Write-Host "`nGet-CvNvencFallbackCandidates (Tools)" -ForegroundColor Cyan
@@ -1862,10 +1982,29 @@ $wa = @(Get-CvConvertWorkerArgs -Root 'D:\cv')
 Assert-True 'Worker args: sin perfil ni config'  (($wa -join ' ') -eq '-NoProfile -ExecutionPolicy Bypass -File "D:\cv\Convert.ps1" -WorkerOnly -Unattended')
 $wc = @(Get-CvConvertWorkerArgs -Root 'D:\cv' -CfgPath 'D:\cv\config.debug.json')
 Assert-True 'Worker args: con -Config'           (($wc -join ' ').Contains('-Config "D:\cv\config.debug.json"'))
-# -Only: solo esos archivos. Va entrecomillado y separado por comas, que es como lo entiende el
-# parser de PowerShell como lista (y 'powershell -File' no expande nada, asi que van literales).
+# -Only: la ventana lo manda en UN argumento con los nombres separados por '|', porque
+# 'powershell -File' no sabe pasar listas (con comas, el worker recibia 'A,B,C' como un solo nombre
+# y no encontraba ninguno: se abrian los workers y se morian sin codificar nada).
 $wo = @(Get-CvConvertWorkerArgs -Root 'D:\cv' -Only @('Serie_1x01', 'Serie 1x05', 'Peli_[2024]'))
-Assert-True 'Worker args: pasa -Only'            (($wo -join ' ').Contains('-Only "Serie_1x01","Serie 1x05","Peli_[2024]"'))
+Assert-True 'Worker args: pasa -Only'            (($wo -join ' ').Contains('-Only "Serie_1x01|Serie 1x05|Peli_[2024]"'))
+Assert-Eq   'Worker args: -Only en UN argumento'  1 @(@($wo)[[array]::IndexOf($wo, '-Only') + 1]).Count
+# Y el worker lo desdobla: ida y vuelta completa.
+$woIda = @('Serie_1x01', 'Serie 1x05', 'Peli_[2024]', 'Peli, con coma')
+$woArg = @(Get-CvConvertWorkerArgs -Root 'D:\cv' -Only $woIda)
+$woVuelta = @(Expand-CvOnlyList -Values @(("$(@($woArg)[[array]::IndexOf($woArg, '-Only') + 1])").Trim('"')))
+Assert-Eq   'Worker args: ida y vuelta' ($woIda -join '|') ($woVuelta -join '|')
+Assert-Eq   'Only: un nombre suelto'    'Serie_1x01' ((Expand-CvOnlyList -Values @('Serie_1x01')) -join '|')
+Assert-Eq   'Only: varios pegados'      'A|B|C'      ((Expand-CvOnlyList -Values @('A|B|C')) -join '|')
+Assert-Eq   'Only: ya en lista (consola)' 'A|B'      ((Expand-CvOnlyList -Values @('A', 'B')) -join '|')
+Assert-Eq   'Only: la coma NO separa'   'Peli, con coma' ((Expand-CvOnlyList -Values @('Peli, con coma')) -join '|')
+Assert-Eq   'Only: sin vacios'          'A'          ((Expand-CvOnlyList -Values @('', '  ', 'A')) -join '|')
+Assert-Eq   'Only: sin repetidos'       'A|B'        ((Expand-CvOnlyList -Values @('A', 'B', 'A')) -join '|')
+Assert-Eq   'Only: nada es nada'        0            (@(Expand-CvOnlyList -Values @()).Count)
+# Lo que NO cabe en la linea de comandos se avisa antes de abrir workers (Windows corta en 32767).
+Assert-True 'Only: una lista normal cabe' ([bool](Test-CvWorkerOnlyFits -Argv $woArg).Ok)
+$woMucho = @(Get-CvConvertWorkerArgs -Root 'D:\cv' -Only @(1..1200 | ForEach-Object { 'Serie_Muy_Larga_De_Nombre_{0:d4}' -f $_ }))
+Assert-Eq   'Only: 1200 nombres no caben' $false ([bool](Test-CvWorkerOnlyFits -Argv $woMucho).Ok)
+Assert-Eq   'Only: el limite es a medida' 10 ([int](Test-CvWorkerOnlyFits -Argv @('12345') -Max 10).Max)
 Assert-Eq   'Worker args: sin -Only si esta vacio' 0 @(@(Get-CvConvertWorkerArgs -Root 'D:\cv' -Only @()) | Where-Object { $_ -eq '-Only' }).Count
 Assert-Eq   'Worker args: ignora nombres vacios'   0 @(@(Get-CvConvertWorkerArgs -Root 'D:\cv' -Only @('', '   ')) | Where-Object { $_ -eq '-Only' }).Count
 
@@ -2151,6 +2290,65 @@ Assert-Eq   'Job: recorte'   '1920:800:0:140' $rec.video.crop
 Assert-Eq   'Job: escalado'  '1280:-2'        $rec.video.resize
 Assert-Eq   'Job: animacion' $true            $rec.video.anim
 Assert-Eq   'Job: sin Info no marca HDR' $false $rec.video.hdr
+# ================================================================================================
+# Editar VARIOS jobs a la vez: se cambia solo lo marcado y lo demas se queda como esta en cada uno.
+Write-Host "`nJobCore - editar jobs en bloque" -ForegroundColor Cyan
+$bfCampos = @(Get-CvJobBulkFields)
+Assert-Eq   'Bloque: siete ajustes' 7 $bfCampos.Count
+Assert-Eq   'Bloque: claves unicas' $bfCampos.Count (@($bfCampos | ForEach-Object { $_.Key } | Sort-Object -Unique)).Count
+Assert-Eq   'Bloque: el perfil es lo primero' 'prof' "$($bfCampos[0].Key)"
+
+# Un borrador con cosas MUY de ese archivo: pista de audio 3, retardo, subtitulos y recorte.
+$bdOrig = [pscustomobject]@{
+    Name       = 'Serie_1x01'
+    File       = 'X:\Original\Serie_1x01.mkv'
+    Prof       = (New-CvProfile -VideoEncoder 'libx265' -Crf 28 -AudioEncoder 'aac_coder' -AudioBitrate '128k')
+    SubCues    = @{ '2' = 750 }
+    VideoSkip  = $false
+    VideoIndex = 0
+    Crop       = '1920:800:0:140'
+    Resize     = '1280:-2'
+    Anim       = $false
+    Hdr        = $true
+    Audio      = @([pscustomobject]@{ Index = 3; Is51 = $true; Sync = 0.4; Lang = 'spa'; Default = $true })
+    Subtitles  = @(@{ index = 2; forced = $true })
+}
+$bdCopia = Set-CvJobBulkChanges -Draft $bdOrig -Changes @{ videoCopy = $true }
+Assert-Eq   'Bloque: cambia lo marcado'        $true  ([bool]$bdCopia.VideoSkip)
+Assert-Eq   'Bloque: no toca la pista elegida' 3      ([int]@($bdCopia.Audio)[0].Index)
+Assert-Eq   'Bloque: no toca el retardo'       0.4    ([double]@($bdCopia.Audio)[0].Sync)
+Assert-Eq   'Bloque: no toca los subtitulos'   1      (@($bdCopia.Subtitles).Count)
+Assert-Eq   'Bloque: no toca el recorte'       '1920:800:0:140' "$($bdCopia.Crop)"
+Assert-Eq   'Bloque: no toca el escalado'      '1280:-2' "$($bdCopia.Resize)"
+Assert-Eq   'Bloque: no toca el audio'         $false ([bool]$bdCopia.AudioSkip)
+Assert-Eq   'Bloque: no toca el HDR'           $true  ([bool]$bdCopia.Hdr)
+Assert-Eq   'Bloque: el original no se toca'   $false ([bool]$bdOrig.VideoSkip)
+# Quitar el recorte de todos = marcarlo vacio.
+Assert-Eq   'Bloque: quitar el recorte' '' "$((Set-CvJobBulkChanges -Draft $bdOrig -Changes @{ crop = '' }).Crop)"
+# El perfil arrastra si se recodifica (como al preparar), y lo marcado a mano manda sobre el.
+$bdProf = Set-CvJobBulkChanges -Draft $bdOrig -Changes @{ prof = (New-CvProfile -VideoEncoder 'copy' -AudioEncoder 'copy') }
+Assert-Eq   'Bloque: perfil copy -> copia video' $true ([bool]$bdProf.VideoSkip)
+Assert-Eq   'Bloque: perfil copy -> copia audio' $true ([bool]$bdProf.AudioSkip)
+$bdMix = Set-CvJobBulkChanges -Draft $bdOrig -Changes ([ordered]@{ prof = (New-CvProfile -VideoEncoder 'copy' -AudioEncoder 'copy'); audioCopy = $false })
+Assert-Eq   'Bloque: lo marcado manda sobre el perfil' $false ([bool]$bdMix.AudioSkip)
+
+# Lo que se puede aplicar y lo que no.
+Assert-Eq   'Bloque: sin marcar nada no hay nada que hacer' $false ([bool](Test-CvJobBulkChanges -Changes @{}).Ok)
+Assert-Eq   'Bloque: recorte mal escrito'  $false ([bool](Test-CvJobBulkChanges -Changes @{ crop = '1920x800' }).Ok)
+Assert-True 'Bloque: recorte bien escrito' ([bool](Test-CvJobBulkChanges -Changes @{ crop = '1920:800:0:140' }).Ok)
+Assert-True 'Bloque: recorte vacio vale (quitarlo)' ([bool](Test-CvJobBulkChanges -Changes @{ crop = '' }).Ok)
+Assert-Eq   'Bloque: escalado mal escrito' $false ([bool](Test-CvJobBulkChanges -Changes @{ resize = '1280' }).Ok)
+Assert-True 'Bloque: escalado con alto automatico' ([bool](Test-CvJobBulkChanges -Changes @{ resize = '1280:-2' }).Ok)
+Assert-Eq   'Bloque: perfil sin elegir'    $false ([bool](Test-CvJobBulkChanges -Changes @{ prof = $null }).Ok)
+# Y lo que se va a hacer, en una linea.
+Assert-True 'Bloque: cuenta lo que cambia' ((Get-CvJobBulkSummary -Changes @{ videoCopy = $true }) -match 'video -> copiar')
+Assert-True 'Bloque: y lo que se quita'    ((Get-CvJobBulkSummary -Changes @{ crop = '' }) -match 'sin recorte')
+Assert-Eq   'Bloque: sin nada, nada que contar' '' (Get-CvJobBulkSummary -Changes @{})
+
+# El HDR ya congelado NO se pierde al reescribir un job sin volver a analizar el archivo.
+$recHdr = ConvertTo-CvJobRecord -Context $jctxFake -File 'X:\Original\Serie_1x01.mkv' -Prof (New-CvProfile -VideoEncoder 'libx265') -Hdr $true
+Assert-Eq   'Job: sin Info, el HDR sabido se conserva' $true ([bool]$recHdr.video.hdr)
+
 Assert-Eq   'Job: una pista de audio' 1 @($rec.audio.tracks).Count
 Assert-Eq   'Job: idioma de la pista' 'spa' $rec.audio.tracks[0].lang
 Assert-Eq   'Job: sync numerico'      1.5   $rec.audio.tracks[0].sync

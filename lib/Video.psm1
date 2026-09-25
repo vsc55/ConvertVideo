@@ -1022,6 +1022,206 @@ function Get-CvVideoRunArgs {
     return ,$ffArgs
 }
 
+function Get-CvVideoStreamBytes {
+    <#
+        PURO. Cuanto ocupa la PISTA de video de un archivo, sin leer el fichero entero (que en un
+        video de varios GB no es una opcion). Se mira, en este orden:
+
+          1. el tag NUMBER_OF_BYTES de la pista (lo escribe mkvmerge, asi que la mayoria de los MKV
+             lo traen) - exacto;
+          2. su bit_rate por la duracion (MP4, AVI y casi todo lo que no sea MKV lo traen) - bueno;
+          3. el tag BPS (MKV sin NUMBER_OF_BYTES) por la duracion;
+          4. si no hay nada, el TAMANO DEL ARCHIVO como cota superior: la pista de video nunca ocupa
+             mas que el fichero que la contiene, asi que comparar contra el es CONSERVADOR (se dira
+             que no compensa solo en los casos flagrantes, nunca de mas).
+
+        Devuelve @{ Bytes; From } con From = tag|bitrate|bps|archivo|'' (para poder contarlo en el log).
+    #>
+    param(
+        $Info,
+        [int]$Index = -1,
+        [long]$FileBytes = 0
+    )
+    $nada = @{
+        Bytes = 0L
+        From  = ''
+    }
+    if ($null -eq $Info) { return $nada }
+    $vs = @(Get-VideoStreams -Info $Info)
+    if ($vs.Count -eq 0) { return $nada }
+    $v = $vs[0]
+    if ($Index -ge 0) {
+        $m = @($vs | Where-Object { [int]$_.index -eq $Index })
+        if ($m.Count -gt 0) { $v = $m[0] }
+    }
+    $dur = [double](Get-MediaDuration $Info)
+    if ($dur -le 0) { $dur = [double]"$($v.duration)" }
+    $tag = ''
+    $bps = ''
+    if ($v.PSObject.Properties['tags'] -and $null -ne $v.tags) {
+        foreach ($p in @($v.tags.PSObject.Properties)) {
+            $n = "$($p.Name)".ToUpper()
+            if ($n -eq 'NUMBER_OF_BYTES' -or $n -like 'NUMBER_OF_BYTES-*') { if ($tag -eq '') { $tag = "$($p.Value)" } }
+            if ($n -eq 'BPS' -or $n -like 'BPS-*')                         { if ($bps -eq '') { $bps = "$($p.Value)" } }
+        }
+    }
+    $n = 0L
+    if ($tag -ne '' -and [long]::TryParse($tag, [ref]$n) -and $n -gt 0) {
+        return @{
+            Bytes = $n
+            From  = 'tag'
+        }
+    }
+    $br = 0L
+    if ([long]::TryParse("$($v.bit_rate)", [ref]$br) -and $br -gt 0 -and $dur -gt 0) {
+        return @{
+            Bytes = [long]($br * $dur / 8)
+            From  = 'bitrate'
+        }
+    }
+    $br = 0L
+    if ($bps -ne '' -and [long]::TryParse($bps, [ref]$br) -and $br -gt 0 -and $dur -gt 0) {
+        return @{
+            Bytes = [long]($br * $dur / 8)
+            From  = 'bps'
+        }
+    }
+    if ($FileBytes -gt 0) {
+        return @{
+            Bytes = [long]$FileBytes
+            From  = 'archivo'
+        }
+    }
+    return $nada
+}
+
+function Test-CvResizeNoop {
+    <#
+        PURO. $true si el escalado pedido deja la imagen DEL MISMO TAMANO (o no hay escalado). Pasa a
+        menudo: un perfil con ChangeSize '1920:-2' sobre un video que YA es de 1920 pide un
+        'scale=1920:-2' que no escala nada. Sin las medidas del origen (-SrcWidth/-SrcHeight) no se
+        puede saber, asi que cualquier escalado cuenta como cambio.
+
+        La comparacion va con el tamano ALMACENADO, que es sobre el que trabaja el filtro scale.
+    #>
+    param([string]$Resize = '', [int]$SrcWidth = 0, [int]$SrcHeight = 0)
+    $r = "$Resize".Trim()
+    if ($r -eq '') { return $true }
+    if ($SrcWidth -le 0 -or $SrcHeight -le 0) { return $false }
+    if ($r -notmatch '^(-?\d+):(-?\d+)$') { return $false }
+    $w = [int]$Matches[1]
+    $h = [int]$Matches[2]
+    if ($w -lt 0 -and $h -lt 0) { return $false }                     # nada fijo: no se sabe
+    if ($w -gt 0 -and $w -ne $SrcWidth)  { return $false }
+    if ($h -gt 0 -and $h -ne $SrcHeight) { return $false }
+    # Con el lado automatico (-1/-2) el calculado sale del otro, que ya es el del origen; solo puede
+    # salir distinto si hay que redondearlo a par y el original era impar.
+    if ($h -lt 0 -and ($SrcHeight % 2) -ne 0) { return $false }
+    if ($w -lt 0 -and ($SrcWidth  % 2) -ne 0) { return $false }
+    return $true
+}
+
+function Test-CvCropNoop {
+    <# PURO. $true si el recorte pedido deja la imagen entera (o no hay recorte). #>
+    param([string]$Crop = '', [int]$SrcWidth = 0, [int]$SrcHeight = 0)
+    $c = "$Crop".Trim()
+    if ($c -eq '') { return $true }
+    if ($SrcWidth -le 0 -or $SrcHeight -le 0) { return $false }
+    if ($c -notmatch '^(\d+):(\d+):(\d+):(\d+)$') { return $false }
+    return ([int]$Matches[1] -eq $SrcWidth -and [int]$Matches[2] -eq $SrcHeight -and [int]$Matches[3] -eq 0 -and [int]$Matches[4] -eq 0)
+}
+
+function Get-CvVideoPictureState {
+    <#
+        PURO. Si la codificacion CAMBIA la imagen o solo la vuelve a comprimir, y que la cambia.
+        Mientras no se toque la imagen, la pista ORIGINAL sirve de sustituto si lo recodificado sale
+        mas grande; en cuanto cambia (recorte, escalado, tone-mapping HDR o un fps distinto) ya no,
+        porque la salida tenia que verse de otra manera.
+
+        Lo que NO cuenta como cambio, y por eso se miran las medidas del origen:
+          - un escalado que deja el mismo tamano (ChangeSize 1920:-2 sobre un video de 1920);
+          - un recorte que abarca el fotograma entero;
+          - forzar un fps que ya es el del origen. OJO: encode.video.forceFps viene PUESTO de serie,
+            asi que mirar el flag descartaria casi todos los archivos; lo que cuenta es que el fps de
+            SALIDA sea distinto del de ORIGEN (0 en cualquiera de los dos = no se sabe, no cuenta).
+
+        Devuelve @{ Untouched; Reason } (Reason = que la cambia, para poder contarlo en el log).
+    #>
+    param(
+        [string]$Crop = '',
+        [string]$Resize = '',
+        [bool]$Hdr = $false,
+        [string]$TonemapHdr = 'off',
+        [double]$SrcFps = 0,
+        [double]$OutFps = 0,
+        [int]$SrcWidth = 0,
+        [int]$SrcHeight = 0,
+        # Diferencia de fps que ya no se considera la misma cadencia (23.976 escrito de dos maneras
+        # no puede contar como cambio).
+        [double]$FpsTolerance = 0.01
+    )
+    $cambia = @()
+    if (-not (Test-CvCropNoop   -Crop $Crop     -SrcWidth $SrcWidth -SrcHeight $SrcHeight)) { $cambia += ("recorte {0}" -f "$Crop".Trim()) }
+    if (-not (Test-CvResizeNoop -Resize $Resize -SrcWidth $SrcWidth -SrcHeight $SrcHeight)) { $cambia += ("escalado {0}" -f "$Resize".Trim()) }
+    if ($Hdr -and ("$TonemapHdr".ToLower() -ne 'off')) { $cambia += 'tone-mapping HDR->SDR' }
+    if ($SrcFps -gt 0 -and $OutFps -gt 0 -and [Math]::Abs($SrcFps - $OutFps) -gt $FpsTolerance) {
+        $cambia += ("fps {0} -> {1}" -f (Format-CvNumber ([math]::Round($SrcFps, 3))), (Format-CvNumber ([math]::Round($OutFps, 3))))
+    }
+    return @{
+        Untouched = ($cambia.Count -eq 0)
+        Reason    = ($cambia -join ', ')
+    }
+}
+
+function Get-CvVideoKeepPlan {
+    <#
+        PURO. Si toca quedarse con la pista de video ORIGINAL en vez de la recien codificada.
+
+        Se compara lo que ha salido con lo que habia: si engorda (o no ahorra lo suficiente, -Ratio)
+        y la imagen no se ha tocado (-Untouched), recodificar no ha servido de nada y el original es
+        mejor en todo -mas pequeno y sin perdida-. El audio, los subtitulos y los capitulos ya estan
+        hechos: solo cambia de donde sale el video al multiplexar.
+
+        Devuelve @{ UseOriginal; Reason }.
+    #>
+    param(
+        [long]$EncodedBytes = 0,
+        [long]$OriginalBytes = 0,
+        [bool]$Untouched = $true,
+        [bool]$Enabled = $false,
+        [double]$Ratio = 1.0
+    )
+    if (-not $Enabled) {
+        return @{
+            UseOriginal = $false
+            Reason      = ''
+        }
+    }
+    if (-not $Untouched) {
+        return @{
+            UseOriginal = $false
+            Reason      = 'la imagen cambia (recorte, escalado, tone-mapping o fps forzado): el original no sirve de sustituto'
+        }
+    }
+    if ($EncodedBytes -le 0 -or $OriginalBytes -le 0) {
+        return @{
+            UseOriginal = $false
+            Reason      = 'no se sabe cuanto ocupa alguna de las dos pistas'
+        }
+    }
+    $limite = [double]$OriginalBytes * $(if ($Ratio -gt 0) { [double]$Ratio } else { 1.0 })
+    if ([double]$EncodedBytes -le $limite) {
+        return @{
+            UseOriginal = $false
+            Reason      = ''
+        }
+    }
+    return @{
+        UseOriginal = $true
+        Reason      = ("recodificar no compensa: {0} frente a {1} del original" -f (Format-CvSize -Kb ([long]($EncodedBytes / 1024))), (Format-CvSize -Kb ([long]($OriginalBytes / 1024))))
+    }
+}
+
 function Invoke-VideoRun {
     <# Codifica el video usando la config del job. Devuelve $true si crea la salida temporal. #>
     param(

@@ -246,6 +246,12 @@ function New-CvContext {
         AutoLevel      = "$($cfg.encode.video.auto.level)"
         # Control de calidad de la salida vs origen tras codificar: off | ssim | vmaf. Lo consume el
         # worker (Measure-CvQuality) tras un encode con exito (no en 'copy').
+        # Recodificar que ENGORDA: quedarse con la pista original (ver encode.video.keepOriginalIfBigger).
+        KeepOriginal      = [bool]$cfg.encode.video.keepOriginalIfBigger
+        KeepOriginalRatio = $(
+            $kr = [double]$cfg.encode.video.keepOriginalRatio
+            if ($kr -gt 0) { $kr } else { [double]$def.encode.video.keepOriginalRatio }
+        )
         QualityCheck   = (Resolve-CvOneOf "$($cfg.encode.video.qualityCheck)" @(Get-CvQualityCheckModes | ForEach-Object { $_.Value }) 'off')
         # Umbral (seg) para detectar audio adelantado (acaba antes que el video); 0 = off. Lo usa
         # Invoke-AudioAsk para avisar/preguntar el retardo. Ver encode.audioSyncThreshold.

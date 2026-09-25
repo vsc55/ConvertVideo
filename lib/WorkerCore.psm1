@@ -487,6 +487,22 @@ function Get-CvBorderFromSizes {
     return $res
 }
 
+function Get-CvOutputVideoSource {
+    <#
+        PURO. De donde salio el video de una SALIDA ya hecha: 'original' si lleva la marca CV_VIDEO
+        que escribe el multiplex cuando recodificar no compensaba, y '' si no la lleva (lo normal:
+        video recodificado, o una salida anterior a esta opcion, que no se puede distinguir).
+    #>
+    param($Info)
+    if ($null -eq $Info -or $null -eq $Info.format) { return '' }
+    $tags = $Info.format.tags
+    if ($null -eq $tags) { return '' }
+    foreach ($p in @($tags.PSObject.Properties)) {
+        if ("$($p.Name)".ToUpper() -eq 'CV_VIDEO' -and "$($p.Value)".ToLower() -eq 'original') { return 'original' }
+    }
+    return ''
+}
+
 function Get-CvDoneBorderPeek {
     <#
         Lo mismo pero yendo a los FICHEROS: mira el tamano del original y el de la salida (ffprobe) y
@@ -499,7 +515,11 @@ function Get-CvDoneBorderPeek {
           - con -CachedOnly devuelve lo que haya en la cache y $null si no hay nada, SIN tocar el
             disco: es lo que usa el refresco de cada segundo para no pagar el analisis de golpe.
 
-        Devuelve @{ Known; Cropped; Resized; Text; SrcW; SrcH; OutW; OutH } o $null.
+        De paso se mira si la salida lleva la MARCA de que su video es el original (CV_VIDEO, la
+        escribe el multiplex cuando recodificar no compensaba): es el unico rastro que queda, porque
+        cuando la fila se ve como 'Hecho' su job ya no existe.
+
+        Devuelve @{ Known; Cropped; Resized; Text; SrcW; SrcH; OutW; OutH; VideoSrc } o $null.
     #>
     param(
         [Parameter(Mandatory)]$Context,
@@ -545,6 +565,7 @@ function Get-CvDoneBorderPeek {
                 SrcH    = [int]$vS.height
                 OutW    = [int]$ow
                 OutH    = [int]$vO.height
+                VideoSrc = (Get-CvOutputVideoSource -Info $iO)
             }
         }
     } catch { $datos = $null }
@@ -559,6 +580,7 @@ function Get-CvDoneBorderPeek {
             SrcH    = 0
             OutW    = 0
             OutH    = 0
+            VideoSrc = ''
         }
     }
     $script:CvDoneBorder[$clave] = @{
@@ -707,6 +729,7 @@ function Get-CvQueueStatus {
         # Ya convertido y sin job: se deduce si llevo recorte comparando proporciones. Primero lo
         # que haya en cache (gratis); si no hay nada y queda presupuesto, se analiza uno.
         $guess = ''
+        $vguess = ''
         if ($done -and -not $hasJob) {
             $dp = Get-CvDoneBorderPeek -Context $Context -Path $f.FullName -OutPath $outPath -Tolerance $DoneTolerance -SrcInfo $f -OutInfo $oInfo -CachedOnly
             if ($null -eq $dp -and $quedan -gt 0) {
@@ -714,6 +737,7 @@ function Get-CvQueueStatus {
                 $dp = Get-CvDoneBorderPeek -Context $Context -Path $f.FullName -OutPath $outPath -Tolerance $DoneTolerance -SrcInfo $f -OutInfo $oInfo
             }
             if ($null -ne $dp -and [bool]$dp.Known) { $guess = "$($dp.Text)" }
+            if ($null -ne $dp) { $vguess = "$($dp.VideoSrc)" }
         }
 
         $out += [pscustomobject]@{
@@ -729,6 +753,8 @@ function Get-CvQueueStatus {
             HasJob    = $hasJob
             # Lo DEDUCIDO para un ya convertido ('' si no se sabe o no habia que deducir nada).
             BorderGuess = $guess
+            # 'original' si la salida lleva la marca de que se quedo con el video del original.
+            VideoGuess  = $vguess
             Locked    = $locked
             Stale     = $stale
             Done      = $done
@@ -831,14 +857,60 @@ function Test-CvConvertReady {
     }
 }
 
+function Expand-CvOnlyList {
+    <#
+        PURO. Los nombres de -Only ya usables: cada valor puede venir con VARIOS pegados por '|'.
+
+        Por que '|': 'powershell -File' NO interpreta lo que le pasan, cada argumento llega como
+        cadena literal, asi que una lista de verdad no cabe en la linea de comandos. MEDIDO: con
+        -Only "A","B","C" el script recibe UN solo nombre, 'A,B,C' -y por eso un worker abierto para
+        varios archivos elegidos no encontraba ninguno y se moria sin codificar nada-. La coma no
+        sirve de separador (es legal en un nombre de archivo) pero '|' SI: Windows no la admite en
+        un nombre, asi que no puede confundirse con parte de uno.
+
+        Tambien vale para lo que se escriba a mano en consola (ahi la coma si hace lista de verdad,
+        y llega como varios valores).
+    #>
+    param([string[]]$Values = @())
+    $out = @()
+    foreach ($v in @($Values)) {
+        foreach ($n in ("$v" -split '\|')) {
+            $t = "$n".Trim()
+            if ($t -eq '') { continue }
+            if ($out -notcontains $t) { $out += $t }
+        }
+    }
+    return @($out)
+}
+
+function Test-CvWorkerOnlyFits {
+    <#
+        PURO. Si la lista de archivos elegidos cabe en la linea de comandos con la que se abre un
+        worker. Windows corta en 32767 caracteres, y lo que no cabe se pierde SIN avisar: mas vale
+        decirlo antes de abrir nada. -Max se deja configurable para poder probarlo.
+
+        Devuelve @{ Ok; Length; Max }.
+    #>
+    param($Argv = @(), [int]$Max = 32000)
+    $len = ((@($Argv) -join ' ')).Length
+    return @{
+        Ok     = ($len -le $Max)
+        Length = $len
+        Max    = $Max
+    }
+}
+
 function Get-CvConvertWorkerArgs {
     <#
         PURO. Linea de argumentos con la que se abre un worker: Convert.ps1 en modo -WorkerOnly
         -Unattended, con el -Config si lo hay y con -Only cuando se han elegido archivos concretos.
         Separado de Start-CvConvertWorker para poder comprobarlo sin abrir procesos.
 
-        -Only se pasa entrecomillado y separado por comas (asi lo entiende el parser de PowerShell
-        como lista); los nombres van LITERALES porque 'powershell -File' no expande los argumentos.
+        -Only va en UN solo argumento entrecomillado, con los nombres separados por '|': con
+        'powershell -File' cada argumento llega como cadena literal y no hay forma de pasar una
+        lista de verdad (medido: con comas, el worker recibia 'A,B,C' como UN nombre y no encontraba
+        ninguno). El worker la desdobla con Expand-CvOnlyList. '|' no puede aparecer en un nombre de
+        archivo de Windows, asi que no se confunde con parte de uno.
     #>
     param(
         [Parameter(Mandatory)][string]$Root,
@@ -850,7 +922,7 @@ function Get-CvConvertWorkerArgs {
     if (-not [string]::IsNullOrWhiteSpace($CfgPath)) { $argv += @('-Config', ('"{0}"' -f $CfgPath)) }
     $names = @(@($Only) | Where-Object { -not [string]::IsNullOrWhiteSpace("$_") })
     if ($names.Count -gt 0) {
-        $argv += @('-Only', ((@($names | ForEach-Object { '"{0}"' -f $_ }) -join ',')))
+        $argv += @('-Only', ('"{0}"' -f ($names -join '|')))
     }
     return @($argv)
 }

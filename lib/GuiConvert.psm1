@@ -54,6 +54,10 @@ function Format-CvQueueRow {
         if ($Row.SizeKb -gt 0 -and $Row.OutSizeKb -gt 0) {
             $prog += (' ({0:N0}% del original)' -f (100.0 * $Row.OutSizeKb / $Row.SizeKb))
         }
+        # Si la salida lleva el video ORIGINAL (recodificar lo engordaba), se dice: es justo lo que
+        # no se ve mirando el tamano. Sin marca no se pinta nada, que es el caso normal -y en una
+        # salida anterior a esta opcion no se puede saber-.
+        if ("$($Row.VideoGuess)" -eq 'original') { $prog += '   [video ORIGINAL]' }
     }
     elseif ($Row.State -eq 'partial') {
         $prog = ("{0} a medias: borra la salida para rehacerlo" -f (Format-CvSize -Kb $Row.OutSizeKb))
@@ -164,9 +168,9 @@ function Get-CvQueueFollowPlan {
         codificando, y si sigue enganchada a ella.
 
         La regla es la del que mira: la lista PERSIGUE al worker mientras no te hayas ido tu a otra
-        parte. Lo uno se distingue de lo otro por el scroll: si la primera fila visible ha cambiado
-        y no ha sido la ventana (-Top distinto de -LastTop), has sido tu, y entonces se sigue solo
-        si has dejado la fila en curso a la vista. Volver a tenerla delante vuelve a engancharla.
+        parte. Lo uno se distingue de lo otro por el SCROLL: si se ha movido y no ha sido la ventana
+        (-Moved), has sido tu, y entonces se sigue solo si has dejado la fila en curso a la vista.
+        Volver a tenerla delante vuelve a engancharla.
 
         La lista se mueve POCO a proposito, solo cuando hay un motivo nuevo:
         - -Changed: se esta codificando OTRO archivo (o el primero). Que la fila se salga de la vista
@@ -178,16 +182,16 @@ function Get-CvQueueFollowPlan {
           ahi mismo y la lista daba un salto a mitad de un Ctrl/Mayus+clic -seleccionando lo que no
           era-.
 
-        -Index   fila que se esta codificando (-1: ninguna)
-        -Top     primera fila visible; -Visible cuantas caben a la vez
-        -LastTop la primera fila visible del refresco anterior; -1 = sin dato (lista recien
-                 reconstruida, que empieza arriba), y eso NO cuenta como que hayas movido tu.
+        Los HECHOS los mide la ventana y se pasan ya masticados, que aqui no hay controles: -HasRow
+        (hay algo codificandose), -Visible (esa fila se ve ENTERA ahora mismo) y -Moved (el scroll
+        esta en otro sitio que en la vuelta anterior). Se mide lo que se ve y no cuantas filas caben
+        porque esa cuenta miente justo al abrir, mientras la ventana se esta colocando: dio por
+        visible una fila que no lo era y la lista se quedaba sin ir a por ella.
     #>
     param(
-        [int]$Index      = -1,
-        [int]$Top        = 0,
-        [int]$Visible    = 0,
-        [int]$LastTop    = -1,
+        [bool]$HasRow    = $false,
+        [bool]$Visible   = $false,
+        [bool]$Moved     = $false,
         [bool]$Following = $true,
         [bool]$Changed   = $true,
         [bool]$Busy      = $false,
@@ -207,12 +211,11 @@ function Get-CvQueueFollowPlan {
             Hold   = $true      # ni se mueve ni se apunta nada: se decide cuando sueltes
         }
     }
-    $dentro = ($Index -ge 0) -and ($Index -ge $Top) -and ($Index -lt ($Top + $Visible))
     $follow = $Following
-    if ($Index -ge 0 -and $LastTop -ge 0 -and $Top -ne $LastTop) { $follow = $dentro }
+    if ($HasRow -and $Moved) { $follow = $Visible }
     return @{
         Follow = $follow
-        Scroll = ($follow -and ($Index -ge 0) -and (-not $dentro) -and $Changed)
+        Scroll = ($follow -and $HasRow -and (-not $Visible) -and $Changed)
         Hold   = $false
     }
 }
@@ -274,6 +277,8 @@ function Get-CvQueueBulkActions {
         - Quitar de la cola: las que TENGAN job y no las este codificando nadie. Quitarle el job a un
           archivo en curso no lo parara -el worker ya lo leyo- y solo dejaria la cola inconsistente.
         - Cortar: las que se esten codificando AHORA (se mata SU worker, no todos).
+        - Editar en bloque: las que TENGAN job y nadie este codificando, y solo a partir de DOS (con
+          una sola, lo suyo es el editor de siempre, que ensena el archivo entero).
     #>
     param($Rows)
     $sel   = @($Rows)
@@ -285,17 +290,22 @@ function Get-CvQueueBulkActions {
     $drop  = @($sel | Where-Object { $_.HasJob -and $_.State -in @('queued', 'stale', 'partial') })
     # Salidas A MEDIAS: las de los cancelados. Mientras esten, el worker salta el archivo.
     $purge = @($sel | Where-Object { $_.State -eq 'partial' })
+    # Editar VARIOS jobs a la vez: los mismos que se pueden quitar de la cola (tienen job y nadie los
+    # esta codificando). Con uno solo no es una accion en bloque: se queda vacia.
+    $edit  = @($(if ($drop.Count -gt 1) { $drop } else { @() }))
     [pscustomobject]@{
         Start     = @($start)
         Kill      = @($kill)
         Free      = @($free)
         Drop      = @($drop)
         Purge     = @($purge)
+        Edit      = @($edit)
         StartText = $(if ($start.Count -gt 1) { 'Codificar solo estos {0}' -f $start.Count } else { 'Codificar solo este' })
         KillText  = $(if ($kill.Count  -gt 1) { 'Cortar la codificacion de estos {0}' -f $kill.Count } else { 'Cortar la codificacion de este' })
         FreeText  = $(if ($free.Count  -gt 1) { 'Liberar los {0} bloqueos huerfanos' -f $free.Count } else { 'Liberar el bloqueo huerfano' })
         DropText  = $(if ($drop.Count  -gt 1) { 'Quitar de la cola los {0} seleccionados (borrar sus jobs)' -f $drop.Count } else { 'Quitar de la cola (borrar su job)' })
         PurgeText = $(if ($purge.Count -gt 1) { 'Eliminar las {0} salidas a medias (se rehacen)' -f $purge.Count } else { 'Eliminar la salida a medias (se rehace)' })
+        EditText  = $(if ($edit.Count  -gt 1) { 'Editar los {0} jobs elegidos a la vez...' -f $edit.Count } else { 'Editar varios jobs a la vez...' })
     }
 }
 
@@ -811,19 +821,48 @@ function Show-CvConvertWindow {
 
     $lblWHelp = New-Object System.Windows.Forms.Label
     $lblWHelp.Text      = 'Cuantas conversiones a la vez al pulsar Iniciar. Arranca con el valor de behavior.workers del config; lo que pongas aqui vale para esta sesion.'
-    $lblWHelp.AutoSize  = $true
+    $lblWHelp.Name      = 'cvWorkersHelp'
     $lblWHelp.ForeColor = (Get-CvGuiCurrentPalette).Muted
     $lblWHelp.Margin    = New-Object System.Windows.Forms.Padding(2, 0, 0, 12)
     $optFlow.Controls.Add($lblWHelp)
+    [void](Set-CvGuiWrapLabel -Label $lblWHelp -Container $optFlow)
 
     $optFlow.Controls.Add($chkCon)
 
     $lblCHelp = New-Object System.Windows.Forms.Label
     $lblCHelp.Text      = 'Marcado, cada worker abre su ventana de consola. Desmarcado van ocultos y se siguen por la pestana Log.'
-    $lblCHelp.AutoSize  = $true
+    $lblCHelp.Name      = 'cvConsolesHelp'
     $lblCHelp.ForeColor = (Get-CvGuiCurrentPalette).Muted
-    $lblCHelp.Margin    = New-Object System.Windows.Forms.Padding(2, 0, 0, 0)
+    $lblCHelp.Margin    = New-Object System.Windows.Forms.Padding(2, 0, 0, 12)
     $optFlow.Controls.Add($lblCHelp)
+    [void](Set-CvGuiWrapLabel -Label $lblCHelp -Container $optFlow)
+
+    # Recodificar no siempre compensa. Esto es el valor de PARTIDA: cada archivo se lo lleva
+    # congelado en su job (y ahi se puede cambiar, uno a uno o en bloque).
+    $chkKeep = New-Object System.Windows.Forms.CheckBox
+    $chkKeep.Text     = 'Si el video recodificado engorda, quedarse con el original'
+    $chkKeep.AutoSize = $true
+    $chkKeep.Checked  = [bool]$Context.KeepOriginal
+    $chkKeep.Name     = 'cvKeepOriginal'
+    $optFlow.Controls.Add($chkKeep)
+
+    $lblKHelp = New-Object System.Windows.Forms.Label
+    $lblKHelp.Text      = 'Al terminar de codificar el video se compara con la pista original: si ha salido mas grande y la imagen no se toca (sin recorte, escalado, tone-mapping ni cambio de fps), se tira lo codificado y se usa la original. El audio y los subtitulos ya hechos se conservan. Se guarda en la configuracion y es el valor de partida de los jobs NUEVOS; cada archivo lo lleva en su job y se puede cambiar en su editor (o en varios a la vez).'
+    $lblKHelp.Name      = 'cvKeepHelp'
+    $lblKHelp.ForeColor = (Get-CvGuiCurrentPalette).Muted
+    $lblKHelp.Margin    = New-Object System.Windows.Forms.Padding(2, 0, 0, 0)
+    $optFlow.Controls.Add($lblKHelp)
+    [void](Set-CvGuiWrapLabel -Label $lblKHelp -Container $optFlow)
+
+    $chkKeep.Add_CheckedChanged({
+        # Al config (para los jobs que se preparen despues) y al contexto vivo de esta ventana, que
+        # es el que usa el editor de jobs que se abra desde aqui.
+        try { $Context.KeepOriginal = [bool]$chkKeep.Checked } catch { }
+        if ("$CfgPath" -ne '') {
+            $r = Set-CvConfigValue -Path $CfgPath -Key 'encode/video/keepOriginalIfBigger' -Value ([bool]$chkKeep.Checked)
+            if (-not $r.Ok) { Show-CvGuiInfo -Title 'Opciones' -Message ("No se pudo guardar en {0}:`n`n{1}" -f $CfgName, $r.Error) }
+        }
+    })
 
     [void](Select-CvGuiTab -Tabs $tabs -Page $tabSum)
 
@@ -971,6 +1010,7 @@ function Show-CvConvertWindow {
     $miWorkerLog = $menu.Items.Add('Ver el proceso (log)')
     [void]$menu.Items.Add('-')
     $miEdit  = $menu.Items.Add('Preparar / editar el job (ventana)')
+    $miBulk  = $menu.Items.Add('Editar varios jobs a la vez...')
     $miJob   = $menu.Items.Add('Ver el job (que se decidio en PREPARAR)')
     $miPlayIn  = $menu.Items.Add('Reproducir el ORIGINAL')
     $miPlayOut = $menu.Items.Add('Reproducir el CONVERTIDO')
@@ -1127,7 +1167,8 @@ function Show-CvConvertWindow {
         $totals = Get-CvQueueTotals -Rows $filas
         # 'Iniciar' trabaja con lo SELECCIONADO si hay algo en cola marcado; si no, con toda la cola.
         # El texto del boton lo dice, para que no haya sorpresas.
-        $selQ = @(@(& $selected) | Where-Object { $_.State -eq 'queued' })
+        $selQAll = @(& $selected)
+        $selQ = @($selQAll | Where-Object { $_.State -eq 'queued' })
         $btnStart.Text = $(if ($selQ.Count -gt 0) { 'Iniciar ({0} elegidos)' -f $selQ.Count } else { 'Iniciar' })
         # Cuando se puede arrancar (y por que no), en una funcion pura: Get-CvQueueStartState.
         $ss = Get-CvQueueStartState -Queued ([int]$totals.Queued) -Live ([int]$st.Live) `
@@ -1138,7 +1179,9 @@ function Show-CvConvertWindow {
         $btnKill.Enabled  = ([int]$st.Live -gt 0)
         # 'Editar job': con una fila elegida vale la suya; sin elegir nada, el primero que este sin
         # preparar. Solo se apaga si no hay ninguno de los dos casos.
-        $btnEdit.Enabled  = ($null -ne (& $editable))
+        $lote = @((Get-CvQueueBulkActions -Rows $selQAll).Edit)
+        $btnEdit.Text     = $(if ($lote.Count -gt 1) { 'Editar los {0} jobs' -f $lote.Count } else { 'Editar job' })
+        $btnEdit.Enabled  = (($lote.Count -gt 1) -or ($null -ne (& $editable)))
         # 'Preparar pendientes' lleva el recuento: es el flujo normal cuando llega material nuevo.
         $btnPrepAll.Text    = $(if ([int]$totals.Pending -gt 0) { 'Preparar pendientes ({0})' -f $totals.Pending } else { 'Preparar pendientes' })
         $btnPrepAll.Enabled = ([int]$totals.Pending -gt 0)
@@ -1174,10 +1217,17 @@ function Show-CvConvertWindow {
         $top   = -1
         try { if ($null -ne $lv.TopItem) { $top = [int]$lv.TopItem.Index } } catch { $top = -1 }
         if ($top -lt 0 -or $top -ge $lv.Items.Count) { $st.LastTop = -1; return }
+        # Que la fila en curso SE VEA se mira en su rectangulo de verdad (el de la cabecera marca
+        # donde empieza la zona util). Sin medidas todavia -la ventana aun colocandose- no se decide
+        # nada: se vuelve a mirar en la proxima vuelta, que es mejor que apuntar una mentira.
         $b    = $lv.Items[$top].Bounds
-        $alto = [int]$b.Height
-        $vis  = $(if ($alto -gt 0) { [int][Math]::Floor(($lv.ClientSize.Height - [int]$b.Top) / $alto) } else { 0 })
-        $plan = Get-CvQueueFollowPlan -Index $idx -Top $top -Visible $vis -LastTop ([int]$st.LastTop) `
+        if ([int]$b.Height -le 0) { return }
+        $seVe = $false
+        if ($idx -ge 0 -and $idx -lt $lv.Items.Count) {
+            $rb = $lv.Items[$idx].Bounds
+            $seVe = ([int]$rb.Height -gt 0 -and [int]$rb.Top -ge [int]$b.Top -and [int]$rb.Bottom -le [int]$lv.ClientSize.Height)
+        }
+        $plan = Get-CvQueueFollowPlan -HasRow ($idx -ge 0) -Visible $seVe -Moved ([int]$st.LastTop -ge 0 -and $top -ne [int]$st.LastTop) `
                                       -Following ([bool]$st.Follow) -Changed ("$($rango.Key)" -ne "$($st.FollowKey)") `
                                       -Busy ([bool](& $tocando)) -Enabled ([bool]$Context.GuiQueueFollow)
         if ([bool]$plan.Hold) { return }   # la estas usando: se vuelve a mirar cuando la sueltes
@@ -1360,6 +1410,13 @@ function Show-CvConvertWindow {
             Show-CvGuiInfo -Title 'Nada que codificar' -Message 'No hay archivos preparados. Usa "Preparar pendientes" para contestar las preguntas de los que faltan.'
             return
         }
+        # Los elegidos viajan en la LINEA DE COMANDOS del worker, y lo que no cabe se pierde sin
+        # avisar (Windows corta en 32767): mejor decirlo antes de abrir nada.
+        $cabe = Test-CvWorkerOnlyFits -Argv (Get-CvConvertWorkerArgs -Root $Root -CfgPath $CfgPath -Only $only)
+        if (-not [bool]$cabe.Ok) {
+            Show-CvGuiInfo -Title 'Demasiados a la vez' -Message ("Has elegido {0} archivo(s) y sus nombres no caben en la orden con la que se abre un worker ({1} caracteres, el limite es {2}). Hazlo en dos tandas, o usa 'toda la cola' (sin elegir nada)." -f $only.Count, $cabe.Length, $cabe.Max)
+            return
+        }
         Clear-CvWorkerStop -Context $Context
         # Ni un worker mas que archivos por codificar: ventanas de sobra solo se abren para cerrarse.
         $n = [Math]::Min([int]$numW.Value, $pend)
@@ -1480,15 +1537,34 @@ function Show-CvConvertWindow {
         $miFree.Text     = $bulk.FreeText
         $miDrop.Text     = $bulk.DropText
         $miPurge.Text    = $bulk.PurgeText
+        # Editar en bloque: cambia lo MISMO en varios jobs y deja intacto lo que es de cada archivo.
+        $miBulk.Enabled  = (@($bulk.Edit).Count -gt 0)
+        $miBulk.Text     = $bulk.EditText
     })
     # Editor del job en ventana (GuiJob): crea el job de un archivo sin preparar o retoca el que ya
     # tiene. Al volver se refresca: un 'sin preparar' pasa a 'en cola' sin tener que tocar nada mas.
     $openEditor = {
+        # Con varias filas marcadas que tengan job, se editan TODAS a la vez (solo lo que marques en
+        # el dialogo); con una, el editor de siempre.
+        $lote = @((Get-CvQueueBulkActions -Rows (& $selected)).Edit)
+        if ($lote.Count -gt 1) {
+            $cambio = Show-CvJobBulkWindow -Context $Context -Names @($lote | ForEach-Object { $_.Name })
+            if ($cambio) { $st.Infos = @{} }   # el resumen se rehace: el job ya no dice lo mismo
+            & $refresh
+            return
+        }
         $r = & $editable
         if ($null -eq $r) { return }
         [void](Show-CvJobWindow -Context $Context -Name $r.Name -File $r.Path)
         & $refresh
     }
+    $miBulk.Add_Click({
+        $lote = @((Get-CvQueueBulkActions -Rows (& $selected)).Edit)
+        if ($lote.Count -le 1) { return }
+        $cambio = Show-CvJobBulkWindow -Context $Context -Names @($lote | ForEach-Object { $_.Name })
+        if ($cambio) { $st.Infos = @{} }
+        & $refresh
+    })
     $miStart.Add_Click({
         $rows = @((Get-CvQueueBulkActions -Rows (& $selected)).Start)
         if ($rows.Count -eq 0) { return }

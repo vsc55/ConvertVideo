@@ -87,6 +87,7 @@ Lo abre `Editar job`, el doble clic en una fila, o el propio recorrido de arriba
 |---|---|
 | **Perfil** | El de arriba. Cambiarlo aquí recalcula lo que dependa de él (incluida la regla de bordes) sin volver a leer el vídeo entero. |
 | **Vídeo** | Qué pista, si se copia sin recodificar, el **recorte** (`ancho:alto:x:y`) y el **escalado**. `Detectar bordes` fuerza un escaneo completo y `Ver recorte` te lo enseña con el reproductor para que veas si te has pasado. |
+| **Si engorda** | La casilla *«Si el vídeo recodificado engorda, quedarse con el original»*. A veces recodificar sale peor: el archivo ya venía muy comprimido y el resultado ocupa **más**. Con esto marcado, el worker lo comprueba al terminar el vídeo y, si ha engordado, se queda la pista original (el audio y los subtítulos ya hechos se conservan). Solo aplica si no tocas la imagen: sin recorte, sin escalado y sin cambiar el fps. Viene marcada o no según lo que tengas en *Opciones*, en la cola. |
 | **Audio** | Una fila por pista. **Marcas** las que se conservan, dices cuál es la **predeterminada**, corriges el **idioma** si viene mal etiquetado y ajustas el **retardo** (`Sync`) si la voz va adelantada o atrasada. `Escuchar` la reproduce. |
 | **Subtítulos** | Una fila por pista, con idioma, códec, cuántas líneas tiene y si es **forzado**. Marcas los que se conservan. `Ver texto` enseña el contenido (o, si es de imagen tipo PGS, lo extrae y lo abre con tu programa asociado) y `Reproducir con este` abre el vídeo con ese subtítulo encima, que es la forma rápida de distinguir unos normales de unos forzados o unos SDH. |
 
@@ -95,6 +96,19 @@ Abajo del todo, en gris, la ventana va contando lo que ha hecho: en la captura, 
 **`Guardar job`** escribe el `.job.json` y el archivo pasa a estar *en cola*. **`Cancelar`** no guarda nada.
 
 > Las pistas de subtítulos **vacías** (0 líneas) se enseñan pero no vienen marcadas: mapear una deja la barra de progreso clavada en 0% (es un fallo conocido de ffmpeg con pistas sin cues).
+
+## Cambiar lo mismo en muchos jobs
+
+Cuarenta capítulos y quieres que **todos** copien el vídeo en vez de recodificarlo: no hay que abrirlos uno a uno. Marca las filas en la cola (`Ctrl` / `Mayús`, o `Ctrl+A` para todas) y el botón pasa a decir **`Editar los N jobs`** — también está en el botón derecho.
+
+![Editar varios jobs a la vez](img/job-bloque.png)
+
+Se cambia **solo lo que marques**; lo demás se queda como está en **cada** job: su pista de audio, su idioma, su retardo, sus subtítulos, su recorte. Por eso arriba solo salen los ajustes que no dependen de lo que lleve dentro cada archivo: perfil, copiar/recodificar vídeo y audio, animación, escalado y recorte.
+
+- Entran los archivos que ya tienen job y que **nadie está codificando**; con uno solo marcado se abre el editor de siempre.
+- Cambiar el **perfil** arrastra si se recodifica vídeo y audio, como al preparar. Lo que marques debajo manda sobre eso.
+- El **escalado** se escribe igual en todos: usa `1280:-2` (alto automático) si no todos tienen la misma proporción.
+- No analiza nada, así que es inmediato aunque sean cuarenta.
 
 ## Detalles que ahorran tiempo
 

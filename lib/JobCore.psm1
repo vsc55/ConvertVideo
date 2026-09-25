@@ -22,12 +22,14 @@ function ConvertTo-CvJobRecord {
         FUENTE UNICA de la estructura del .job.json (lo que congela PREPARAR y lee el worker):
 
             file, profile, ffmpegVersion, aacgainVersion,
-            video { skip, index, crop, resize, anim, hdr },
+            video { skip, index, crop, resize, anim, hdr, keepOriginal },
             audio { skip, tracks[ {index, is51, sync, lang, default} ] },
             subtitles[ ... ]
 
         Las versiones de herramientas y el HDR no se piden: salen del contexto y del propio archivo
-        (Test-CvHdr sobre la pista de video elegida), igual que hacia la consola.
+        (Test-CvHdr sobre la pista de video elegida), igual que hacia la consola. Sin -Info no hay
+        archivo que mirar, y entonces manda -Hdr: es lo que permite reescribir un job (editar en
+        bloque) sin perder lo que ya se habia decidido.
     #>
     param(
         [Parameter(Mandatory)]$Context,
@@ -40,6 +42,11 @@ function ConvertTo-CvJobRecord {
         [string]$Resize = '',
         [bool]$Anim = $false,
         [bool]$AudioSkip = $false,
+        # HDR ya sabido (de un job anterior). Solo se usa si no hay -Info que mirar.
+        [bool]$Hdr = $false,
+        # Si recodificar sale mas caro en tamano que el original, quedarse con la pista original. Se
+        # decide POR ARCHIVO y se congela aqui; de serie viene lo que diga encode.video.
+        [bool]$KeepOriginal = $false,
         $AudioTracks = @(),
         $Subtitles = @(),
         # Lineas (cues) de TODAS las pistas de subtitulo del archivo, no solo de las elegidas: quien
@@ -47,7 +54,7 @@ function ConvertTo-CvJobRecord {
         # a demultiplexar el fichero para ensenarlas. Clave = indice de la pista.
         $SubtitleCues = $null
     )
-    $hdr = $false
+    $hdr = [bool]$Hdr
     if ($null -ne $Info) { $hdr = [bool](Test-CvHdr -Info $Info -Index $VideoIndex) }
     [ordered]@{
         file           = $File
@@ -61,6 +68,7 @@ function ConvertTo-CvJobRecord {
             resize = $Resize
             anim   = $Anim
             hdr    = $hdr
+            keepOriginal = $KeepOriginal
         }
         audio          = @{
             skip   = $AudioSkip
@@ -77,6 +85,25 @@ function ConvertTo-CvJobRecord {
         subtitles      = @($Subtitles)
         subtitleCues   = $(if ($null -ne $SubtitleCues) { $SubtitleCues } else { @{} })
     }
+}
+
+function Get-CvJobKeepOriginal {
+    <#
+        PURO. Si ESTE job dice que, cuando recodificar engorde el video, se use la pista original.
+        Los jobs preparados ANTES de existir la opcion no traen el campo: entonces manda -Default (lo
+        que diga encode.video.keepOriginalIfBigger), para que un job viejo se comporte como la
+        configuracion de ahora y no como un 'no' que nadie eligio.
+    #>
+    param($Job, [bool]$Default = $false)
+    if ($null -eq $Job -or $null -eq $Job.video) { return $Default }
+    $v = $Job.video
+    $tiene = $false
+    if ($v -is [System.Collections.IDictionary]) { $tiene = $v.Contains('keepOriginal') }
+    elseif ($null -ne $v.PSObject.Properties['keepOriginal']) { $tiene = $true }
+    if (-not $tiene) { return $Default }
+    $val = $v.keepOriginal
+    if ($null -eq $val) { return $Default }
+    return [bool]$val
 }
 
 function Get-CvJobProfileOptions {
@@ -369,6 +396,8 @@ function New-CvJobDraft {
         SubCues    = $cueMap
         VideoSkip  = ($Prof.VideoEncoder -eq 'copy') -or ($vids.Count -eq 0)
         VideoIndex = $vIdx
+        Hdr        = $false   # se decide al guardar, mirando el archivo (Test-CvHdr)
+        KeepOriginal = [bool]$Context.KeepOriginal
         Crop       = ''
         Resize     = $resize
         Anim       = [bool]$Prof.TuneAnimation
@@ -406,6 +435,8 @@ function Read-CvJobDraft {
         SubCues    = $cueMap
         VideoSkip  = [bool]$job.video.skip
         VideoIndex = $(if ($null -ne $job.video.index) { [int]$job.video.index } else { -1 })
+        Hdr        = [bool]$job.video.hdr   # ya decidido: se conserva si se reescribe sin analizar
+        KeepOriginal = (Get-CvJobKeepOriginal -Job $job -Default ([bool]$Context.KeepOriginal))
         Crop       = "$($job.video.crop)"
         Resize     = "$($job.video.resize)"
         Anim       = [bool]$job.video.anim
@@ -430,6 +461,8 @@ function Save-CvJobDraft {
     $rec  = ConvertTo-CvJobRecord -Context $Context -File $Draft.File -Prof $prof -Info $Info `
         -VideoSkip ([bool]$Draft.VideoSkip) -VideoIndex ([int]$Draft.VideoIndex) `
         -Crop "$($Draft.Crop)" -Resize "$($Draft.Resize)" -Anim ([bool]$Draft.Anim) `
+        -Hdr $(if ($Draft.PSObject.Properties['Hdr']) { [bool]$Draft.Hdr } else { $false }) `
+        -KeepOriginal $(if ($Draft.PSObject.Properties['KeepOriginal']) { [bool]$Draft.KeepOriginal } else { $false }) `
         -AudioSkip ([bool]$Draft.AudioSkip) -AudioTracks @($Draft.Audio) -Subtitles @($Draft.Subtitles) `
         -SubtitleCues $(if ($Draft.PSObject.Properties['SubCues']) { $Draft.SubCues } else { $null })
     Write-CvJob -Context $Context -Name $Draft.Name -Job $rec
@@ -648,6 +681,8 @@ function Get-CvJobSummaryLines {
         if (-not [bool]$v.skip) {
             if ([bool]$v.anim)  { $bits += 'tune animacion' }
             if ([bool]$v.hdr)   { $bits += 'HDR: se tonemapea' }
+            # Solo se dice cuando esta puesto: es la excepcion, no lo normal.
+            if (Get-CvJobKeepOriginal -Job $job) { $bits += 'si engorda, se queda el original' }
         }
         $allV = @()
         if ($null -ne $Info) { $allV = @(Get-VideoStreams -Info $Info) }
@@ -859,6 +894,206 @@ function Set-CvJobDraftAudioSync {
         $notas += ("No se pudo comprobar la sincronia del audio: {0}" -f $_.Exception.Message)
     }
     return @($notas)
+}
+
+function Get-CvJobBulkFields {
+    <#
+        PURO. Ajustes que se pueden aplicar A VARIOS JOBS a la vez. Solo estan los que NO dependen de
+        lo que tenga dentro cada archivo: la pista de audio, los subtitulos, el retardo o el recorte
+        concreto son decisiones de ESE archivo y no se tocan en bloque (lo que no marcas se queda
+        exactamente como esta en cada job).
+
+        -Key es la clave que entiende Set-CvJobBulkChanges; -Kind, como se pide en la ventana
+        ('profile' = elegir perfil, 'bool' = si/no, 'text' = texto libre, vacio = quitar).
+    #>
+    return @(
+        [pscustomobject]@{
+            Key  = 'prof'
+            Kind = 'profile'
+            Text = 'Perfil de codificacion'
+            Help = 'El perfil entero y si se recodifica video y audio (lo de abajo manda).'
+        }
+        [pscustomobject]@{
+            Key  = 'videoCopy'
+            Kind = 'bool'
+            Text = 'Video'
+            On   = 'Copiar (sin recodificar)'
+            Off  = 'Recodificar'
+            Help = 'Copiar deja la pista de video tal cual, sin recodificarla.'
+        }
+        [pscustomobject]@{
+            Key  = 'audioCopy'
+            Kind = 'bool'
+            Text = 'Audio'
+            On   = 'Copiar (sin recodificar)'
+            Off  = 'Recodificar'
+            Help = 'No cambia QUE pistas se conservan, solo si se recodifican.'
+        }
+        [pscustomobject]@{
+            Key  = 'keepOriginal'
+            Kind = 'bool'
+            Text = 'Si engorda al recodificar'
+            On   = 'Quedarse con el video ORIGINAL'
+            Off   = 'Dejar el recodificado igualmente'
+            Help = 'Usar la original si recodificar la hace mas grande (sin tocar la imagen).'
+        }
+        [pscustomobject]@{
+            Key  = 'anim'
+            Kind = 'bool'
+            Text = 'Animacion'
+            On   = 'Si'
+            Off  = 'No'
+            Help = 'El ajuste del encoder para dibujos (tune animation).'
+        }
+        [pscustomobject]@{
+            Key  = 'resize'
+            Kind = 'text'
+            Text = 'Escalado'
+            Hint = 'vacio = sin escalar'
+            Help = 'W:H igual en todos: usa -2 de alto si varian de proporcion.'
+        }
+        [pscustomobject]@{
+            Key  = 'crop'
+            Kind = 'text'
+            Text = 'Recorte'
+            Hint = 'W:H:X:Y, vacio = quitarlo'
+            Help = 'Los bordes son de cada archivo: en bloque lo normal es dejarlo vacio.'
+        }
+    )
+}
+
+function Test-CvJobBulkChanges {
+    <#
+        PURO. Revisa lo que se va a aplicar en bloque antes de tocar ningun job. Devuelve
+        @{ Ok; Errors }. Vacio (no se ha marcado nada) tampoco vale: no habria nada que hacer.
+    #>
+    param($Changes)
+    $err = @()
+    $c = @{}
+    if ($null -ne $Changes) {
+        foreach ($k in @($Changes.Keys)) { $c["$k"] = $Changes[$k] }
+    }
+    if ($c.Count -eq 0) { $err += 'no se ha marcado ningun ajuste' }
+    if ($c.ContainsKey('crop')) {
+        $crop = "$($c['crop'])"
+        if ($crop -and $crop -notmatch '^\d+:\d+:\d+:\d+$') { $err += ("recorte mal escrito ('{0}'): tiene que ser W:H:X:Y" -f $crop) }
+    }
+    if ($c.ContainsKey('resize')) {
+        $rs = "$($c['resize'])"
+        if ($rs -and $rs -notmatch '^-?\d+:-?\d+$') { $err += ("escalado mal escrito ('{0}'): tiene que ser W:H (p. ej. 1280:-2)" -f $rs) }
+    }
+    if ($c.ContainsKey('prof') -and $null -eq $c['prof']) { $err += 'no se ha elegido perfil' }
+    return [pscustomobject]@{
+        Ok     = ($err.Count -eq 0)
+        Errors = @($err)
+    }
+}
+
+function Set-CvJobBulkChanges {
+    <#
+        PURO. Aplica a un BORRADOR de job (New-CvJobDraft / Read-CvJobDraft) SOLO las claves que
+        vengan en -Changes; todo lo demas -pista de audio, idioma, retardo, subtitulos, pista de
+        video- se queda como estaba. Devuelve un borrador NUEVO (no toca el que se le pasa).
+
+        Claves: prof, videoCopy, audioCopy, anim, resize, crop (las de Get-CvJobBulkFields).
+
+        El PERFIL arrastra si se recodifica video y audio, igual que al preparar (New-CvJobDraft):
+        un perfil 'copy' con skip a $false dejaria el job incoherente -el worker mira video.skip- y
+        cambiar a un perfil de verdad sin quitar el skip no recodificaria nada. Por eso el perfil se
+        aplica PRIMERO y lo que hayas marcado a mano manda sobre lo que el perfil implique.
+    #>
+    param($Draft, $Changes)
+    if ($null -eq $Draft) { return $null }
+    $out = [ordered]@{}
+    foreach ($p in @($Draft.PSObject.Properties)) { $out[$p.Name] = $p.Value }
+    $c = @{}
+    if ($null -ne $Changes) {
+        foreach ($k in @($Changes.Keys)) { $c["$k"] = $Changes[$k] }
+    }
+    if ($c.ContainsKey('prof') -and $null -ne $c['prof']) {
+        $prof = $c['prof']
+        $out['Prof']      = $prof
+        $out['VideoSkip'] = ("$($prof.VideoEncoder)".ToLower() -eq 'copy')
+        $out['AudioSkip'] = ("$($prof.AudioEncoder)".ToLower() -eq 'copy')
+        $out['Anim']      = [bool]$prof.TuneAnimation
+    }
+    if ($c.ContainsKey('videoCopy')) { $out['VideoSkip'] = [bool]$c['videoCopy'] }
+    if ($c.ContainsKey('audioCopy')) { $out['AudioSkip'] = [bool]$c['audioCopy'] }
+    if ($c.ContainsKey('anim'))      { $out['Anim']      = [bool]$c['anim'] }
+    if ($c.ContainsKey('keepOriginal')) { $out['KeepOriginal'] = [bool]$c['keepOriginal'] }
+    if ($c.ContainsKey('resize'))    { $out['Resize']    = "$($c['resize'])" }
+    if ($c.ContainsKey('crop'))      { $out['Crop']      = "$($c['crop'])" }
+    return [pscustomobject]$out
+}
+
+function Get-CvJobBulkSummary {
+    <#
+        PURO. En una linea, que se va a cambiar (lo que se ensena antes de aplicar y lo que se apunta
+        en el log). Sin nada marcado, cadena vacia.
+    #>
+    param($Changes)
+    $c = @{}
+    if ($null -ne $Changes) {
+        foreach ($k in @($Changes.Keys)) { $c["$k"] = $Changes[$k] }
+    }
+    $p = @()
+    if ($c.ContainsKey('prof') -and $null -ne $c['prof']) { $p += ("perfil -> {0}" -f (Format-CvProfileLabel -Prof $c['prof'])) }
+    if ($c.ContainsKey('videoCopy')) { $p += ("video -> {0}" -f $(if ([bool]$c['videoCopy']) { 'copiar' } else { 'recodificar' })) }
+    if ($c.ContainsKey('audioCopy')) { $p += ("audio -> {0}" -f $(if ([bool]$c['audioCopy']) { 'copiar' } else { 'recodificar' })) }
+    if ($c.ContainsKey('anim'))      { $p += ("animacion -> {0}" -f $(if ([bool]$c['anim']) { 'si' } else { 'no' })) }
+    if ($c.ContainsKey('keepOriginal')) { $p += ("si engorda -> {0}" -f $(if ([bool]$c['keepOriginal']) { 'quedarse con el original' } else { 'dejar el recodificado' })) }
+    if ($c.ContainsKey('resize'))    { $p += ("escalado -> {0}" -f $(if ("$($c['resize'])") { "$($c['resize'])" } else { 'sin escalar' })) }
+    if ($c.ContainsKey('crop'))      { $p += ("recorte -> {0}" -f $(if ("$($c['crop'])") { "$($c['crop'])" } else { 'sin recorte' })) }
+    return ($p -join ', ')
+}
+
+function Set-CvJobsBulk {
+    <#
+        Aplica -Changes a los jobs de -Names, uno a uno: se lee el job, se le cambia SOLO lo marcado
+        (Set-CvJobBulkChanges) y se vuelve a escribir. No se analiza ningun archivo: lo que ya estaba
+        congelado -pistas, subtitulos, lineas contadas, HDR- se conserva tal cual.
+
+        Un job que falle no para a los demas: se cuenta y se sigue. Devuelve @{ Done; Failed; Errors }.
+    #>
+    param(
+        [Parameter(Mandatory)]$Context,
+        [string[]]$Names = @(),
+        $Changes
+    )
+    $chk = Test-CvJobBulkChanges -Changes $Changes
+    if (-not $chk.Ok) {
+        return [pscustomobject]@{
+            Done   = 0
+            Failed = 0
+            Errors = @($chk.Errors)
+        }
+    }
+    # 'Auto' se resuelve UNA vez para todo el lote (la sonda de GPU es la misma para todos), no una
+    # vez por archivo.
+    $cambios = @{}
+    foreach ($k in @($Changes.Keys)) { $cambios["$k"] = $Changes[$k] }
+    if ($cambios.ContainsKey('prof') -and $null -ne $cambios['prof']) {
+        $cambios['prof'] = Resolve-CvProfileAuto -Context $Context -Prof $cambios['prof']
+    }
+    $done = 0
+    $fail = 0
+    $errs = @()
+    foreach ($n in @($Names)) {
+        try {
+            $d = Read-CvJobDraft -Context $Context -Name $n
+            $d = Set-CvJobBulkChanges -Draft $d -Changes $cambios
+            [void](Save-CvJobDraft -Context $Context -Draft $d)
+            $done++
+        } catch {
+            $fail++
+            $errs += ("{0}: {1}" -f $n, $_.Exception.Message)
+        }
+    }
+    return [pscustomobject]@{
+        Done   = $done
+        Failed = $fail
+        Errors = @($errs)
+    }
 }
 
 function Get-CvJobAutoPlan {

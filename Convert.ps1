@@ -26,7 +26,8 @@ param(
     # Codificar SOLO estos archivos (nombre base, sin extension), en vez de todos los preparados. Lo
     # usa la ventana de la cola cuando se eligen unos cuantos a mano; sirve igual desde consola para
     # rehacer uno concreto sin tocar el resto. Vacio = todos, como siempre. Solo afecta a la fase
-    # WORKER: PREPARAR sigue recorriendo lo que falte.
+    # WORKER: PREPARAR sigue recorriendo lo que falte. Desde la ventana llegan todos en un solo
+    # valor separados por '|' (ver Get-CvConvertWorkerArgs / Expand-CvOnlyList).
     [string[]]$Only = @(),
     # Fichero de configuracion a usar (por defecto config.json junto al programa). Admite ruta
     # absoluta o relativa al directorio actual. Permite tener varios perfiles de config.
@@ -67,6 +68,9 @@ foreach ($m in $modules) {
 
 # Desatendido = worker: nunca entra en PREPARAR (que es todo preguntas).
 if ($Unattended) { $WorkerOnly = $true }
+# Los nombres elegidos pueden venir pegados por '|' en un solo valor: 'powershell -File' no sabe
+# pasar listas (ver Expand-CvOnlyList).
+$Only = @(Expand-CvOnlyList -Values $Only)
 
 # Arranque comun (config + contexto + marcas + log + apariencia + cabecera). Ver Start-CvSession.
 $sess    = Start-CvSession -Root $Root -Config $Config -LogPrefix 'Convert'
@@ -357,6 +361,7 @@ if ($needPrepare) {
             -VideoSkip ([bool]$vAsk.Skip) `
             -VideoIndex $(if ($null -ne $vAsk.Index) { [int]$vAsk.Index } else { -1 }) `
             -Crop "$($vAsk.Crop)" -Resize "$($vAsk.Resize)" -Anim ([bool]$vAsk.Anim) `
+            -KeepOriginal ([bool]$ctx.KeepOriginal) `
             -AudioSkip ([bool]$aAsk.Skip) -AudioTracks @($aAsk.Tracks) -Subtitles @($subSel)
         Write-CvJob -Context $ctx -Name $name -Job $job
 
@@ -538,7 +543,19 @@ while ($didAny) {
             $spec = Resolve-CvRenderSpec -Context $jctx -Prof $prof -Job $job -Info $info
             $failReason = ''
             $ok = $false
+            # Se ha tirado el video recodificado y se usa el del original (solo puede pasar en el
+            # pipeline por etapas; se declara aqui porque el resumen de mas abajo lo mira).
+            $vOriginal = $false
             # Ejecucion en UNA sola pasada (BETA) si el job es elegible; si no, pipeline por etapas.
+            # Indice de la pista de video elegida (congelado en PREPARAR); jobs antiguos sin el campo -> -1.
+            $vIdxOne = $(if ($null -ne $job.video.index) { [int]$job.video.index } else { -1 })
+            # Y su pista, para saber de que tamano es la imagen de origen (un escalado al MISMO
+            # tamano no es tocar la imagen, ver Get-CvVideoPictureState).
+            $vSrcOne = $(
+                $todas = @(Get-VideoStreams -Info $info)
+                $elegida = @($todas | Where-Object { [int]$_.index -eq $vIdxOne })
+                if ($elegida.Count -gt 0) { $elegida[0] } elseif ($todas.Count -gt 0) { $todas[0] } else { [pscustomobject]@{ width = 0; height = 0 } }
+            )
             $onePass = Test-CvOnePassEligible -Context $jctx -Job $job -Prof $prof
             if ($onePass.Ok) {
                 Write-CvInfoStep $jctx 'WORKER' 'Modo una sola pasada [beta] (audio + video + multiplexado en un ffmpeg)'
@@ -594,6 +611,34 @@ while ($didAny) {
             if ($job.video.skip) { if ($jctx.Debug) { Write-CvLog 'VIDEO' '[SKIP] - se omite (copy)' } else { Write-Host ' - Video (copy)' } }
             else { $videoOk = Invoke-VideoRun -Context $jctx -Prof $prof -File $f.FullName -Crop $job.video.crop -Resize $job.video.resize -Anim ([bool]$job.video.anim) -Index $vIdx -Hdr ([bool]$job.video.hdr) -Duration (Get-MediaDuration $info) -Fps (Get-CvOutputFps -Context $jctx -Info $info) }
 
+            # Recodificar que ENGORDA (encode.video.keepOriginalIfBigger): si lo codificado ocupa mas
+            # que la pista original y la imagen no se ha tocado, no ha servido de nada. Se TIRA el
+            # temporal y se multiplexa con el video original: el audio, los subtitulos y los
+            # capitulos ya estan hechos, asi que no se repite nada de eso. Invoke-Multiplex elige la
+            # fuente por si existe el temporal, asi que borrarlo es justo lo que hace falta.
+            $vSkip = [bool]$job.video.skip
+            if ($videoOk -and -not $vSkip -and (Get-CvJobKeepOriginal -Job $job -Default ([bool]$jctx.KeepOriginal))) {
+                $vTmpPath = (Get-CvTempPaths -Context $jctx -Name $name).Video
+                $encBytes = 0L
+                try { if (Test-Path -LiteralPath $vTmpPath) { $encBytes = [long](Get-Item -LiteralPath $vTmpPath).Length } } catch { $encBytes = 0L }
+                $origV = Get-CvVideoStreamBytes -Info $info -Index $vIdx -FileBytes ([long]$f.Length)
+                $img   = Get-CvVideoPictureState -Crop "$($job.video.crop)" -Resize "$($job.video.resize)" `
+                    -Hdr ([bool]$job.video.hdr) -TonemapHdr "$($jctx.TonemapHdr)" `
+                    -SrcFps (Get-CvMediaFps -Info $info) -OutFps (Get-CvOutputFps -Context $jctx -Info $info) `
+                    -SrcWidth ([int]$vSrcOne.width) -SrcHeight ([int]$vSrcOne.height)
+                $keep  = Get-CvVideoKeepPlan -EncodedBytes $encBytes -OriginalBytes ([long]$origV.Bytes) -Enabled $true `
+                    -Ratio ([double]$jctx.KeepOriginalRatio) -Untouched ([bool]$img.Untouched)
+                if ([bool]$keep.UseOriginal) {
+                    Write-CvLog 'VIDEO' ("[ORIGINAL] - {0} (el tamano del original sale de: {1}); se usa la pista de video ORIGINAL" -f $keep.Reason, $origV.From)
+                    if (-not $jctx.Debug) { Write-Host ' - Video: recodificar no compensa, se usa el original' }
+                    if (Test-Path -LiteralPath $vTmpPath) { Remove-Item -Force -LiteralPath $vTmpPath -ErrorAction SilentlyContinue }
+                    $vSkip     = $true
+                    $vOriginal = $true
+                } elseif ([bool]$img.Untouched -and "$($keep.Reason)" -ne '') {
+                    Write-CvLog 'VIDEO' ("[ORIGINAL] - No se comprueba si compensa: {0}" -f $keep.Reason)
+                }
+            }
+
             # ---------- MULTIPLEX ----------
             if ((-not $audioOk) -or (-not $videoOk)) {
                 $failReason = if (-not $audioOk) { 'fallo en la codificacion de audio' } else { 'fallo en la codificacion de video' }
@@ -601,10 +646,35 @@ while ($didAny) {
                 $ok = $false
             } else {
                 if ($jctx.Debug) { Write-Host '' }
-                $ok = Invoke-Multiplex -Context $jctx -File $f.FullName -Info $info -VideoSkipped ([bool]$job.video.skip) -AudioSkipped ([bool]$job.audio.skip) -AudioTracks $audioTracks -Subtitles $job.subtitles -VideoIndex $vIdx
+                $ok = Invoke-Multiplex -Context $jctx -File $f.FullName -Info $info -VideoSkipped $vSkip -AudioSkipped ([bool]$job.audio.skip) -AudioTracks $audioTracks -Subtitles $job.subtitles -VideoIndex $vIdx -VideoFromSource $vOriginal
                 if (-not $ok) { $failReason = 'fallo en el multiplexado' }
             }
             }   # fin del pipeline por etapas (else de la ejecucion unica)
+
+            # ---------- .HA COMPENSADO RECODIFICAR? (ultima palabra, por los dos caminos) ----------
+            # La comparacion fina (pista codificada contra pista original) solo se puede hacer por
+            # etapas, y ademas depende de que se sepa cuanto ocupa la pista original: cuando no hay
+            # ni tag ni bit_rate se compara contra el FICHERO entero, que es conservador y deja
+            # escapar casos. Esto es la red de seguridad, y no estima nada: si la SALIDA ha quedado
+            # mas grande que la ENTRADA y la imagen no se ha tocado, se le cambia la pista de video
+            # por la del original con un remux (el audio y los subtitulos ya estan hechos).
+            if ($ok -and -not $vOriginal -and -not [bool]$job.video.skip -and
+                (Get-CvJobKeepOriginal -Job $job -Default ([bool]$jctx.KeepOriginal))) {
+                $outFin = Get-OutputPath $jctx $name
+                $imgFin = Get-CvVideoPictureState -Crop "$($job.video.crop)" -Resize "$($job.video.resize)" `
+                    -Hdr ([bool]$job.video.hdr) -TonemapHdr "$($jctx.TonemapHdr)" `
+                    -SrcFps (Get-CvMediaFps -Info $info) -OutFps (Get-CvOutputFps -Context $jctx -Info $info) `
+                    -SrcWidth ([int]$vSrcOne.width) -SrcHeight ([int]$vSrcOne.height)
+                $keepFin = Get-CvVideoKeepPlan -Enabled $true -Ratio ([double]$jctx.KeepOriginalRatio) `
+                    -EncodedBytes ([long](Get-Item -LiteralPath $outFin).Length) -OriginalBytes ([long]$f.Length) `
+                    -Untouched ([bool]$imgFin.Untouched)
+                if ([bool]$keepFin.UseOriginal) {
+                    Write-CvLog 'VIDEO' ("[ORIGINAL] - La salida ha quedado mas grande que el original ({0}); se le cambia el video por el original" -f $keepFin.Reason)
+                    $vOriginal = Invoke-CvVideoSwap -Context $jctx -File $f.FullName -OutFile $outFin -VideoIndex $vIdxOne
+                } elseif (-not [bool]$imgFin.Untouched) {
+                    Write-CvLog 'VIDEO' ("[ORIGINAL] - No se mira si compensa: la imagen cambia ({0}), asi que el original no sirve de sustituto" -f $imgFin.Reason)
+                }
+            }
 
             if ($ok) {
                 # limpieza de temporales (activable/desactivable con el marcador 'keep_temp')
@@ -626,7 +696,7 @@ while ($didAny) {
 
                 # Control de calidad de la salida vs origen (encode.qualityCheck; no en 'copy'). Es una
                 # pasada extra de ffmpeg (fuera del tiempo de conversion de arriba); fail-soft.
-                if ($ctx.QualityCheck -ne 'off' -and -not $job.video.skip) {
+                if ($ctx.QualityCheck -ne 'off' -and -not $job.video.skip -and -not $vOriginal) {
                     # Measure-CvQuality muestra su propia linea de progreso en vivo (Invoke-ToolProgress).
                     $qScore = Measure-CvQuality -Context $jctx -Source $f.FullName -Output $out -Metric $ctx.QualityCheck
                     if ($null -ne $qScore) {

@@ -374,6 +374,15 @@ function Get-CvConfigDefaults {
                 tonemapCurve = 'bt.2390'
                 anamorphic   = 'square'
                 qualityCheck = 'off'
+                # Si el video RECODIFICADO sale mas grande que el original, recodificar no ha
+                # compensado: se tira lo codificado y se multiplexa con la pista de video ORIGINAL
+                # (el audio, los subtitulos y los capitulos ya estan hechos, no se repite nada). Solo
+                # se hace cuando la imagen NO se toca: sin recorte, sin escalado, sin tone-mapping
+                # HDR y sin forzar fps -si se cambia la imagen, el original ya no vale de sustituto-.
+                keepOriginalIfBigger = $false
+                # A partir de que proporcion se da por no compensado. 1.00 = solo si el recodificado
+                # es MAS grande que el original; 0.95 = si no ahorra ni un 5%.
+                keepOriginalRatio    = 1.00
                 # Perfil Auto: filtros (gpuOnly/maxCodec) + control de tasa (crf/crfAv1/qmin/qmax/level).
                 auto = [ordered]@{
                     gpuOnly  = $false
@@ -830,6 +839,8 @@ function Get-CvConfigHelp {
         'encode/video/tonemapHdr' = 'HDR->SDR BT.709 al recodificar: auto (solo si origen HDR) | off'
         'encode/video/tonemapCurve'= 'Curva de tone-mapping libplacebo: bt.2390 (rec.) | bt.2446a | spline | reinhard | mobius | hable | ...'
         'encode/video/anamorphic' = 'Video anamorfico (SAR!=1): keep | square (cuadra por ancho) | squareheight (por alto)'
+        'encode/video/keepOriginalIfBigger' = 'Si el video recodificado sale mas grande que el original (y no se toca la imagen), usar la pista ORIGINAL en vez de la recodificada'
+        'encode/video/keepOriginalRatio' = 'Desde que proporcion se da por no compensado (1.00 = solo si es mas grande; 0.95 = si no ahorra ni un 5%)'
         'encode/video/qualityCheck' = 'Medir calidad de la salida vs origen tras codificar: off | ssim | vmaf (pasada extra, mas lento)'
         'encode/video/auto'         = 'Ajustes del perfil Auto (filtros de encoder + control de tasa)'
         'encode/video/auto/gpuOnly' = 'Perfil Auto: si true, solo considera encoders por GPU (NVENC); false = permite CPU'

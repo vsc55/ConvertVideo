@@ -18,7 +18,7 @@ Ejemplo:
   "profile": { "VideoEncoder": "hevc_nvenc", "VideoProfile": "main10", "VideoLevel": "5", "Qmin": 1, "Qmax": 23, "Crf": null, "DetectBorder": true, "ChangeSize": "", "MaxWidth": null, "Multipass": "", "AudioEncoder": "aac_coder", "AudioCodec": "aac", "AudioBitrate": "192k", "AudioHz": 44100, "AudioChannels": null, "DownmixMode": null, "DownmixCoeffs": null },
   "ffmpegVersion": "7.1.1",
   "aacgainVersion": "2.0.0",
-  "video": { "skip": false, "index": 0, "crop": "1920:800:0:140", "resize": "", "anim": false, "hdr": false },
+  "video": { "skip": false, "index": 0, "crop": "1920:800:0:140", "resize": "", "anim": false, "hdr": false, "keepOriginal": false },
   "audio": { "skip": false, "tracks": [ { "index": 2, "is51": true, "sync": 0, "lang": "spa", "default": true }, { "index": 1, "is51": false, "sync": 0, "lang": "spa", "default": false } ] },
   "subtitles": [ { "Index": 3, "Lang": "spa", "Default": false, "Forced": true } ]
 }
@@ -29,7 +29,7 @@ Ejemplo:
 | `file` | ruta absoluta | Entrada de ffmpeg. |
 | `profile` | perfil elegido | Argumentos de codec/audio. |
 | `ffmpegVersion` / `aacgainVersion` | `selected` al preparar | Versión a usar (se instala si falta). |
-| `video` | `Invoke-VideoAsk` | `index` de pista de vídeo (se mapea `0:<index>`), `crop`, `resize`, `anim`, `hdr` (si el origen es HDR → tone-mapping a SDR al recodificar, ver [explica-tonemap-hdr.md](explica-tonemap-hdr.md)), o `skip` (copy). |
+| `video` | `Invoke-VideoAsk` | `index` de pista de vídeo (se mapea `0:<index>`), `crop`, `resize`, `anim`, `hdr` (si el origen es HDR → tone-mapping a SDR al recodificar, ver [explica-tonemap-hdr.md](explica-tonemap-hdr.md)), o `skip` (copy). `keepOriginal`: si al terminar el vídeo recodificado ocupa **más** que el original y la imagen no se ha tocado, se tira lo codificado y se multiplexa la pista original (`encode.video.keepOriginalIfBigger` es su valor de partida; un job **antiguo** sin el campo hereda lo que diga la config, `Get-CvJobKeepOriginal`). |
 | `audio` | `Invoke-AudioAsk` | `tracks[]` = pistas a incluir, la **predeterminada primero**; cada una con `index` de pista, `lang`, `sync` (silencio), `is51`, `default`. Normalmente **una** pista; con la multipista (`encode.audio.multiAudio`, por defecto; 2+ del idioma preferido) puede haber varias. `skip = true` en perfil `copy` (las `tracks` se copian del original; sin `tracks`, copy clásico `0:a:0`). El **título** de salida no se congela: el multiplex lo deja en blanco o lo copia del origen según `encode.audio.keepTitle`. **Compat**: jobs antiguos con `audio.index/is51/sync/lang` (monopista) se leen como una lista de una pista (`Get-CvJobAudioTracks`). |
 | `subtitles` | `Select-Subtitles` | Pistas a mapear con idioma/disposición/título. |
 

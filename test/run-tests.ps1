@@ -49,6 +49,8 @@ $modules = @(
     'Multiplex'
     'Render'
     'OnePass'
+    # La verificacion mira la marca que deja el multiplex en la salida (Get-CvOutputVideoSource).
+    'WorkerCore'
 )
 foreach ($m in $modules) {
     Import-Module (Join-Path $Lib ("{0}.psm1" -f $m)) -Force
@@ -274,6 +276,46 @@ try {
             $fx, $aIdx, $(if($aSel){$aSel.Language}else{'-'}), $(if($aSel -and $aSel.Is51){' 5.1'}else{''}), $subSel.Count)
     }
 
+    # --- Caso aparte: recodificar que ENGORDA -> se queda la pista de video ORIGINAL ---
+    # Se fabrica una entrada A 23.976 fps (el fps que fuerza la config de serie: asi forzarlo NO
+    # cambia la imagen y el original sirve de sustituto) y se le pone un job con un perfil casi SIN
+    # PERDIDA, que seguro sale mas grande que la entrada. Con keepOriginal en el job, el worker tiene
+    # que tirar lo codificado y multiplexar el video original, y marcarlo en la salida.
+    $keepName = 'keep-original-1080p'
+    $keepSrc  = Join-Path $ctx.Original ("{0}.mp4" -f $keepName)
+    & "$($ctx.FFmpeg)" -v quiet -y -i (Join-Path $PSScriptRoot 'video-1080p-basico.mp4') `
+        -t 4 -r 24000/1001 -c:v libx264 -crf 20 -preset veryfast -c:a copy $keepSrc 2>&1 | Out-Null
+    $keepOk = Test-Path -LiteralPath $keepSrc
+    if ($keepOk) {
+        $keepInfo = Get-MediaInfo -Context $ctx -File $keepSrc
+        $keepJob = [ordered]@{
+            file           = $keepSrc
+            # Audio recodificado a proposito: asi con -OnePass el caso es elegible para la pasada
+            # unica y prueba el OTRO camino (cambiarle el video a la salida ya hecha).
+            profile        = (New-CvProfile -VideoEncoder 'libx264' -Crf 1 -AudioEncoder 'aac_coder' -AudioBitrate '128k')
+            ffmpegVersion  = $ctx.FFmpegVersion
+            aacgainVersion = $ctx.AacGainVersion
+            video          = @{
+                skip   = $false
+                index  = 0
+                crop   = ''
+                resize = ''
+                anim   = $false
+                hdr    = $false
+                keepOriginal = $true
+            }
+            audio          = @{
+                skip   = $false
+                tracks = @(@{ index = 1; is51 = $false; sync = 0; lang = 'und'; default = $true })
+            }
+            subtitles      = @()
+        }
+        Write-CvJob -Context $ctx -Name $keepName -Job $keepJob
+        Write-Host ('  job: {0}   (perfil casi sin perdida + keepOriginal)' -f $keepName)
+    } else {
+        Write-Host '  [AVISO] no se pudo fabricar la entrada de keepOriginal; ese caso se salta' -ForegroundColor Yellow
+    }
+
     # --- Ejecutar el Convert.ps1 REAL (entra como worker porque todo tiene job) ---
     Write-Host ''
     Write-Host '--- Ejecutando Convert.ps1 (worker) ---' -ForegroundColor Cyan
@@ -362,6 +404,31 @@ try {
                 Estado  = 'FAIL'
                 Detalle = ($errs -join '; ')
             }
+        }
+    }
+    # --- Y el caso de 'recodificar no compensa': la salida tiene que llevar el video ORIGINAL ---
+    if ($keepOk) {
+        $keepOut  = Get-OutputPath $ctx $keepName
+        $keepErrs = @()
+        if (-not (Test-Path -LiteralPath $keepOut)) {
+            $keepErrs += 'no se genero la salida'
+        } else {
+            $ko = Get-MediaInfo -Context $ctx -File $keepOut
+            # 1) la marca que deja el multiplex (es lo que luego lee la cola)
+            if ((Get-CvOutputVideoSource -Info $ko) -ne 'original') { $keepErrs += 'la salida no esta marcada como video original' }
+            # 2) y el tamano lo confirma: con el video casi sin perdida seria varias veces la entrada
+            $kIn  = (Get-Item -LiteralPath $keepSrc).Length
+            $kOut = (Get-Item -LiteralPath $keepOut).Length
+            if ($kOut -gt ($kIn * 1.5)) { $keepErrs += ("la salida ({0}) es mucho mayor que la entrada ({1}): se quedo lo recodificado" -f (Format-CvMb -Bytes $kOut), (Format-CvMb -Bytes $kIn)) }
+            # 3) y la imagen sigue siendo la misma (mismo tamano de video que la entrada)
+            $kvIn  = @($keepInfo.streams | Where-Object { $_.codec_type -eq 'video' })[0]
+            $kvOut = @($ko.streams | Where-Object { $_.codec_type -eq 'video' })[0]
+            if ($null -eq $kvOut -or [int]$kvOut.width -ne [int]$kvIn.width -or [int]$kvOut.height -ne [int]$kvIn.height) { $keepErrs += 'la resolucion de salida no coincide con la entrada' }
+        }
+        $results += [pscustomobject]@{
+            Fixture = ("{0}.mp4 (recodificar no compensa)" -f $keepName)
+            Estado  = $(if ($keepErrs.Count -eq 0) { 'PASS' } else { 'FAIL' })
+            Detalle = $(if ($keepErrs.Count -eq 0) { 'se quedo el video ORIGINAL y lo dejo marcado' } else { ($keepErrs -join '; ') })
         }
     }
 }

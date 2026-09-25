@@ -123,6 +123,22 @@ Viene relleno con lo que se elegiría solo, usando las mismas funciones de decis
 
 No se puede editar el job de un archivo que se está codificando: el worker ya trabaja con la copia que leyó.
 
+### Editar varios jobs a la vez
+
+Cuarenta capítulos y quieres que **todos** copien el vídeo en vez de recodificarlo: abrirlos de uno en uno no es plan. Marca las filas (`Ctrl`/`Mayús`, o `Ctrl+A` para todas) y el botón pasa a **`Editar los N jobs`**; también está en el botón derecho, *Editar los N jobs elegidos a la vez…*.
+
+Se cambia **solo lo que marques**. Todo lo demás se queda **como está en cada job**: su pista de audio, su idioma, su retardo, sus subtítulos, su recorte, su pista de vídeo, su HDR y las líneas ya contadas. Por eso solo se ofrecen los ajustes que **no dependen** de lo que lleve dentro cada archivo (`Get-CvJobBulkFields`):
+
+| Ajuste | Qué hace |
+|---|---|
+| **Perfil** | Cambia el perfil entero (encoder, calidad, audio) y, con él, si se recodifica vídeo y audio — igual que al preparar, porque un perfil `copy` con el vídeo marcado para recodificar dejaría el job incoherente (el worker mira `video.skip`). *Auto* se resuelve **una vez** para todo el lote. |
+| **Vídeo** / **Audio** | Copiar (sin recodificar) o recodificar. No cambia **qué** pistas de audio se conservan en cada archivo, solo si se recodifican. Marcarlo manda sobre lo que implique el perfil. |
+| **Animación** | El *tune* del encoder para dibujos. |
+| **Escalado** | Se escribe igual en todos, así que conviene `-2` de alto (`1280:-2`) si no todos tienen la misma proporción. Vacío = sin escalar. |
+| **Recorte** | Los bordes son de cada archivo: en bloque lo normal es dejarlo **vacío** para quitárselo a todos. |
+
+Reglas de la lista: entran las filas que **tengan job** y que **nadie esté codificando** (las mismas que se pueden quitar de la cola); con **una sola** no es una acción en bloque y se abre el editor de siempre. No se analiza ningún archivo —se lee el `.job.json`, se le cambia lo marcado y se vuelve a escribir—, así que es instantáneo aunque sean cuarenta; si uno falla, se cuenta y los demás siguen. Lo aplicado se apunta en el log (`[BLOQUE]`).
+
 ### Ver qué está haciendo (o qué hizo) un archivo
 
 **Doble clic** en una fila —o *Ver el proceso (log)* en el botón derecho— abre una ventana con el log:
@@ -177,6 +193,8 @@ Los **ajustes de la sesión** no están en la barra: viven en la pestaña **`Opc
 
 Para codificar **solo unos cuantos**, márcalos en la lista (Ctrl+clic) y pulsa *Iniciar* — o botón derecho → *Codificar solo estos*: a los workers se les pasa `-Only` con esos nombres y no tocan el resto. Con varios workers, todos llevan la misma lista y se la reparten por el lock de siempre.
 
+> **Cómo le llega la lista al worker.** Los nombres elegidos viajan en la línea de comandos (`Convert.ps1 -WorkerOnly -Unattended -Only "A|B|C"`), separados por **`|`**: `powershell -File` no interpreta los argumentos —cada uno llega como cadena literal—, así que una lista de verdad no cabe ahí, y la coma no vale de separador porque es legal en un nombre de archivo. `|` no lo es. El worker los desdobla con `Expand-CvOnlyList`. Si la selección es tan grande que no cabe en la orden (el límite de Windows son 32767 caracteres), la ventana lo dice antes de abrir nada.
+
 > Al pulsar *Iniciar* con una parte de la cola marcada, **se pregunta** qué codificar (*solo los marcados* / *toda la cola* / *no arrancar*). Es a propósito: marcar una fila es también como se lee su **resumen**, así que la selección no siempre significa "quiero solo esto". Desde el menú contextual no pregunta: ahí la elección ya es explícita.
 
 Entre la cola y la zona de abajo hay un **divisor arrastrable**, con su **agarre** pintado (la línea con tres puntos) para que se vea que se puede mover: se reparte el alto como se quiera (un resumen largo pide sitio; mirar la cola entera, también). De serie la zona de abajo se lleva algo menos de la mitad (`gui.queueSplitPercent`).
@@ -198,6 +216,8 @@ La lista de archivos **no se relee sola**: para eso está *Actualizar*. Las carp
 Medido con la ventana abierta y un worker publicando progreso: **0** relecturas de carpetas en 5 s codificando, **1** cuando el worker termina (la fila pasa a *Hecho*), **0** en 6 s con la cola parada y **1** al pulsar *Actualizar*. Antes eran tres listados de carpeta por segundo — justo mientras el disco está ocupado convirtiendo, y peor aún si `Original\` está en red.
 
 Los **botones** no esperan a nada de esto: el texto de *Iniciar* (`Iniciar (N elegidos)`), el de *Preparar pendientes*, y qué está disponible y qué no, se recalculan al marcar filas, con lo ya leído y sin tocar el disco.
+
+**Si recodificar no compensa, se queda el vídeo original.** En *Opciones* hay una casilla: *«Si el vídeo recodificado engorda, quedarse con el original»*. Marcada, al terminar de codificar el vídeo se compara con la pista del original y, si ha salido **más grande**, se tira lo codificado y se multiplexa el vídeo original — el audio y los subtítulos ya hechos se conservan, no se repite nada. Solo pasa cuando la imagen no se toca (sin recorte, escalado, tone-mapping ni cambio de fps). Lo que se marca aquí es el valor **de partida** y se guarda en la configuración (`encode.video.keepOriginalIfBigger`); cada archivo lo lleva congelado en su job, así que se puede cambiar por archivo en su editor o en varios a la vez. Cuando ocurre, la fila lo dice en la columna *Progreso*: **`[video ORIGINAL]`**, junto al tamaño. Se sabe porque la salida queda marcada (`CV_VIDEO=original`) y la cola lo lee con el mismo `ffprobe` que ya usa para deducir los bordes — así que aparece igual que ellos: con la cola parada y cacheado. Funciona por los dos caminos: por etapas se decide **antes** de multiplexar (se tira el temporal de vídeo y se une el original, que es lo que ya hace el perfil `copy`), y en la beta de una pasada se compara el fichero ya hecho y se le **cambia la pista de vídeo** con un remux.
 
 **La lista sigue al archivo que se está codificando.** Con la cola larga, la fila en curso se va por debajo de la zona visible y deja de verse justo lo único que se mueve. La lista se desplaza sola para dejarla a la vista, pero **solo cuando hay un motivo nuevo**, y nunca mientras la estás usando:
 
