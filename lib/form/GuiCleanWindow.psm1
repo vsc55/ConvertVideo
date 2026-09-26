@@ -15,7 +15,7 @@ function Show-CvCleanWindow {
     if (-not (Initialize-CvGui)) { return }
 
     $form = New-Object System.Windows.Forms.Form
-    $form.Text          = 'Limpiar carpeta Proceso'
+    $form.Text          = (Get-CvText -Key 'limpiar.tit')
     $form.StartPosition = 'CenterParent'
     $form.Size          = New-Object System.Drawing.Size(640, 470)
 
@@ -26,7 +26,7 @@ function Show-CvCleanWindow {
     $form.Controls.Add($combo)
 
     $lbl = New-Object System.Windows.Forms.Label
-    $lbl.Text     = 'Que eliminar:'
+    $lbl.Text     = (Get-CvText -Key 'limpiar.que')
     $lbl.AutoSize = $true
     $lbl.Location = New-Object System.Drawing.Point(12, 10)
     $form.Controls.Add($lbl)
@@ -42,13 +42,13 @@ function Show-CvCleanWindow {
     $form.Controls.Add($files)
 
     $btnDel = New-Object System.Windows.Forms.Button
-    $btnDel.Text     = 'Eliminar'
+    $btnDel.Text     = (Get-CvText -Key 'comun.eliminar')
     $btnDel.Location = New-Object System.Drawing.Point(12, 378)
     $btnDel.Size     = New-Object System.Drawing.Size(150, 30)
     $form.Controls.Add($btnDel)
 
     $btnClose = New-Object System.Windows.Forms.Button
-    $btnClose.Text     = 'Cerrar'
+    $btnClose.Text     = (Get-CvText -Key 'comun.cerrar')
     $btnClose.Location = New-Object System.Drawing.Point(462, 378)
     $btnClose.Size     = New-Object System.Drawing.Size(150, 30)
     $form.Controls.Add($btnClose)
@@ -56,10 +56,10 @@ function Show-CvCleanWindow {
     # Mismas cuatro opciones que el menu de consola, con el recuento de cada una.
     $p = Get-CvSetupProcesoStatus -Context $Context
     $whats = @(
-        @{ Value = 'jobs';  Text = ("Jobs (*.job.json)              [{0}]" -f $p.Jobs) }
-        @{ Value = 'locks'; Text = ("Bloqueos y estado de workers   [{0}]" -f $p.Locks) }
-        @{ Value = 'temps'; Text = ("Temporales (mkv / m4a / wav)   [{0}]" -f $p.Temps) }
-        @{ Value = 'all';   Text = 'TODO (jobs + bloqueos + temporales)' }
+        @{ Value = 'jobs';  Text = (Get-CvText -Key 'limpiar.op.jobs'  -Values @($p.Jobs)) }
+        @{ Value = 'locks'; Text = (Get-CvText -Key 'limpiar.op.locks' -Values @($p.Locks)) }
+        @{ Value = 'temps'; Text = (Get-CvText -Key 'limpiar.op.temps' -Values @($p.Temps)) }
+        @{ Value = 'all';   Text = (Get-CvText -Key 'limpiar.op.all') }
     )
     foreach ($w in $whats) { [void]$combo.Items.Add($w.Text) }
 
@@ -67,7 +67,7 @@ function Show-CvCleanWindow {
         $i = $combo.SelectedIndex
         if ($i -lt 0) { return }
         $f = @(Get-CvSetupCleanTargets -Context $Context -What $whats[$i].Value)
-        $files.Text = if ($f.Count -eq 0) { '(nada que eliminar)' } else { (@($f | ForEach-Object { $_.Name }) -join [Environment]::NewLine) }
+        $files.Text = if ($f.Count -eq 0) { (Get-CvText -Key 'limpiar.nada') } else { (@($f | ForEach-Object { $_.Name }) -join [Environment]::NewLine) }
         $btnDel.Enabled = ($f.Count -gt 0)
     }
     $combo.Add_SelectedIndexChanged($refresh)
@@ -77,9 +77,9 @@ function Show-CvCleanWindow {
         if ($i -lt 0) { return }
         $f = @(Get-CvSetupCleanTargets -Context $Context -What $whats[$i].Value)
         if ($f.Count -eq 0) { return }
-        if (-not (Show-CvGuiConfirm -Title 'Confirmar borrado' -Message ("Se eliminaran {0} fichero(s) de Proceso. Continuar?" -f $f.Count))) { return }
+        if (-not (Show-CvGuiConfirm -Title (Get-CvText -Key 'limpiar.confirm.tit') -Message (Get-CvText -Key 'limpiar.confirm.msg' -Values @($f.Count)))) { return }
         $n = Remove-CvSetupFiles -Files $f
-        Show-CvGuiInfo -Title 'Limpieza' -Message ("Eliminados {0} fichero(s)." -f $n)
+        Show-CvGuiInfo -Title (Get-CvText -Key 'limpiar.hecho.tit') -Message (Get-CvText -Key 'limpiar.hecho.msg' -Values @($n))
         & $refresh
     })
     $btnClose.Add_Click({ $form.Close() })

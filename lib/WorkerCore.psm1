@@ -265,27 +265,27 @@ function Get-CvQueueStates {
     @(
         @{
             Value = 'pending'
-            Text  = 'Sin preparar'
+            Text  = (Get-CvText -Key 'cola.est.pending')
         }
         @{
             Value = 'queued'
-            Text  = 'En cola'
+            Text  = (Get-CvText -Key 'cola.est.queued')
         }
         @{
             Value = 'working'
-            Text  = 'Codificando'
+            Text  = (Get-CvText -Key 'cola.est.working')
         }
         @{
             Value = 'stale'
-            Text  = 'Bloqueo huerfano'
+            Text  = (Get-CvText -Key 'cola.est.stale')
         }
         @{
             Value = 'partial'
-            Text  = 'Sin terminar'
+            Text  = (Get-CvText -Key 'cola.est.partial')
         }
         @{
             Value = 'done'
-            Text  = 'Hecho'
+            Text  = (Get-CvText -Key 'cola.est.done')
         }
     )
 }

@@ -41,7 +41,7 @@ function Show-CvConfigWindow {
     }
 
     $form = New-Object System.Windows.Forms.Form
-    $form.Text          = ("Editar configuracion ({0})" -f $CfgName)
+    $form.Text          = (Get-CvText -Key 'cfg.tit' -Values @($CfgName))
     $form.StartPosition = 'CenterScreen'
     $form.Size          = New-Object System.Drawing.Size(1000, 660)
     $form.MinimumSize   = New-Object System.Drawing.Size(820, 520)
@@ -59,7 +59,7 @@ function Show-CvConfigWindow {
     # Se puede arrastrar para dar mas sitio al arbol o al detalle, pero de serie el divisor es una
     # franja del color del fondo y no se ve: se ensancha y se le pinta el agarre (lo mismo que la
     # cola, ver Set-CvGuiSplitGrip).
-    [void](Set-CvGuiSplitGrip -Split $split -Tooltip 'Arrastra esta linea para repartir el ancho entre el arbol y el detalle')
+    [void](Set-CvGuiSplitGrip -Split $split -Tooltip (Get-CvText -Key 'cfg.grip'))
     # El divisor se coloca en Shown, cuando el ancho ya es el definitivo: hacerlo antes no sirve (al
     # redimensionarse la ventana el divisor se mueve proporcionalmente y el arbol se comia casi todo).
     # Los MinSize TAMBIEN van aqui y DESPUES de SplitterDistance: asignarlos antes lanza
@@ -89,7 +89,7 @@ function Show-CvConfigWindow {
     # lo que se toca a diario; marcado, aparece todo (catalogo de descargas, betas, tuning...).
     $chkAdv = New-Object System.Windows.Forms.CheckBox
     $chkAdv.Dock     = 'Fill'
-    $chkAdv.Text     = 'Mostrar opciones avanzadas'
+    $chkAdv.Text     = (Get-CvText -Key 'cfg.avanzadas')
     $chkAdv.Name     = 'cvAdvanced'
     $leftGrid.Controls.Add($chkAdv, 0, 0)
 
@@ -119,7 +119,7 @@ function Show-CvConfigWindow {
     $split.Panel2.Controls.Add($right)
 
     $lblKey = New-Object System.Windows.Forms.Label
-    $lblKey.Text      = 'Elige una opcion en el arbol'
+    $lblKey.Text      = (Get-CvText -Key 'cfg.elige')
     $lblKey.Font      = New-Object System.Drawing.Font('Segoe UI', 10, [System.Drawing.FontStyle]::Bold)
     $lblKey.Dock      = 'Fill'
     $lblKey.AutoSize  = $false
@@ -127,7 +127,7 @@ function Show-CvConfigWindow {
     $right.Controls.Add($lblKey, 0, 0)
 
     $lblVal = New-Object System.Windows.Forms.Label
-    $lblVal.Text     = 'Valor:'
+    $lblVal.Text     = (Get-CvText -Key 'cfg.valor')
     $lblVal.Dock     = 'Fill'
     $lblVal.AutoSize = $false
     $right.Controls.Add($lblVal, 0, 1)
@@ -167,7 +167,7 @@ function Show-CvConfigWindow {
     $right.Controls.Add($lblDef, 0, 3)
 
     $btnDef = New-Object System.Windows.Forms.Button
-    $btnDef.Text     = 'Volver al valor por defecto'
+    $btnDef.Text     = (Get-CvText -Key 'cfg.btn.default')
     $btnDef.Width    = 200
     $btnDef.Height   = 26
     $btnDef.Anchor   = 'Top,Left'
@@ -191,7 +191,7 @@ function Show-CvConfigWindow {
     $form.Controls.Add($bar)
 
     $btnSave = New-Object System.Windows.Forms.Button
-    $btnSave.Text   = 'Guardar'
+    $btnSave.Text   = (Get-CvText -Key 'comun.guardar')
     $btnSave.Width  = 110
     $btnSave.Height = 28
     $btnSave.Anchor = 'Top,Right'
@@ -199,7 +199,7 @@ function Show-CvConfigWindow {
     $bar.Controls.Add($btnSave)
 
     $btnCancel = New-Object System.Windows.Forms.Button
-    $btnCancel.Text   = 'Cancelar'
+    $btnCancel.Text   = (Get-CvText -Key 'comun.cancelar')
     $btnCancel.Width  = 110
     $btnCancel.Height = 28
     $btnCancel.Anchor = 'Top,Right'
@@ -209,7 +209,7 @@ function Show-CvConfigWindow {
     $lblDirty.AutoSize  = $true
     $lblDirty.Location  = New-Object System.Drawing.Point(12, 14)
     $lblDirty.ForeColor = (Get-CvGuiCurrentPalette).Muted
-    $lblDirty.Text      = 'Sin cambios'
+    $lblDirty.Text      = (Get-CvText -Key 'cfg.sincambios')
     $bar.Controls.Add($lblDirty)
 
     # Los botones se pegan a la derecha de la barra (el resto del panel derecho ya se ajusta solo).
@@ -224,7 +224,7 @@ function Show-CvConfigWindow {
     # --- helpers de estado ---
     $markDirty = {
         $st.Dirty = $true
-        $lblDirty.Text      = 'Hay cambios sin guardar'
+        $lblDirty.Text      = (Get-CvText -Key 'cfg.haycambios')
         $lblDirty.ForeColor = (Get-CvGuiCurrentPalette).Error
     }
 
@@ -272,7 +272,7 @@ function Show-CvConfigWindow {
             $combo.Visible = $false; $text.Visible = $false; $list.Visible = $false
             $right.RowStyles[2].Height = 0      # sin control de valor (seccion): sin hueco muerto
             $btnDef.Enabled = $false
-            $lblKey.Text = if ($st.Path) { $st.Path } else { 'Elige una opcion en el arbol' }
+            $lblKey.Text = if ($st.Path) { $st.Path } else { (Get-CvText -Key 'cfg.elige') }
             $help.Text   = (Get-CvHelpFor $st.Path)
             $lblDef.Text = ''
             if (-not $node) { return }
@@ -286,28 +286,28 @@ function Show-CvConfigWindow {
             # 'profiles' (raiz) es un array de OBJETOS: el editor de listas lo corromperia, igual que
             # en consola. Se explica y no se ofrece control.
             if ($st.Path -eq 'profiles') {
-                $help.Text = ("Los perfiles propios se editan a mano en {0} (seccion 'profiles')." -f $CfgName) + [Environment]::NewLine +
-                             'Se anaden al menu USAR PERFIL a continuacion de los de serie (14, 15, ...; ver docs/ref-perfiles.md).'
+                $help.Text = (Get-CvText -Key 'cfg.perfiles.1' -Values @($CfgName)) + [Environment]::NewLine +
+                             (Get-CvText -Key 'cfg.perfiles.2')
                 return
             }
             if ($kind -eq 'object') {
-                $help.Text = if ($help.Text) { $help.Text } else { 'Seccion: elige una opcion dentro.' }
+                $help.Text = if ($help.Text) { $help.Text } else { (Get-CvText -Key 'cfg.seccion') }
                 return
             }
 
             $defVal = Get-CvConfigDefaultValue $st.Path
-            $lblDef.Text = if ($null -ne $defVal) { ("Por defecto: {0}" -f (Format-CvCfgPreview $defVal 60)) } else { '' }
+            $lblDef.Text = if ($null -ne $defVal) { (Get-CvText -Key 'cfg.pordefecto' -Values @((Format-CvCfgPreview $defVal 60))) } else { '' }
             $btnDef.Enabled = ($null -ne $defVal)
 
             if ($kind -eq 'array') {
                 $right.RowStyles[2].Height = 132   # la lista necesita alto; un escalar, una linea
                 $list.Text = ((@($val) | ForEach-Object { "$_" }) -join [Environment]::NewLine)
                 $list.Visible = $true
-                $lblVal.Text = 'Valor (un elemento por linea):'
+                $lblVal.Text = (Get-CvText -Key 'cfg.valor.lista')
                 return
             }
             $right.RowStyles[2].Height = 30
-            $lblVal.Text = 'Valor:'
+            $lblVal.Text = (Get-CvText -Key 'cfg.valor')
 
             # Enum con catalogo -> desplegable (misma fuente que el editor de consola).
             $spec = Get-CvEditorOptions -Key $key
@@ -322,7 +322,7 @@ function Show-CvConfigWindow {
                 $combo.Visible = $true
                 # La descripcion del valor elegido se anade a la ayuda de la clave.
                 $descs = @(@($spec.Items) | Where-Object { "$($_.Desc)".Trim() -ne '' } | ForEach-Object { "  {0}: {1}" -f $_.Label, $_.Desc })
-                if ($descs.Count -gt 0) { $help.Text = ($help.Text + [Environment]::NewLine + [Environment]::NewLine + 'Valores:' + [Environment]::NewLine + ($descs -join [Environment]::NewLine)).Trim() }
+                if ($descs.Count -gt 0) { $help.Text = ($help.Text + [Environment]::NewLine + [Environment]::NewLine + (Get-CvText -Key 'cfg.valores') + [Environment]::NewLine + ($descs -join [Environment]::NewLine)).Trim() }
                 return
             }
             if ($kind -eq 'bool') {
@@ -370,7 +370,7 @@ function Show-CvConfigWindow {
         $kind = Get-CvNodeKind (Get-CvNodeVal $parent $segs[-1])
         $v = & $coerce $text.Text.Trim() $kind
         if ($null -eq $v) {
-            Show-CvGuiInfo -Title 'Valor no valido' -Message ("'{0}' no es un numero valido para {1}." -f $text.Text, $st.Path)
+            Show-CvGuiInfo -Title (Get-CvText -Key 'cfg.novalido.tit') -Message (Get-CvText -Key 'cfg.novalido.msg' -Values @($text.Text, $st.Path))
             return $false
         }
         & $apply $v
@@ -440,7 +440,7 @@ function Show-CvConfigWindow {
     $btnCancel.Add_Click({ $form.Close() })
     $form.Add_FormClosing({
         if ($st.Dirty -and -not $st.Saved) {
-            if (-not (Show-CvGuiConfirm -Title 'Cambios sin guardar' -Message 'Hay cambios sin guardar. Salir y descartarlos?')) {
+            if (-not (Show-CvGuiConfirm -Title (Get-CvText -Key 'cfg.salir.tit') -Message (Get-CvText -Key 'cfg.salir.msg'))) {
                 $_.Cancel = $true
             }
         }
@@ -460,9 +460,9 @@ function Show-CvConfigWindow {
         [void](Add-CvCfgNodes -Parent $tree -Node $st.Cfg -Path '' -BoldFont $st.Bold -ShowAdvanced $chkAdv.Checked -Stats $stats)
         $tree.EndUpdate()
         $chkAdv.Text = if ($stats.Hidden -gt 0) {
-            'Mostrar opciones avanzadas  ({0} editada(s) oculta(s))' -f $stats.Hidden
+            Get-CvText -Key 'cfg.avanzadas.n' -Values @($stats.Hidden)
         } else {
-            'Mostrar opciones avanzadas'
+            Get-CvText -Key 'cfg.avanzadas'
         }
         if ($keep) {
             $find = {

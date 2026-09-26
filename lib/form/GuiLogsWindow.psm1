@@ -21,7 +21,7 @@ function Show-CvLogsWindow {
     if (-not (Initialize-CvGui)) { return }
 
     $form = New-Object System.Windows.Forms.Form
-    $form.Text          = 'Logs'
+    $form.Text          = (Get-CvText -Key 'logs.tit')
     $form.StartPosition = 'CenterParent'
     $form.Size          = New-Object System.Drawing.Size(1000, 640)
     $form.MinimumSize   = New-Object System.Drawing.Size(720, 420)
@@ -71,16 +71,18 @@ function Show-CvLogsWindow {
         $bar.Controls.Add($b)
         return $b
     }
-    $btnOpen    = & $mkBtn '  Abrir fuera' 130 'cvLogOpen'
-    $btnRefresh = & $mkBtn '  Actualizar'  120 'cvLogRefresh'
-    $btnDel     = & $mkBtn '  Eliminar este log' 160 'cvLogDelete'
-    $btnClose   = & $mkBtn '  Cerrar' 110 ''
+    # Los dos espacios de delante son el hueco del icono, no parte del texto: por eso no van en
+    # el fichero de idioma.
+    $btnOpen    = & $mkBtn ('  ' + (Get-CvText -Key 'comun.abrirfuera'))  130 'cvLogOpen'
+    $btnRefresh = & $mkBtn ('  ' + (Get-CvText -Key 'comun.actualizar'))  120 'cvLogRefresh'
+    $btnDel     = & $mkBtn ('  ' + (Get-CvText -Key 'logs.btn.eliminar')) 160 'cvLogDelete'
+    $btnClose   = & $mkBtn ('  ' + (Get-CvText -Key 'comun.cerrar'))      110 ''
 
     # Crudo vs decorado: por defecto se muestra LIMPIO (se colapsan los repintados de la barra de los
     # logs antiguos); marcando la casilla se ve el fichero TAL CUAL, por si hay que revisar algo que
     # la limpieza recoge o simplemente comparar con el original.
     $chkRaw = New-Object System.Windows.Forms.CheckBox
-    $chkRaw.Text     = 'Ver crudo (sin limpiar)'
+    $chkRaw.Text     = (Get-CvText -Key 'logs.vercrudo')
     $chkRaw.AutoSize = $true
     $chkRaw.Margin   = New-Object System.Windows.Forms.Padding(16, 7, 3, 3)
     $chkRaw.Name     = 'cvLogRaw'
@@ -93,13 +95,13 @@ function Show-CvLogsWindow {
         $st.Logs = @(Get-CvSetupLogFiles -Context $Context -CurrentPath $CurrentLog)
         $lst.Items.Clear()
         foreach ($l in $st.Logs) {
-            $cur = if ($l.IsCurrent) { '  <- en curso' } else { '' }
+            $cur = if ($l.IsCurrent) { (Get-CvText -Key 'logs.encurso') } else { '' }
             [void]$lst.Items.Add(("{0:dd/MM/yy HH:mm}  {1,5} KB  {2}{3}" -f $l.Date, $l.SizeKb, $l.Name, $cur))
         }
         if ($lst.Items.Count -gt 0) {
             $lst.SelectedIndex = [Math]::Max(0, [Math]::Min($sel, $lst.Items.Count - 1))
         } else {
-            $txt.Text = '(no hay logs en la carpeta logs)'
+            $txt.Text = (Get-CvText -Key 'logs.vacio')
         }
     }
     $current = {
@@ -127,14 +129,14 @@ function Show-CvLogsWindow {
     $btnOpen.Add_Click({
         $l = & $current
         if ($null -eq $l) { return }
-        [void](Open-CvGuiPath -Path "$($l.Path)" -Title 'Logs')
+        [void](Open-CvGuiPath -Path "$($l.Path)" -Title (Get-CvText -Key 'logs.tit'))
     })
     $btnRefresh.Add_Click($reload)
     $btnDel.Add_Click({
         $l = & $current
         if ($null -eq $l) { return }
-        if ($l.IsCurrent) { Show-CvGuiInfo -Title 'Logs' -Message 'Ese es el log de la sesion en curso: esta en uso y no se puede borrar.'; return }
-        if (-not (Show-CvGuiConfirm -Title 'Eliminar log' -Message ("Eliminar {0}?" -f $l.Name))) { return }
+        if ($l.IsCurrent) { Show-CvGuiInfo -Title (Get-CvText -Key 'logs.tit') -Message (Get-CvText -Key 'logs.enuso'); return }
+        if (-not (Show-CvGuiConfirm -Title (Get-CvText -Key 'logs.del.tit') -Message (Get-CvText -Key 'logs.del.msg' -Values @($l.Name)))) { return }
         Remove-Item -Force -LiteralPath $l.Path -ErrorAction SilentlyContinue
         $txt.Text = ''
         & $reload

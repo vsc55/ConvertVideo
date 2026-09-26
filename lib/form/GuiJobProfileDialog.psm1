@@ -30,7 +30,7 @@ function Show-CvJobProfileDialog {
     $opts = @(Get-CvJobProfileOptions -Context $Context -Profiles $(if ($cfgPath) { @(Get-CvConfigProfiles -Path $cfgPath) } else { $null }))
 
     $form = New-Object System.Windows.Forms.Form
-    $form.Text            = 'Perfil de codificacion'
+    $form.Text            = (Get-CvText -Key 'perfil.tit')
     $form.StartPosition   = 'CenterScreen'
     $form.FormBorderStyle = 'FixedDialog'
     $form.MaximizeBox     = $false
@@ -38,7 +38,7 @@ function Show-CvJobProfileDialog {
     $form.ClientSize      = New-Object System.Drawing.Size(720, 460)
 
     $lbl = New-Object System.Windows.Forms.Label
-    $lbl.Text     = $(if ($Info) { $Info } else { 'Perfil con el que preparar (se aplica a todos los archivos):' })
+    $lbl.Text     = $(if ($Info) { $Info } else { (Get-CvText -Key 'perfil.cual') })
     $lbl.Location = New-Object System.Drawing.Point(12, 12)
     $lbl.Size     = New-Object System.Drawing.Size(696, 20)
     $form.Controls.Add($lbl)
@@ -86,7 +86,7 @@ function Show-CvJobProfileDialog {
 
     $st = @{ Prof = $null }
     $btnOk = New-Object System.Windows.Forms.Button
-    $btnOk.Text     = 'Aceptar'
+    $btnOk.Text     = (Get-CvText -Key 'comun.aceptar')
     $btnOk.Size     = New-Object System.Drawing.Size(120, 30)
     $btnOk.Location = New-Object System.Drawing.Point(462, 416)
     $btnOk.Name     = 'cvProfOk'
@@ -99,7 +99,7 @@ function Show-CvJobProfileDialog {
     $form.Controls.Add($btnOk)
 
     $btnCancel = New-Object System.Windows.Forms.Button
-    $btnCancel.Text     = 'Cancelar'
+    $btnCancel.Text     = (Get-CvText -Key 'comun.cancelar')
     $btnCancel.Size     = New-Object System.Drawing.Size(120, 30)
     $btnCancel.Location = New-Object System.Drawing.Point(588, 416)
     $btnCancel.Name     = 'cvProfCancel'
@@ -109,7 +109,7 @@ function Show-CvJobProfileDialog {
     # 'Ajustar...' = la opcion Custom del menu de consola: partir del perfil marcado y cambiarle lo
     # que haga falta (bitrate, encoder, ancho maximo...). Lo que salga se usa tal cual.
     $btnTune = New-Object System.Windows.Forms.Button
-    $btnTune.Text     = 'Ajustar...'
+    $btnTune.Text     = (Get-CvText -Key 'comun.ajustar')
     $btnTune.Size     = New-Object System.Drawing.Size(110, 30)
     $btnTune.Location = New-Object System.Drawing.Point(12, 416)
     $btnTune.Name     = 'cvProfTune'
@@ -127,7 +127,7 @@ function Show-CvJobProfileDialog {
     # 'Nuevo...' = crear un perfil PROPIO desde cero y dejarlo guardado en el config. Se queda
     # marcado en la lista, pero no se cierra el dialogo: crear no es elegir.
     $btnNew = New-Object System.Windows.Forms.Button
-    $btnNew.Text     = 'Nuevo...'
+    $btnNew.Text     = (Get-CvText -Key 'comun.nuevo')
     $btnNew.Size     = New-Object System.Drawing.Size(110, 30)
     $btnNew.Location = New-Object System.Drawing.Point(130, 416)
     $btnNew.Name     = 'cvProfNew'
@@ -144,7 +144,7 @@ function Show-CvJobProfileDialog {
 
     # 'Borrar' solo vale para los PROPIOS: los de serie no estan en ningun fichero que se pueda tocar.
     $btnDel = New-Object System.Windows.Forms.Button
-    $btnDel.Text     = 'Borrar'
+    $btnDel.Text     = (Get-CvText -Key 'comun.borrar')
     $btnDel.Size     = New-Object System.Drawing.Size(110, 30)
     $btnDel.Location = New-Object System.Drawing.Point(248, 416)
     $btnDel.Name     = 'cvProfDel'
@@ -155,9 +155,9 @@ function Show-CvJobProfileDialog {
         if ($i -lt 0 -or $i -ge $opts.Count) { return }
         $lbl = "$($opts[$i].Label)"
         if ($lbl -eq '') { return }
-        if (-not (Show-CvGuiConfirm -Title 'Perfiles' -Message ("Borrar el perfil '{0}'?" -f $lbl))) { return }
+        if (-not (Show-CvGuiConfirm -Title (Get-CvText -Key 'perfiles.tit') -Message (Get-CvText -Key 'perfil.borrar.msg' -Values @($lbl)))) { return }
         $r = Remove-CvConfigProfile -Path $cfgPath -Label $lbl
-        if (-not $r.Ok) { Show-CvGuiInfo -Title 'Perfiles' -Message ("No se pudo borrar: {0}" -f $r.Error) }
+        if (-not $r.Ok) { Show-CvGuiInfo -Title (Get-CvText -Key 'perfiles.tit') -Message (Get-CvText -Key 'perfil.borrar.no' -Values @($r.Error)) }
         & $fill
     })
     $form.Controls.Add($btnDel)

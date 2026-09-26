@@ -44,7 +44,7 @@ function Show-CvConvertWindow {
     if (-not (Initialize-CvGui)) { return $false }
 
     $form = New-Object System.Windows.Forms.Form
-    $form.Text          = ("{0} {1} - Cola de conversion ({2})" -f $Context.AppName, $Context.Version, $CfgName)
+    $form.Text          = (Get-CvText -Key 'cola.tit' -Values @($Context.AppName, $Context.Version, $CfgName))
     $form.StartPosition = 'CenterScreen'
     $form.MinimumSize   = New-Object System.Drawing.Size(860, 560)
 
@@ -84,7 +84,7 @@ function Show-CvConvertWindow {
     $split.Name        = 'cvSplit'
     # El agarre del divisor (sin el no se descubre que se puede arrastrar), en Gui.psm1 porque lo
     # usan las dos ventanas que reparten sitio.
-    [void](Set-CvGuiSplitGrip -Split $split -Tooltip 'Arrastra esta linea para repartir el alto entre la cola y el resumen')
+    [void](Set-CvGuiSplitGrip -Split $split -Tooltip (Get-CvText -Key 'cola.grip'))
     $grid.Controls.Add($split, 0, 1)
 
     # Arriba: la lista y, pegada debajo, la linea de totales.
@@ -154,24 +154,24 @@ function Show-CvConvertWindow {
         return $b
     }
     # GRUPO 1 - la marcha de las conversiones.
-    $btnStart   = & $mkBtn 'Iniciar'              90 'cvStart'      'play'    'Abre los workers y empieza a codificar' 8
-    $btnStop    = & $mkBtn 'Parar'                80 'cvStop'       'stop'    'Parada ordenada: cada worker termina su archivo y no coge mas'
-    $btnKill    = & $mkBtn 'Cancelar ahora'      120 'cvKill'       'cancel'  'Corta los workers y su ffmpeg: se pierde el archivo en curso'
+    $btnStart   = & $mkBtn (Get-CvText -Key 'cola.btn.iniciar')   90 'cvStart' 'play'   (Get-CvText -Key 'cola.tip.iniciar') 8
+    $btnStop    = & $mkBtn (Get-CvText -Key 'cola.btn.parar')     80 'cvStop'  'stop'   (Get-CvText -Key 'cola.tip.parar')
+    $btnKill    = & $mkBtn (Get-CvText -Key 'cola.btn.cancelar') 120 'cvKill'  'cancel' (Get-CvText -Key 'cola.tip.cancelar')
     & $mkSep
     # GRUPO 2 - preparar (decidir que se le hace a cada archivo).
-    $btnPrepAll = & $mkBtn 'Preparar pendientes' 160 'cvPrepareAll' 'prepare' 'Recorre los archivos sin preparar: pregunta el perfil una vez y decide lo que puede'
-    $btnEdit    = & $mkBtn 'Editar job'          110 'cvPrepareGui' 'edit'    'Abre el editor del archivo elegido (o del primero sin preparar)'
+    $btnPrepAll = & $mkBtn (Get-CvText -Key 'cola.btn.preparar') 160 'cvPrepareAll' 'prepare' (Get-CvText -Key 'cola.tip.preparar')
+    $btnEdit    = & $mkBtn (Get-CvText -Key 'cola.btn.editar')   110 'cvPrepareGui' 'edit'    (Get-CvText -Key 'cola.tip.editar')
     & $mkSep
     # GRUPO 3 - las carpetas de trabajo (a donde se mira cuando algo no cuadra).
-    $btnDirIn  = & $mkBtn 'Original'    100 'cvDirOriginal'   'folder' 'Abre la carpeta de entrada (Original)'
-    $btnDirOut = & $mkBtn 'Convertido'  115 'cvDirConvertido' 'folder' 'Abre la carpeta de salida (Convertido)'
+    $btnDirIn  = & $mkBtn (Get-CvText -Key 'cola.btn.original')   100 'cvDirOriginal'   'folder' (Get-CvText -Key 'cola.tip.original')
+    $btnDirOut = & $mkBtn (Get-CvText -Key 'cola.btn.convertido') 115 'cvDirConvertido' 'folder' (Get-CvText -Key 'cola.tip.convertido')
     & $mkSep
     # GRUPO 4 - la vista.
-    $btnRefresh = & $mkBtn 'Actualizar'          105 'cvRefresh'    'refresh' 'Refresca ya (la lista se refresca sola cada segundo)'
-    $btnTheme   = & $mkBtn 'Tema'                 75 'cvTheme'      'theme'   'Cambia entre claro y oscuro (se guarda en la configuracion)'
+    $btnRefresh = & $mkBtn (Get-CvText -Key 'comun.actualizar') 105 'cvRefresh' 'refresh' (Get-CvText -Key 'cola.tip.actualizar')
+    $btnTheme   = & $mkBtn (Get-CvText -Key 'cola.btn.tema')     75 'cvTheme'   'theme'   (Get-CvText -Key 'cola.tip.tema')
 
     $chkCon = New-Object System.Windows.Forms.CheckBox
-    $chkCon.Text     = 'Ver las consolas de los workers'
+    $chkCon.Text     = (Get-CvText -Key 'cola.consolas')
     $chkCon.AutoSize = $true
     $chkCon.Margin   = New-Object System.Windows.Forms.Padding(0, 4, 0, 2)
     $chkCon.Name     = 'cvShowConsoles'
@@ -211,11 +211,11 @@ function Show-CvConvertWindow {
 
     # El RESUMEN va primero y es el que sale al abrir: al marcar un archivo, lo primero que se quiere
     # saber es que se le va a hacer. El log queda detras, para cuando ya esta codificando.
-    $tabSum = Add-CvGuiTab -Tabs $tabs -Text 'Resumen del archivo' -Padding 4
-    $tabLog = Add-CvGuiTab -Tabs $tabs -Text 'Log' -Padding 4
+    $tabSum = Add-CvGuiTab -Tabs $tabs -Text (Get-CvText -Key 'cola.tab.resumen') -Padding 4
+    $tabLog = Add-CvGuiTab -Tabs $tabs -Text (Get-CvText -Key 'cola.tab.log') -Padding 4
     # Ajustes de ESTA sesion: no son acciones, asi que no van en la barra. Aqui abajo estan a mano
     # (y no se salen de la ventana, que es lo que pasaba con el desplegable de la barra).
-    $tabOpt = Add-CvGuiTab -Tabs $tabs -Text 'Opciones' -Padding 10
+    $tabOpt = Add-CvGuiTab -Tabs $tabs -Text (Get-CvText -Key 'cola.tab.opciones') -Padding 10
 
     $optFlow = New-Object System.Windows.Forms.FlowLayoutPanel
     $optFlow.Dock          = 'Fill'
@@ -231,14 +231,14 @@ function Show-CvConvertWindow {
     $optFlow.Controls.Add($rowW)
 
     $lblW = New-Object System.Windows.Forms.Label
-    $lblW.Text     = 'Workers en paralelo:'
+    $lblW.Text     = (Get-CvText -Key 'cola.opt.workers')
     $lblW.AutoSize = $true
     $lblW.Margin   = New-Object System.Windows.Forms.Padding(0, 6, 8, 3)
     $rowW.Controls.Add($lblW)
     $rowW.Controls.Add($numW)
 
     $lblWHelp = New-Object System.Windows.Forms.Label
-    $lblWHelp.Text      = 'Cuantas conversiones a la vez al pulsar Iniciar. Arranca con el valor de behavior.workers del config; lo que pongas aqui vale para esta sesion.'
+    $lblWHelp.Text      = (Get-CvText -Key 'cola.opt.workers.h')
     $lblWHelp.Name      = 'cvWorkersHelp'
     $lblWHelp.ForeColor = (Get-CvGuiCurrentPalette).Muted
     $lblWHelp.Margin    = New-Object System.Windows.Forms.Padding(2, 0, 0, 12)
@@ -248,7 +248,7 @@ function Show-CvConvertWindow {
     $optFlow.Controls.Add($chkCon)
 
     $lblCHelp = New-Object System.Windows.Forms.Label
-    $lblCHelp.Text      = 'Marcado, cada worker abre su ventana de consola. Desmarcado van ocultos y se siguen por la pestana Log.'
+    $lblCHelp.Text      = (Get-CvText -Key 'cola.opt.consolas.h')
     $lblCHelp.Name      = 'cvConsolesHelp'
     $lblCHelp.ForeColor = (Get-CvGuiCurrentPalette).Muted
     $lblCHelp.Margin    = New-Object System.Windows.Forms.Padding(2, 0, 0, 12)
@@ -258,14 +258,14 @@ function Show-CvConvertWindow {
     # Recodificar no siempre compensa. Esto es el valor de PARTIDA: cada archivo se lo lleva
     # congelado en su job (y ahi se puede cambiar, uno a uno o en bloque).
     $chkKeep = New-Object System.Windows.Forms.CheckBox
-    $chkKeep.Text     = 'Si el video recodificado engorda, quedarse con el original'
+    $chkKeep.Text     = (Get-CvText -Key 'job.keeporiginal')
     $chkKeep.AutoSize = $true
     $chkKeep.Checked  = [bool]$Context.KeepOriginal
     $chkKeep.Name     = 'cvKeepOriginal'
     $optFlow.Controls.Add($chkKeep)
 
     $lblKHelp = New-Object System.Windows.Forms.Label
-    $lblKHelp.Text      = 'Al terminar de codificar el video se compara con la pista original: si ha salido mas grande y la imagen no se toca (sin recorte, escalado, tone-mapping ni cambio de fps), se tira lo codificado y se usa la original. El audio y los subtitulos ya hechos se conservan. Se guarda en la configuracion y es el valor de partida de los jobs NUEVOS; cada archivo lo lleva en su job y se puede cambiar en su editor (o en varios a la vez).'
+    $lblKHelp.Text      = (Get-CvText -Key 'cola.opt.keep.h')
     $lblKHelp.Name      = 'cvKeepHelp'
     $lblKHelp.ForeColor = (Get-CvGuiCurrentPalette).Muted
     $lblKHelp.Margin    = New-Object System.Windows.Forms.Padding(2, 0, 0, 0)
@@ -278,7 +278,7 @@ function Show-CvConvertWindow {
         try { $Context.KeepOriginal = [bool]$chkKeep.Checked } catch { }
         if ("$CfgPath" -ne '') {
             $r = Set-CvConfigValue -Path $CfgPath -Key 'encode/video/keepOriginalIfBigger' -Value ([bool]$chkKeep.Checked)
-            if (-not $r.Ok) { Show-CvGuiInfo -Title 'Opciones' -Message ("No se pudo guardar en {0}:`n`n{1}" -f $CfgName, $r.Error) }
+            if (-not $r.Ok) { Show-CvGuiInfo -Title (Get-CvText -Key 'cola.tab.opciones') -Message (Get-CvText -Key 'cola.opt.noguardado' -Values @($CfgName, $r.Error)) }
         }
     })
 
@@ -314,21 +314,21 @@ function Show-CvConvertWindow {
     $txtSum.ContextMenuStrip = $sumMenu
 
     $miCount = New-Object System.Windows.Forms.ToolStripMenuItem
-    $miCount.Text        = 'Contar las lineas de los subtitulos'
-    $miCount.ToolTipText = 'Solo si el archivo no las trae ya: hay que leerlo entero y puede tardar.'
+    $miCount.Text        = (Get-CvText -Key 'cola.men.contar')
+    $miCount.ToolTipText = (Get-CvText -Key 'cola.men.contar.h')
     $miCount.Name        = 'cvSumCount'
     [void]$sumMenu.Items.Add($miCount)
     [void]$sumMenu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
 
     $miCopy = New-Object System.Windows.Forms.ToolStripMenuItem
-    $miCopy.Text = 'Copiar el resumen'
+    $miCopy.Text = (Get-CvText -Key 'cola.men.copiar')
     $miCopy.Name = 'cvSumCopy'
     [void]$sumMenu.Items.Add($miCopy)
 
     $lblCount = New-Object System.Windows.Forms.Label
     $lblCount.Dock      = 'Fill'
     $lblCount.TextAlign = 'MiddleLeft'
-    $lblCount.Text      = 'Boton derecho sobre el resumen: contar las lineas de los subtitulos (hay que leer el archivo entero: puede tardar) o copiarlo.'
+    $lblCount.Text      = (Get-CvText -Key 'cola.men.pie')
     $lblCount.AutoSize  = $false
     $lblCount.AutoEllipsis = $true
     $lblCount.ForeColor = (Get-CvGuiCurrentPalette).Muted
@@ -352,7 +352,7 @@ function Show-CvConvertWindow {
     $logGrid.Controls.Add($logBar, 0, 0)
 
     $lblL = New-Object System.Windows.Forms.Label
-    $lblL.Text     = 'Log:'
+    $lblL.Text     = (Get-CvText -Key 'cola.log.etiqueta')
     $lblL.AutoSize = $true
     $lblL.Margin   = New-Object System.Windows.Forms.Padding(3, 8, 3, 3)
     $logBar.Controls.Add($lblL)
@@ -365,7 +365,7 @@ function Show-CvConvertWindow {
     $logBar.Controls.Add($cmbLog)
 
     $chkFollow = New-Object System.Windows.Forms.CheckBox
-    $chkFollow.Text     = 'Seguir'
+    $chkFollow.Text     = (Get-CvText -Key 'cola.log.seguir')
     $chkFollow.Checked  = $true
     $chkFollow.AutoSize = $true
     $chkFollow.Margin   = New-Object System.Windows.Forms.Padding(12, 7, 3, 3)
@@ -373,7 +373,7 @@ function Show-CvConvertWindow {
     $logBar.Controls.Add($chkFollow)
 
     $btnLogOpen = New-Object System.Windows.Forms.Button
-    $btnLogOpen.Text   = 'Abrir fuera'
+    $btnLogOpen.Text   = (Get-CvText -Key 'comun.abrirfuera')
     $btnLogOpen.Width  = 110
     $btnLogOpen.Height = 26
     $btnLogOpen.Margin = New-Object System.Windows.Forms.Padding(12, 3, 3, 3)
@@ -423,19 +423,19 @@ function Show-CvConvertWindow {
     # ---- Menu contextual de la lista ----
     $menu = New-Object System.Windows.Forms.ContextMenuStrip
     $lv.ContextMenuStrip = $menu
-    $miStart = $menu.Items.Add('Codificar solo este')
-    $miKill  = $menu.Items.Add('Cortar la codificacion de este')
-    $miWorkerLog = $menu.Items.Add('Ver el proceso (log)')
+    $miStart = $menu.Items.Add((Get-CvText -Key 'cola.men.start'))
+    $miKill  = $menu.Items.Add((Get-CvText -Key 'cola.men.kill'))
+    $miWorkerLog = $menu.Items.Add((Get-CvText -Key 'cola.men.workerlog'))
     [void]$menu.Items.Add('-')
-    $miEdit  = $menu.Items.Add('Preparar / editar el job (ventana)')
-    $miBulk  = $menu.Items.Add('Editar varios jobs a la vez...')
-    $miJob   = $menu.Items.Add('Ver el job (que se decidio en PREPARAR)')
-    $miPlayIn  = $menu.Items.Add('Reproducir el ORIGINAL')
-    $miPlayOut = $menu.Items.Add('Reproducir el CONVERTIDO')
-    $miOut   = $menu.Items.Add('Abrir la carpeta del archivo')
-    $miPurge = $menu.Items.Add('Eliminar la salida a medias (se rehace)')
-    $miFree  = $menu.Items.Add('Liberar el bloqueo huerfano')
-    $miDrop  = $menu.Items.Add('Quitar de la cola (borrar su job)')
+    $miEdit  = $menu.Items.Add((Get-CvText -Key 'cola.men.edit'))
+    $miBulk  = $menu.Items.Add((Get-CvText -Key 'cola.men.bulk'))
+    $miJob   = $menu.Items.Add((Get-CvText -Key 'cola.men.job'))
+    $miPlayIn  = $menu.Items.Add((Get-CvText -Key 'cola.men.playin'))
+    $miPlayOut = $menu.Items.Add((Get-CvText -Key 'cola.men.playout'))
+    $miOut   = $menu.Items.Add((Get-CvText -Key 'cola.men.carpeta'))
+    $miPurge = $menu.Items.Add((Get-CvText -Key 'cola.men.purge'))
+    $miFree  = $menu.Items.Add((Get-CvText -Key 'cola.men.free'))
+    $miDrop  = $menu.Items.Add((Get-CvText -Key 'cola.men.drop'))
 
     $current = {
         if ($lv.SelectedIndices.Count -eq 0) { return $null }
@@ -506,7 +506,7 @@ function Show-CvConvertWindow {
                     $info = $st.Infos[$r.Name]
                 } elseif ($r.HasJob) {
                     # Primero el resumen SIN ffprobe, que se vea ya; luego se enriquece.
-                    $txtSum.Text = ((@(Get-CvJobSummaryLines -Context $Context -Name $r.Name) + @('', 'Leyendo el archivo para los canales y las lineas...')) -join [Environment]::NewLine)
+                    $txtSum.Text = ((@(Get-CvJobSummaryLines -Context $Context -Name $r.Name) + @('', (Get-CvText -Key 'cola.sum.leyendo'))) -join [Environment]::NewLine)
                     [System.Windows.Forms.Application]::DoEvents()
                     try { $info = Get-MediaInfo -Context $Context -File $r.Path } catch { $info = $null }
                     $st.Infos[$r.Name] = $info
@@ -518,7 +518,7 @@ function Show-CvConvertWindow {
             if ($txt -ne $txtSum.Text) { $txtSum.Text = $txt }
             $miCount.Enabled = ($r.HasJob -and -not $st.Cues.ContainsKey($r.Name))
         } catch {
-            $txtSum.Text = ("No se pudo montar el resumen: {0}" -f $_.Exception.Message)
+            $txtSum.Text = (Get-CvText -Key 'cola.sum.error' -Values @($_.Exception.Message))
         } finally {
             $st.SumBusy = $false
         }
@@ -535,17 +535,17 @@ function Show-CvConvertWindow {
             $form.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
             try {
                 if (-not $st.Infos.ContainsKey($r.Name)) {
-                    $txtSum.Text = 'Leyendo el archivo...'
+                    $txtSum.Text = (Get-CvText -Key 'cola.sum.leyendo2')
                     [System.Windows.Forms.Application]::DoEvents()
                     $st.Infos[$r.Name] = Get-MediaInfo -Context $Context -File $r.Path
                 }
                 $info = $st.Infos[$r.Name]
-                if ($null -eq $info) { $txtSum.Text = 'No se pudo leer el archivo (ffprobe).'; return }
+                if ($null -eq $info) { $txtSum.Text = (Get-CvText -Key 'cola.sum.noleido'); return }
                 $map = @{}
                 $subs = @(Get-SubtitleStreams -Info $info)
                 for ($i = 0; $i -lt $subs.Count; $i++) {
                     $sub = $subs[$i]
-                    $txtSum.Text = ("Contando lineas del subtitulo {0} de {1} (pista {2})..." -f ($i + 1), $subs.Count, $sub.index)
+                    $txtSum.Text = (Get-CvText -Key 'cola.sum.contando' -Values @(($i + 1), $subs.Count, $sub.index))
                     [System.Windows.Forms.Application]::DoEvents()
                     $map[[int]$sub.index] = [int](Get-CvSubtitleCueCount -Context $Context -File $r.Path -Index ([int]$sub.index) -Stream $sub)
                 }
@@ -555,7 +555,7 @@ function Show-CvConvertWindow {
                 $form.Cursor = [System.Windows.Forms.Cursors]::Default
             }
         } catch {
-            $txtSum.Text = ("No se pudieron contar las lineas: {0}" -f $_.Exception.Message)
+            $txtSum.Text = (Get-CvText -Key 'cola.sum.nocontado' -Values @($_.Exception.Message))
         }
     })
     # 'La estas usando': con el raton APRETADO (un Mayus+clic o un arrastre a medias) o durante unos
@@ -587,7 +587,7 @@ function Show-CvConvertWindow {
         # El texto del boton lo dice, para que no haya sorpresas.
         $selQAll = @(& $selected)
         $selQ = @($selQAll | Where-Object { $_.State -eq 'queued' })
-        $btnStart.Text = $(if ($selQ.Count -gt 0) { 'Iniciar ({0} elegidos)' -f $selQ.Count } else { 'Iniciar' })
+        $btnStart.Text = $(if ($selQ.Count -gt 0) { Get-CvText -Key 'cola.btn.iniciar.n' -Values @($selQ.Count) } else { Get-CvText -Key 'cola.btn.iniciar' })
         # Cuando se puede arrancar (y por que no), en una funcion pura: Get-CvQueueStartState.
         $ss = Get-CvQueueStartState -Queued ([int]$totals.Queued) -Live ([int]$st.Live) `
                                     -Stopping ([bool]$st.Stopping) -JustStarted ([bool](& $arrancando))
@@ -598,10 +598,10 @@ function Show-CvConvertWindow {
         # 'Editar job': con una fila elegida vale la suya; sin elegir nada, el primero que este sin
         # preparar. Solo se apaga si no hay ninguno de los dos casos.
         $lote = @((Get-CvQueueBulkActions -Rows $selQAll).Edit)
-        $btnEdit.Text     = $(if ($lote.Count -gt 1) { 'Editar los {0} jobs' -f $lote.Count } else { 'Editar job' })
+        $btnEdit.Text     = $(if ($lote.Count -gt 1) { Get-CvText -Key 'cola.btn.editar.n' -Values @($lote.Count) } else { Get-CvText -Key 'cola.btn.editar' })
         $btnEdit.Enabled  = (($lote.Count -gt 1) -or ($null -ne (& $editable)))
         # 'Preparar pendientes' lleva el recuento: es el flujo normal cuando llega material nuevo.
-        $btnPrepAll.Text    = $(if ([int]$totals.Pending -gt 0) { 'Preparar pendientes ({0})' -f $totals.Pending } else { 'Preparar pendientes' })
+        $btnPrepAll.Text    = $(if ([int]$totals.Pending -gt 0) { Get-CvText -Key 'cola.btn.preparar.n' -Values @($totals.Pending) } else { Get-CvText -Key 'cola.btn.preparar' })
         $btnPrepAll.Enabled = ([int]$totals.Pending -gt 0)
     }
     $lv.Add_SelectedIndexChanged({ $st.Touch = [datetime]::UtcNow.Ticks; & $updateSummary $false; & $updateButtons })
@@ -819,20 +819,20 @@ function Show-CvConvertWindow {
         $only = @($Only)
         $ready = Test-CvConvertReady -Context $Context
         if (-not $ready.Ok) {
-            Show-CvGuiInfo -Title 'No se puede empezar' -Message ("No se pueden lanzar workers: {0}" -f $ready.Reason)
+            Show-CvGuiInfo -Title (Get-CvText -Key 'cola.nopuede.tit') -Message (Get-CvText -Key 'cola.nopuede.msg' -Values @($ready.Reason))
             return
         }
         $rows = @(Get-CvQueueStatus -Context $Context)
         $pend = $(if ($only.Count -gt 0) { $only.Count } else { @($rows | Where-Object { $_.State -eq 'queued' }).Count })
         if ($pend -le 0) {
-            Show-CvGuiInfo -Title 'Nada que codificar' -Message 'No hay archivos preparados. Usa "Preparar pendientes" para contestar las preguntas de los que faltan.'
+            Show-CvGuiInfo -Title (Get-CvText -Key 'cola.nada.tit') -Message (Get-CvText -Key 'cola.nada.msg')
             return
         }
         # Los elegidos viajan en la LINEA DE COMANDOS del worker, y lo que no cabe se pierde sin
         # avisar (Windows corta en 32767): mejor decirlo antes de abrir nada.
         $cabe = Test-CvWorkerOnlyFits -Argv (Get-CvConvertWorkerArgs -Root $Root -CfgPath $CfgPath -Only $only)
         if (-not [bool]$cabe.Ok) {
-            Show-CvGuiInfo -Title 'Demasiados a la vez' -Message ("Has elegido {0} archivo(s) y sus nombres no caben en la orden con la que se abre un worker ({1} caracteres, el limite es {2}). Hazlo en dos tandas, o usa 'toda la cola' (sin elegir nada)." -f $only.Count, $cabe.Length, $cabe.Max)
+            Show-CvGuiInfo -Title (Get-CvText -Key 'cola.muchos.tit') -Message (Get-CvText -Key 'cola.muchos.msg' -Values @($only.Count, $cabe.Length, $cabe.Max))
             return
         }
         Clear-CvWorkerStop -Context $Context
@@ -861,7 +861,7 @@ function Show-CvConvertWindow {
         $tot = @(@($st.Rows) | Where-Object { $_.State -eq 'queued' }).Count
         $sc  = Get-CvQueueStartScope -Selected $sel.Count -Total $tot
         if ([bool]$sc.Ask) {
-            $pick = Show-CvGuiChoice -Title 'Iniciar' -Name 'cvStartAsk' -Message "$($sc.Message)" -Options $sc.Options
+            $pick = Show-CvGuiChoice -Title (Get-CvText -Key 'cola.iniciar.tit') -Name 'cvStartAsk' -Message "$($sc.Message)" -Options $sc.Options
             switch ("$pick") {
                 'sel'   { & $startWorkers $sel }
                 'all'   { & $startWorkers @() }
@@ -881,8 +881,8 @@ function Show-CvConvertWindow {
     $btnKill.Add_Click({
         $live = @(Get-CvWorkerStates -Context $Context | Where-Object { $_.Alive })
         if ($live.Count -eq 0) { return }
-        $msg = "Cortar en seco {0} worker(s)?`n`nSe pierde lo que lleven del archivo en curso y quedaran temporales y un bloqueo caducado (se limpian desde setup).`n`nPara parar SIN perder nada, usa 'Parar'." -f $live.Count
-        if (-not (Show-CvGuiConfirm -Title 'Cancelar ahora' -Message $msg)) { return }
+        $msg = Get-CvText -Key 'cola.killall.msg' -Values @($live.Count)
+        if (-not (Show-CvGuiConfirm -Title (Get-CvText -Key 'cola.btn.cancelar') -Message $msg)) { return }
         foreach ($w in $live) { [void](Stop-CvConvertWorker -ProcessId ([int]$w.Pid)) }
         Write-CvLog 'COLA' ("[KILL] - Cortados {0} worker(s) a peticion del usuario." -f $live.Count)
         & $refresh
@@ -890,8 +890,8 @@ function Show-CvConvertWindow {
 
     # Las carpetas de trabajo, tal cual estan configuradas (paths.* del config): se abren en el
     # explorador. Utiles cuando hay que mirar algo a mano -una salida a medias, un archivo nuevo-.
-    $btnDirIn.Add_Click({  [void](Open-CvGuiPath -Path "$($Context.Original)"   -Folder -Create -Title 'Carpeta') })
-    $btnDirOut.Add_Click({ [void](Open-CvGuiPath -Path "$($Context.Convertido)" -Folder -Create -Title 'Carpeta') })
+    $btnDirIn.Add_Click({  [void](Open-CvGuiPath -Path "$($Context.Original)"   -Folder -Create -Title (Get-CvText -Key 'cola.carpeta.tit')) })
+    $btnDirOut.Add_Click({ [void](Open-CvGuiPath -Path "$($Context.Convertido)" -Folder -Create -Title (Get-CvText -Key 'cola.carpeta.tit')) })
 
     # Cambiar de claro a oscuro y al reves sin salir del programa. Se aplica a la ventana abierta y
     # se GUARDA en el config (gui.theme), asi que la proxima vez arranca como lo dejaste; el resto de
@@ -902,7 +902,7 @@ function Show-CvConvertWindow {
         $form.Refresh()
         if ("$CfgPath" -ne '') {
             $r = Set-CvConfigValue -Path $CfgPath -Key 'gui/theme' -Value $nuevo
-            if (-not $r.Ok) { Show-CvGuiInfo -Title 'Tema' -Message ("Se ha cambiado el tema, pero no se pudo guardar en {0}:`n`n{1}" -f $CfgName, $r.Error) }
+            if (-not $r.Ok) { Show-CvGuiInfo -Title (Get-CvText -Key 'cola.btn.tema') -Message (Get-CvText -Key 'cola.tema.noguardado' -Values @($CfgName, $r.Error)) }
         }
     })
 
@@ -917,7 +917,7 @@ function Show-CvConvertWindow {
         try { & $refresh } catch { Write-CvLog 'COLA' ("[ERROR] - Refresco al volver: {0}" -f $_) } finally { $st.Busy = $false }
     })
     $cmbLog.Add_SelectedIndexChanged({ $txtLog.Text = ''; $st.LogStamp = '' })   # el refresco lo recarga
-    $btnLogOpen.Add_Click({ [void](Open-CvGuiPath -Path "$($st.LogPath)" -Title 'Log') })
+    $btnLogOpen.Add_Click({ [void](Open-CvGuiPath -Path "$($st.LogPath)" -Title (Get-CvText -Key 'logs.tit')) })
 
     $menu.Add_Opening({
         $r   = & $current
@@ -1041,7 +1041,7 @@ function Show-CvConvertWindow {
         if ($null -eq $r) { return }
         $p = Get-CvJobPath $Context $r.Name
         $txt = try { Get-Content -Raw -LiteralPath $p } catch { "(no se pudo leer el job: $_)" }
-        [void](Show-CvTextWindow -Title ("Job de {0}" -f $r.Name) -Text "$txt")
+        [void](Show-CvTextWindow -Title (Get-CvText -Key 'cola.job.tit' -Values @($r.Name)) -Text "$txt")
     })
     # Ver el archivo: con lo que diga preview.player (por defecto, el reproductor asociado de
     # Windows). NO se espera a que se cierre -si no, la cola se quedaria congelada mientras se ve una
@@ -1051,7 +1051,7 @@ function Show-CvConvertWindow {
         if ("$Path" -eq '') { return }
         $res = Start-CvVideoPlayer -Context $Context -File $Path
         if (-not $res.Ok) {
-            Show-CvGuiInfo -Title 'Reproducir' -Message ("No se pudo abrir el {0}:`n`n{1}`n`n{2}" -f $Que, $Path, $res.Error)
+            Show-CvGuiInfo -Title (Get-CvText -Key 'cola.play.tit') -Message (Get-CvText -Key 'cola.play.no' -Values @($Que, $Path, $res.Error))
         }
     }
     $miPlayIn.Add_Click({
@@ -1068,7 +1068,7 @@ function Show-CvConvertWindow {
         $r = & $current
         if ($null -eq $r) { return }
         $sel = if ($r.Done) { $r.OutPath } else { $r.Path }
-        [void](Open-CvGuiPath -Path $sel -Select -Title 'Carpeta')
+        [void](Open-CvGuiPath -Path $sel -Select -Title (Get-CvText -Key 'cola.carpeta.tit'))
     })
     $miKill.Add_Click({
         # Corta la codificacion de UN archivo (o de los que se hayan marcado): se mata SU worker -y
@@ -1077,9 +1077,9 @@ function Show-CvConvertWindow {
         # aqui mismo ('Eliminar la salida a medias' / 'Liberar el bloqueo').
         $rows = @((Get-CvQueueBulkActions -Rows (& $selected)).Kill)
         if ($rows.Count -eq 0) { return }
-        $msg = "Cortar la codificacion de {0} archivo(s)?`n`n{1}`n`nSe pierde lo que lleven (queda la salida a medias y un bloqueo caducado). Los demas workers siguen." -f `
-            $rows.Count, ((@($rows | Select-Object -First 12 | ForEach-Object { $_.Name }) -join "`n") + $(if ($rows.Count -gt 12) { "`n..." } else { '' }))
-        if (-not (Show-CvGuiConfirm -Title 'Cortar la codificacion' -Message $msg)) { return }
+        $msg = Get-CvText -Key 'cola.kill.msg' -Values @(
+            $rows.Count, ((@($rows | Select-Object -First 12 | ForEach-Object { $_.Name }) -join "`n") + $(if ($rows.Count -gt 12) { "`n..." } else { '' })))
+        if (-not (Show-CvGuiConfirm -Title (Get-CvText -Key 'cola.kill.tit') -Message $msg)) { return }
         $n = 0
         foreach ($r in $rows) {
             if (Stop-CvConvertWorker -ProcessId ([int]$r.WorkerPid)) { $n++ }
@@ -1092,9 +1092,9 @@ function Show-CvConvertWindow {
         # lo salta (da por hecho que ya esta convertido).
         $rows = @((Get-CvQueueBulkActions -Rows (& $selected)).Purge)
         if ($rows.Count -eq 0) { return }
-        $msg = "Eliminar la salida a medias de {0} archivo(s)?`n`n{1}`n`nSon conversiones que no terminaron. Al borrarlas vuelven a la cola y se rehacen." -f `
-            $rows.Count, ((@($rows | Select-Object -First 12 | ForEach-Object { $_.Name }) -join "`n") + $(if ($rows.Count -gt 12) { "`n..." } else { '' }))
-        if (-not (Show-CvGuiConfirm -Title 'Eliminar salida a medias' -Message $msg)) { return }
+        $msg = Get-CvText -Key 'cola.purge.msg' -Values @(
+            $rows.Count, ((@($rows | Select-Object -First 12 | ForEach-Object { $_.Name }) -join "`n") + $(if ($rows.Count -gt 12) { "`n..." } else { '' })))
+        if (-not (Show-CvGuiConfirm -Title (Get-CvText -Key 'cola.purge.tit') -Message $msg)) { return }
         $n = Remove-CvQueueOutput -Context $Context -Names @($rows | ForEach-Object { $_.Name })
         Write-CvLog 'COLA' ("[SALIDA] - Eliminada(s) {0} salida(s) a medias; vuelven a la cola." -f $n)
         & $refresh
@@ -1112,12 +1112,12 @@ function Show-CvConvertWindow {
         $rows = @((Get-CvQueueBulkActions -Rows (& $selected)).Drop)
         if ($rows.Count -eq 0) { return }
         $msg = if ($rows.Count -eq 1) {
-            "Borrar el job de {0}?`n`nDeja de estar en cola y habra que volver a prepararlo." -f $rows[0].Name
+            Get-CvText -Key 'cola.drop.msg1' -Values @($rows[0].Name)
         } else {
-            "Borrar los jobs de {0} archivos?`n`n{1}`n`nDejan de estar en cola y habra que volver a prepararlos." -f `
-                $rows.Count, ((@($rows | Select-Object -First 12 | ForEach-Object { $_.Name }) -join "`n") + $(if ($rows.Count -gt 12) { "`n..." } else { '' }))
+            Get-CvText -Key 'cola.drop.msgn' -Values @(
+                $rows.Count, ((@($rows | Select-Object -First 12 | ForEach-Object { $_.Name }) -join "`n") + $(if ($rows.Count -gt 12) { "`n..." } else { '' })))
         }
-        if (-not (Show-CvGuiConfirm -Title 'Quitar de la cola' -Message $msg)) { return }
+        if (-not (Show-CvGuiConfirm -Title (Get-CvText -Key 'cola.drop.tit') -Message $msg)) { return }
         foreach ($r in $rows) { Remove-CvJob -Context $Context -Name $r.Name }
         Write-CvLog 'COLA' ("[JOB] - Quitados {0} job(s) de la cola." -f $rows.Count)
         & $refresh
@@ -1199,7 +1199,7 @@ function Show-CvConvertWindow {
             if ([bool]$Context.GuiConfirmClose) {
                 $liveW = @(Get-CvWorkerStates -Context $Context | Where-Object { $_.Alive })
                 if ($liveW.Count -gt 0) {
-                    $pick = Show-CvGuiChoice -Title 'Cerrar la cola' -Name 'cvCloseAsk' `
+                    $pick = Show-CvGuiChoice -Title (Get-CvText -Key 'cola.cerrar.tit') -Name 'cvCloseAsk' `
                         -Message (Get-CvQueueCloseMessage -Workers $liveW.Count) `
                         -Options (Get-CvQueueCloseActions)
                     switch ($pick) {

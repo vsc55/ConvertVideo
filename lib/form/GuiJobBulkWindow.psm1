@@ -40,7 +40,7 @@ function Show-CvJobBulkWindow {
     $altoGb = 26 + (48 * @(Get-CvJobBulkFields).Count)
 
     $form = New-Object System.Windows.Forms.Form
-    $form.Text            = ("Editar {0} jobs a la vez" -f $names.Count)
+    $form.Text            = (Get-CvText -Key 'bulk.tit' -Values @($names.Count))
     $form.Name            = 'cvJobBulk'
     $form.StartPosition   = 'CenterParent'
     $form.FormBorderStyle = 'FixedDialog'
@@ -49,7 +49,7 @@ function Show-CvJobBulkWindow {
     $form.ClientSize      = New-Object System.Drawing.Size(720, (150 + $altoGb + 96))
 
     $lbl = New-Object System.Windows.Forms.Label
-    $lbl.Text     = 'Se cambiara SOLO lo que marques; el resto de cada job (pistas de audio, subtitulos, retardo, recorte) se queda como esta.'
+    $lbl.Text     = (Get-CvText -Key 'bulk.cab')
     $lbl.Location = New-Object System.Drawing.Point(12, 10)
     $lbl.Size     = New-Object System.Drawing.Size(696, 34)
     $form.Controls.Add($lbl)
@@ -65,7 +65,7 @@ function Show-CvJobBulkWindow {
     $form.Controls.Add($lst)
 
     $gb = New-Object System.Windows.Forms.GroupBox
-    $gb.Text     = ' Cambiar '
+    $gb.Text     = (Get-CvText -Key 'bulk.grupo')
     $gb.Location = New-Object System.Drawing.Point(12, 150)
     $gb.Size     = New-Object System.Drawing.Size(696, $altoGb)
     $form.Controls.Add($gb)
@@ -88,7 +88,7 @@ function Show-CvJobBulkWindow {
             'profile' {
                 $val = New-Object System.Windows.Forms.TextBox
                 $val.ReadOnly = $true
-                $val.Text     = '(sin elegir)'
+                $val.Text     = (Get-CvText -Key 'comun.sinelegir')
                 $val.Location = New-Object System.Drawing.Point(218, $y)
                 $val.Size     = New-Object System.Drawing.Size(350, 24)
                 $val.Font     = (New-CvGuiFont 9)
@@ -96,12 +96,12 @@ function Show-CvJobBulkWindow {
                 $gb.Controls.Add($val)
 
                 $btn = New-Object System.Windows.Forms.Button
-                $btn.Text     = 'Elegir...'
+                $btn.Text     = (Get-CvText -Key 'comun.elegir')
                 $btn.Location = New-Object System.Drawing.Point(576, ($y - 1))
                 $btn.Size     = New-Object System.Drawing.Size(100, 26)
                 $btn.Name     = 'cvBulkProfPick'
                 $btn.Add_Click({
-                    $p = Show-CvJobProfileDialog -Context $Context -Info ("Perfil para los {0} jobs elegidos:" -f $names.Count)
+                    $p = Show-CvJobProfileDialog -Context $Context -Info (Get-CvText -Key 'bulk.perfil.info' -Values @($names.Count))
                     if ($null -eq $p) { return }
                     $st.Prof = $p
                     $ctrl['prof'].Val.Text = (Format-CvProfileLabel -Prof $p)
@@ -164,7 +164,7 @@ function Show-CvJobBulkWindow {
     $form.Controls.Add($lblMsg)
 
     $btnCancel = New-Object System.Windows.Forms.Button
-    $btnCancel.Text     = 'Cancelar'
+    $btnCancel.Text     = (Get-CvText -Key 'comun.cancelar')
     $btnCancel.Location = New-Object System.Drawing.Point(488, ($gb.Bottom + 50))
     $btnCancel.Size     = New-Object System.Drawing.Size(100, 30)
     $btnCancel.Name     = 'cvBulkCancel'
@@ -172,7 +172,7 @@ function Show-CvJobBulkWindow {
     $form.Controls.Add($btnCancel)
 
     $btnApply = New-Object System.Windows.Forms.Button
-    $btnApply.Text     = ("Aplicar a los {0}" -f $names.Count)
+    $btnApply.Text     = (Get-CvText -Key 'bulk.aplicar' -Values @($names.Count))
     $btnApply.Location = New-Object System.Drawing.Point(596, ($gb.Bottom + 50))
     $btnApply.Size     = New-Object System.Drawing.Size(112, 30)
     $btnApply.Enabled  = $false
@@ -199,7 +199,7 @@ function Show-CvJobBulkWindow {
         $chk = Test-CvJobBulkChanges -Changes $ch
         $btnApply.Enabled = [bool]$chk.Ok
         if ($ch.Count -eq 0) {
-            $lblMsg.Text = 'Marca lo que quieras cambiar en los jobs elegidos.'
+            $lblMsg.Text = (Get-CvText -Key 'bulk.marca')
             [void](Set-CvGuiRole -Control $lblMsg -Role 'Muted')
             return
         }
@@ -208,7 +208,7 @@ function Show-CvJobBulkWindow {
             [void](Set-CvGuiRole -Control $lblMsg -Role 'Error')
             return
         }
-        $lblMsg.Text = ("Se cambiara en los {0}: {1}" -f $names.Count, (Get-CvJobBulkSummary -Changes $ch))
+        $lblMsg.Text = (Get-CvText -Key 'bulk.resumen' -Values @($names.Count, (Get-CvJobBulkSummary -Changes $ch)))
         [void](Set-CvGuiRole -Control $lblMsg -Role 'Muted')
     }
     foreach ($k in @($ctrl.Keys)) {
@@ -233,8 +233,8 @@ function Show-CvJobBulkWindow {
         Write-CvLog 'JOB' ("[BLOQUE] - {0} job(s) cambiados de {1}: {2}" -f $res.Done, $names.Count, $resumen)
         if ([int]$res.Failed -gt 0) {
             Write-CvLog 'JOB' ("[ERROR] - {0} job(s) no se pudieron cambiar: {1}" -f $res.Failed, ((@($res.Errors) | Select-Object -First 5) -join ' | '))
-            Show-CvGuiInfo -Title 'Editar en bloque' -Message ("Cambiados {0} de {1}. No se pudieron cambiar {2}:{3}{4}" -f `
-                $res.Done, $names.Count, $res.Failed, [Environment]::NewLine, ((@($res.Errors) | Select-Object -First 5) -join [Environment]::NewLine))
+            Show-CvGuiInfo -Title (Get-CvText -Key 'bulk.error.tit') -Message (Get-CvText -Key 'bulk.error.msg' -Values @(
+                $res.Done, $names.Count, $res.Failed, [Environment]::NewLine, ((@($res.Errors) | Select-Object -First 5) -join [Environment]::NewLine)))
         }
         $form.Close()
     }.GetNewClosure())

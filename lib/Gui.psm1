@@ -722,7 +722,7 @@ function Show-CvGuiInfo {
     [void](Show-CvGuiChoice -Title $Title -Message $Message -Name 'cvInfo' -Options @(
         @{
             Value = 'ok'
-            Text  = 'Aceptar'
+            Text  = (Get-CvText -Key 'comun.aceptar')
         }
     ))
 }
@@ -737,11 +737,11 @@ function Show-CvGuiConfirm {
     $r = Show-CvGuiChoice -Title $Title -Message $Message -Name 'cvConfirm' -Options @(
         @{
             Value = 'si'
-            Text  = 'Si'
+            Text  = (Get-CvText -Key 'comun.si')
         }
         @{
             Value = 'no'
-            Text  = 'No'
+            Text  = (Get-CvText -Key 'comun.no')
         }
     )
     return ("$r" -eq 'si')

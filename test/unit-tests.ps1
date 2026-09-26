@@ -2474,6 +2474,51 @@ foreach ($cod in (Get-CvLangAvailable)) {
 Assert-Eq 'lang\: ninguna traduccion se deja claves' '' ($faltanReal -join ', ')
 Assert-Eq 'lang\: ni arrastra claves muertas'        '' ($sobranReal -join ', ')
 Assert-Eq 'lang\: los huecos cuadran en todas'       '' ($huecosReal -join ', ')
+# TODA clave usada en el codigo tiene que existir en castellano. Es la red que hace barata cada
+# fase: una clave mal escrita no da error -Get-CvText devuelve la propia clave-, asi que sin esto
+# se descubriria mirando la ventana una por una.
+$raizRepo = Split-Path -Parent $PSScriptRoot
+$usadas = @{}
+# OJO: -Path y no -LiteralPath. Con -LiteralPath, el -Include NO filtra (devuelve TODO), y aqui
+# eso significaba intentar leer un video entero de Original\ con -Raw: OutOfMemoryException.
+foreach ($f in (Get-ChildItem -Path $raizRepo -Recurse -Include *.ps1,*.psm1 -File |
+                Where-Object { $_.FullName -notmatch '\\tools\\' -and $_.FullName -notmatch '\\test\\' })) {
+    foreach ($m in [regex]::Matches((Get-Content -LiteralPath $f.FullName -Raw), "Get-CvText\s+-Key\s+'([^']+)'")) {
+        $usadas[$m.Groups[1].Value] = $f.Name
+    }
+}
+$baseKeys = Get-CvLangResources -Lang 'es'
+$huerfanas = @()
+foreach ($k in ($usadas.Keys | Sort-Object)) {
+    if (-not $baseKeys.ContainsKey($k)) { $huerfanas += ("{0} ({1})" -f $k, $usadas[$k]) }
+}
+Assert-True 'Textos: el codigo ya pide claves'   ($usadas.Count -gt 0)
+Assert-Eq   'Textos: ninguna clave sin traducir' '' ($huerfanas -join ', ')
+
+# NINGUNA ventana puede llevar su texto escrito dentro. Se barren liborm\ y Gui.psm1 buscando
+# literales en lo que se ENSENA (.Text, .ToolTipText, -Title, -Message, -Tooltip, -EmptyText) que no
+# pasen por Get-CvText. Sin esto, la siguiente ventana que alguien toque vuelve a traer su texto
+# pegado y no se nota hasta que se mira en otro idioma.
+$uiFiles = @((Join-Path $raizRepo 'lib\Gui.psm1'))
+$uiFiles += @(Get-ChildItem -Path (Join-Path $raizRepo 'lib\form') -Filter *.psm1 -File | ForEach-Object { $_.FullName })
+$pegados = @()
+foreach ($f in $uiFiles) {
+    $dentro = $false
+    $n = 0
+    foreach ($l in (Get-Content -LiteralPath $f)) {
+        $n++
+        $t = $l.Trim()
+        if ($t -match '<#') { $dentro = $true }
+        if ($t -match '#>') { $dentro = $false; continue }
+        if ($dentro -or $t.StartsWith('#') -or $l -match 'Get-CvText') { continue }
+        if ($l -match "(\.Text\s*=|\.ToolTipText\s*=|-Title |-Message |-Tooltip |-EmptyText )\s*'([^']*[A-Za-z][^']*)'") {
+            $pegados += ("{0}:{1} {2}" -f (Split-Path -Leaf $f), $n, $Matches[2])
+        }
+    }
+}
+Assert-True 'Textos: se han barrido las ventanas' ($uiFiles.Count -ge 15)
+Assert-Eq   'Textos: ninguna ventana lleva el texto pegado' '' (($pegados | Select-Object -First 5) -join ' | ')
+
 # Y el idioma de la sesion se deja como estaba para el resto de la bateria.
 [void](Set-CvLanguage -Lang 'es')
 

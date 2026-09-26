@@ -26,7 +26,7 @@ function Show-CvMaintenanceWindow {
     $borrados = 0
 
     $form = New-Object System.Windows.Forms.Form
-    $form.Text          = 'Mantenimiento'
+    $form.Text          = (Get-CvText -Key 'mant.tit')
     $form.StartPosition = 'CenterParent'
     # Ancha a proposito: la columna de 'que se pierde' son frases, y a 720 se cortaban todas.
     $form.Size          = New-Object System.Drawing.Size(900, 560)
@@ -46,7 +46,7 @@ function Show-CvMaintenanceWindow {
     $form.Controls.Add($grid)
 
     $lbl = New-Object System.Windows.Forms.Label
-    $lbl.Text     = 'Marca lo que quieras borrar:'
+    $lbl.Text     = (Get-CvText -Key 'mant.marca')
     $lbl.Dock     = 'Fill'
     $lbl.AutoSize = $false
     $grid.Controls.Add($lbl, 0, 0)
@@ -60,9 +60,9 @@ function Show-CvMaintenanceWindow {
     $lv.MultiSelect   = $false
     $lv.Font          = (New-CvGuiFont 9)
     $lv.Name          = 'cvMaintList'
-    [void]$lv.Columns.Add('Que', 300)
-    [void]$lv.Columns.Add('Cuantos', 70, 'Right')
-    [void]$lv.Columns.Add('Que se pierde', 300)
+    [void]$lv.Columns.Add((Get-CvText -Key 'mant.col.que'), 300)
+    [void]$lv.Columns.Add((Get-CvText -Key 'mant.col.cuantos'), 70, 'Right')
+    [void]$lv.Columns.Add((Get-CvText -Key 'mant.col.pierde'), 300)
     [void](Set-CvGuiListFillColumn -List $lv -Index 2 -Min 240)
     [void](Set-CvGuiDoubleBuffered -Control $lv)
     $grid.Controls.Add($lv, 0, 1)
@@ -92,8 +92,8 @@ function Show-CvMaintenanceWindow {
         $bar.Controls.Add($b)
         return $b
     }
-    $btnDo    = & $mkBtn 'Limpiar lo marcado' 'cvMaintRun'
-    $btnClose = & $mkBtn 'Cerrar'             'cvMaintClose'
+    $btnDo    = & $mkBtn (Get-CvText -Key 'mant.btn.limpiar') 'cvMaintRun'
+    $btnClose = & $mkBtn (Get-CvText -Key 'comun.cerrar')      'cvMaintClose'
 
     $st = @{ Items = @() }
     $recargar = {
@@ -127,11 +127,11 @@ function Show-CvMaintenanceWindow {
         }
         $btnDo.Enabled = ($ks.Count -gt 0 -and $n -gt 0)
         $lblSel.Text = $(if ($ks.Count -eq 0) {
-            'No has marcado nada.'
+            (Get-CvText -Key 'mant.nada')
         } elseif ($avisa) {
-            ("Se borraran {0} elemento(s). OJO: entre ellos los JOBS, que habria que volver a preparar." -f $n)
+            (Get-CvText -Key 'mant.borrar.ojo' -Values @($n))
         } else {
-            ("Se borraran {0} elemento(s)." -f $n)
+            (Get-CvText -Key 'mant.borrar.n' -Values @($n))
         })
         [void](Set-CvGuiRole -Control $lblSel -Role $(if ($avisa) { 'warn' } else { 'muted' }))
     }
@@ -144,13 +144,13 @@ function Show-CvMaintenanceWindow {
         foreach ($i in @($st.Items)) {
             if ($ks -contains "$($i.Key)") { $detalle += ("  {0}  ({1})" -f $i.Text, $i.Count) }
         }
-        $msg = "Se va a borrar:`n`n{0}`n`nSeguro?" -f ($detalle -join "`n")
-        if (-not (Show-CvGuiConfirm -Title 'Mantenimiento' -Message $msg)) { return }
+        $msg = Get-CvText -Key 'mant.confirm' -Values @(($detalle -join "`n"))
+        if (-not (Show-CvGuiConfirm -Title (Get-CvText -Key 'mant.tit') -Message $msg)) { return }
         $r = @(Invoke-CvSetupMaintenance -Context $Context -Keys $ks -CurrentLog $CurrentLog)
         foreach ($x in $r) { $script:borrados += [int]$x.Removed }
         $malos = @($r | Where-Object { -not $_.Ok })
         if ($malos.Count -gt 0) {
-            Show-CvGuiInfo -Title 'Mantenimiento' -Message (("Algo no se pudo borrar:`n`n" + ((@($malos | ForEach-Object { "{0}: {1}" -f $_.Text, $_.Error })) -join "`n")))
+            Show-CvGuiInfo -Title (Get-CvText -Key 'mant.tit') -Message (Get-CvText -Key 'mant.error' -Values @(((@($malos | ForEach-Object { "{0}: {1}" -f $_.Text, $_.Error })) -join "`n")))
         }
         & $recargar
         & $refrescarPie

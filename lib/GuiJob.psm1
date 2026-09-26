@@ -20,23 +20,23 @@ function Get-CvJobVideoRows {
     #>
     $rows = @(
         @{
-            Label = 'Pista:'
+            Label = (Get-CvText -Key 'job.fila.pista')
             Cells = @(
                 @{ Kind = 'combo'; Name = 'cvJobVideo';     Fill = $true }
-                @{ Kind = 'check'; Name = 'cvJobVideoCopy'; Text = 'Copiar (sin recodificar)'; Gap = 6; Top = 6 }
-                @{ Kind = 'check'; Name = 'cvJobAnim';      Text = 'Animacion';                Gap = 6; Top = 6 }
+                @{ Kind = 'check'; Name = 'cvJobVideoCopy'; Text = (Get-CvText -Key 'job.copiar');    Gap = 6; Top = 6 }
+                @{ Kind = 'check'; Name = 'cvJobAnim';      Text = (Get-CvText -Key 'job.animacion'); Gap = 6; Top = 6 }
             )
         }
         @{
-            Label = 'Recorte:'
+            Label = (Get-CvText -Key 'job.fila.recorte')
             Cells = @(
                 @{ Kind = 'text';   Name = 'cvJobCrop';        Fill = $true }
-                @{ Kind = 'button'; Name = 'cvJobCropDetect';  Text = 'Detectar bordes'; Fill = $true }
-                @{ Kind = 'button'; Name = 'cvJobCropPreview'; Text = 'Ver recorte';     Fill = $true }
+                @{ Kind = 'button'; Name = 'cvJobCropDetect';  Text = (Get-CvText -Key 'job.detectar');   Fill = $true }
+                @{ Kind = 'button'; Name = 'cvJobCropPreview'; Text = (Get-CvText -Key 'job.verrecorte'); Fill = $true }
             )
         }
         @{
-            Label = 'Escalado:'
+            Label = (Get-CvText -Key 'job.fila.escalado')
             Cells = @(
                 @{ Kind = 'text';  Name = 'cvJobResize';    Fill = $true }
                 @{ Kind = 'label'; Name = 'cvJobVideoInfo'; Text = ''; Span = 2 }
@@ -48,7 +48,7 @@ function Get-CvJobVideoRows {
             # encode.video, y aqui se decide para ESTE archivo (se congela en su job).
             Label = ''
             Cells = @(
-                @{ Kind = 'check'; Name = 'cvJobKeepOriginal'; Text = 'Si el video recodificado engorda, quedarse con el original'; Gap = 6; Top = 6; Span = 3 }
+                @{ Kind = 'check'; Name = 'cvJobKeepOriginal'; Text = (Get-CvText -Key 'job.keeporiginal'); Gap = 6; Top = 6; Span = 3 }
             )
         }
     )
@@ -58,12 +58,12 @@ function Get-CvJobVideoRows {
 function Get-CvJobAudioColumns {
     <# Columnas de la lista de PISTAS DE AUDIO del editor de un job. #>
     $cols = @(
-        @{ Key = 'track'; Text = 'Pista';    Width = 330 }
-        @{ Key = 'lang';  Text = 'Idioma';   Width = 70  }
-        @{ Key = 'ch';    Text = 'Canales';  Width = 70  }
-        @{ Key = 'codec'; Text = 'Codec';    Width = 90  }
-        @{ Key = 'def';   Text = 'Predet.';  Width = 70  }
-        @{ Key = 'sync';  Text = 'Sync (s)'; Width = 80  }
+        @{ Key = 'track'; Text = (Get-CvText -Key 'job.col.pista');   Width = 330 }
+        @{ Key = 'lang';  Text = (Get-CvText -Key 'job.col.idioma');  Width = 70  }
+        @{ Key = 'ch';    Text = (Get-CvText -Key 'job.col.canales'); Width = 70  }
+        @{ Key = 'codec'; Text = (Get-CvText -Key 'job.col.codec');   Width = 90  }
+        @{ Key = 'def';   Text = (Get-CvText -Key 'job.col.predet');  Width = 70  }
+        @{ Key = 'sync';  Text = (Get-CvText -Key 'job.col.sync');    Width = 80  }
     )
     return ,$cols
 }
@@ -71,11 +71,11 @@ function Get-CvJobAudioColumns {
 function Get-CvJobSubColumns {
     <# Columnas de la lista de SUBTITULOS del editor de un job. #>
     $cols = @(
-        @{ Key = 'track';  Text = 'Pista';   Width = 380 }
-        @{ Key = 'lang';   Text = 'Idioma';  Width = 70  }
-        @{ Key = 'cues';   Text = 'Cues';    Width = 70  }
-        @{ Key = 'forced'; Text = 'Forzado'; Width = 80  }
-        @{ Key = 'def';    Text = 'Predet.'; Width = 80  }
+        @{ Key = 'track';  Text = (Get-CvText -Key 'job.col.pista');   Width = 380 }
+        @{ Key = 'lang';   Text = (Get-CvText -Key 'job.col.idioma');  Width = 70  }
+        @{ Key = 'cues';   Text = (Get-CvText -Key 'job.col.cues');    Width = 70  }
+        @{ Key = 'forced'; Text = (Get-CvText -Key 'job.col.forzado'); Width = 80  }
+        @{ Key = 'def';    Text = (Get-CvText -Key 'job.col.predet');  Width = 80  }
     )
     return ,$cols
 }
@@ -83,12 +83,12 @@ function Get-CvJobSubColumns {
 function Get-CvJobAudioBarItems {
     <# La barra de debajo de la lista de audio: lo que se le puede hacer a la pista marcada. #>
     $items = @(
-        @{ Kind = 'label';  Text = 'Idioma:' }
+        @{ Kind = 'label';  Text = (Get-CvText -Key 'comun.idioma') }
         @{ Kind = 'text';   Name = 'cvJobAudioLang';    Width = 60 }
-        @{ Kind = 'label';  Text = 'Sync (s):' }
+        @{ Kind = 'label';  Text = (Get-CvText -Key 'job.sync') }
         @{ Kind = 'text';   Name = 'cvJobAudioSync';    Width = 70 }
-        @{ Kind = 'button'; Name = 'cvJobAudioDefault'; Text = 'Marcar como predeterminada'; Width = 210; Gap = 12 }
-        @{ Kind = 'button'; Name = 'cvJobAudioPlay';    Text = 'Escuchar';                   Width = 100; Gap = 8  }
+        @{ Kind = 'button'; Name = 'cvJobAudioDefault'; Text = (Get-CvText -Key 'job.marcardef'); Width = 210; Gap = 12 }
+        @{ Kind = 'button'; Name = 'cvJobAudioPlay';    Text = (Get-CvText -Key 'job.escuchar');  Width = 100; Gap = 8  }
     )
     return ,$items
 }
@@ -103,12 +103,12 @@ function Get-CvJobSubBarItems {
         cualquier pista, de texto o de imagen.
     #>
     $items = @(
-        @{ Kind = 'check';  Name = 'cvJobSubForced';  Text = 'Forzado' }
-        @{ Kind = 'check';  Name = 'cvJobSubDefault'; Text = 'Predeterminado'; Gap = 12 }
-        @{ Kind = 'label';  Text = 'Idioma:' }
+        @{ Kind = 'check';  Name = 'cvJobSubForced';  Text = (Get-CvText -Key 'job.forzado') }
+        @{ Kind = 'check';  Name = 'cvJobSubDefault'; Text = (Get-CvText -Key 'job.predeterminado'); Gap = 12 }
+        @{ Kind = 'label';  Text = (Get-CvText -Key 'comun.idioma') }
         @{ Kind = 'text';   Name = 'cvJobSubLang';    Width = 60 }
-        @{ Kind = 'button'; Name = 'cvJobSubView';    Text = 'Ver texto';           Width = 110; Gap = 12 }
-        @{ Kind = 'button'; Name = 'cvJobSubPlay';    Text = 'Reproducir con este'; Width = 150; Gap = 8  }
+        @{ Kind = 'button'; Name = 'cvJobSubView';    Text = (Get-CvText -Key 'job.vertexto');       Width = 110; Gap = 12 }
+        @{ Kind = 'button'; Name = 'cvJobSubPlay';    Text = (Get-CvText -Key 'job.reproducircon'); Width = 150; Gap = 8  }
     )
     return ,$items
 }

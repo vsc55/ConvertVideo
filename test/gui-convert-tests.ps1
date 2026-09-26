@@ -212,7 +212,7 @@ $kvFila = [pscustomobject]@{
     BorderGuess = ''
     VideoGuess = 'original'
 }
-Assert-True 'Fila hecho: dice que el video es el original' ((@(Format-CvQueueRow -Row $kvFila)[6]) -match '\[video ORIGINAL\]')
+Assert-True 'Fila hecho: dice que el video es el original' ((@(Format-CvQueueRow -Row $kvFila)[6]).Contains((Get-CvText -Key 'cola.videooriginal').Trim()))
 $kvFila.VideoGuess = ''
 # OJO: -match no distingue mayusculas, y la celda ya dice '% del original'; se busca la marca entera.
 Assert-Eq   'Fila hecho: sin marca no dice nada' $false ((@(Format-CvQueueRow -Row $kvFila)[6]) -match '\[video ORIGINAL\]')
@@ -320,7 +320,7 @@ $cellsDone = @(Format-CvQueueRow -Row (Get-Row 'Serie_1x01'))
 Assert-Eq   'Celdas hecho: estado'    'Hecho' $cellsDone[2]
 Assert-Eq   'Celdas hecho: sin worker' ''     $cellsDone[5]
 $cellsStale = @(Format-CvQueueRow -Row (Get-Row 'Serie_1x05'))
-Assert-Eq   'Celdas huerfana: estado' 'Bloqueo huerfano' $cellsStale[2]
+Assert-Eq   'Celdas huerfana: estado' (Get-CvText -Key 'cola.est.stale') $cellsStale[2]
 Assert-True 'Celdas huerfana: lo explica' ($cellsStale[6] -match 'ya no existe')
 # La barra va entre corchetes para que se vea la escala (el tramo vacio casi no pinta a 9pt).
 Assert-True 'Celdas: barra delimitada' ($cells[6] -match '\[')
@@ -382,11 +382,11 @@ Assert-Eq   'Bloque: texto en plural'     'Quitar de la cola los 2 seleccionados
 # worker, no todos). En la cola sembrada hay exactamente una.
 Assert-Eq   'Bloque: se puede cortar una'  1 @($bulkAll.Kill).Count
 Assert-Eq   'Bloque: la que se codifica'   'Serie_1x02' @($bulkAll.Kill)[0].Name
-Assert-Eq   'Bloque: texto de cortar'      'Cortar la codificacion de este' $bulkAll.KillText
+Assert-Eq   'Bloque: texto de cortar'      (Get-CvText -Key 'cola.acc.kill.1') $bulkAll.KillText
 Assert-Eq   'Bloque: nada que cortar sin workers' 0 @((Get-CvQueueBulkActions -Rows @($rows | Where-Object { $_.State -ne 'working' })).Kill).Count
 $bulkUno = Get-CvQueueBulkActions -Rows @($rows | Where-Object { $_.State -eq 'queued' })
 Assert-Eq   'Bloque: texto en singular'   'Quitar de la cola (borrar su job)' $bulkUno.DropText
-Assert-Eq   'Bloque: singular al liberar' 'Liberar el bloqueo huerfano' $bulkUno.FreeText
+Assert-Eq   'Bloque: singular al liberar' (Get-CvText -Key 'cola.acc.free.1') $bulkUno.FreeText
 $bulkNada = Get-CvQueueBulkActions -Rows @()
 Assert-Eq   'Bloque: sin seleccion, nada' 0 (@($bulkNada.Free).Count + @($bulkNada.Drop).Count)
 $bulkPend = Get-CvQueueBulkActions -Rows @($rows | Where-Object { $_.State -eq 'pending' })
@@ -782,9 +782,9 @@ if (-not $sta) {
     Assert-True 'Ventana: se abrio'         $opened
     Assert-Eq   'Ventana: una fila por video' 5 $script:rowCount
     Assert-Eq   'Ventana: una columna por entrada del catalogo' (Get-CvQueueColumns).Count $script:colCount
-    Assert-Eq   'Ventana: bordes y audio a la vista' 'Archivo|Tamano|Estado|Bordes|Audio|Worker|Progreso|ETA' $script:colNames
+    Assert-Eq   'Ventana: bordes y audio a la vista' ((Get-CvQueueColumns | ForEach-Object { $_.Text }) -join '|') $script:colNames
     Assert-Eq   'Ventana: primer archivo'   'Serie_1x01' $script:firstName
-    Assert-Eq   'Ventana: estados en orden' 'Hecho,Codificando,En cola,Sin preparar,Bloqueo huerfano' $script:states
+    Assert-Eq   'Ventana: estados en orden' (@('done', 'working', 'queued', 'pending', 'stale' | ForEach-Object { Get-CvQueueStateText -State $_ }) -join ',') $script:states
     Assert-True 'Ventana: resumen con recuento' ($script:totals -match '5 archivo')
     # REGRESION: la cola sembrada tiene un worker VIVO, asi que 'Iniciar' NO puede estar disponible
     # (antes lo estaba y cada pulsacion abria otro grupo de workers).
@@ -800,7 +800,7 @@ if (-not $sta) {
     Assert-True 'Opciones: y crece a lo alto lo que haga falta' ($script:keepHelpAuto -and $script:keepHelpAlto -gt 14)
     Assert-Eq   'Ventana: Iniciar con 1 elegido'    'Iniciar (1 elegidos)' $script:startTextSel
     Assert-True 'Menu: ofrece codificar lo elegido' ($script:menuItems -match 'Codificar solo este')
-    Assert-True 'Menu: ofrece cortar solo esta codificacion' ($script:menuItems -match 'Cortar la codificacion')
+    Assert-True 'Menu: ofrece cortar solo esta codificacion' ($script:menuItems.Contains((Get-CvText -Key 'cola.acc.kill.1')))
     Assert-True 'Menu: ofrece ver el proceso' ($script:menuItems -match 'Ver el proceso|Ver lo que esta haciendo')
     Assert-True 'Ventana: botones de carpeta' ($script:dirBtns -eq 2)
     Assert-Eq   'Ventana: hay boton de tema'     1 $script:themeBtn
@@ -982,7 +982,7 @@ if (-not $sta) {
     [void](Show-CvWorkerLogWindow -Context $ctx -File 'Serie_1x02' -LogPath $hit.Path -Text $hit.Text)
     Assert-Eq   'Log terminado: sin excepciones' '' $script:wlErr
     Assert-True 'Log terminado: ensena el tramo' ($script:wlTxt -match 'Una sola pasada')
-    Assert-True 'Log terminado: lo dice en la cabecera' ($script:wlHead -match 'Asi quedo')
+    Assert-True 'Log terminado: lo dice en la cabecera' ($script:wlHead -eq (Get-CvText -Key 'logworker.asiquedo.de' -Values @('Serie_1x02', [IO.Path]::GetFileName($hit.Path))))
     Remove-Item -LiteralPath $logW -Force -ErrorAction SilentlyContinue
 }
 
@@ -1605,7 +1605,7 @@ if ($null -eq $jobInfo) {
         Assert-Eq   'Recorrido: estado de la fila' 'Serie_3x01=preparado' $script:wizRows
         # Columna de bordes: se ve de un vistazo si ha entrado el recorte. El perfil del recorrido es
         # 'copy' (no se toca la imagen), asi que la celda queda vacia; el texto lo fija su test unitario.
-        Assert-Eq   'Recorrido: columna de bordes' 'Archivo|Estado|Bordes / tamano|Detalle' $script:wizCols
+        Assert-Eq   'Recorrido: columna de bordes' (@('prep.col.archivo', 'prep.col.estado', 'prep.col.bordes', 'prep.col.detalle' | ForEach-Object { Get-CvText -Key $_ }) -join '|') $script:wizCols
         Assert-Eq   'Recorrido: en copy no dice nada' '' $script:wizBord
         Assert-True 'Recorrido: existe el job'    (Test-CvJob -Context $ctxJob -Name 'Serie_3x01')
         $jw = Read-CvJobDraft -Context $ctxJob -Name 'Serie_3x01'

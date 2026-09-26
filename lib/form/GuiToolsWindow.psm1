@@ -22,7 +22,7 @@ function Show-CvToolsWindow {
     if (-not (Initialize-CvGui)) { return }
 
     $form = New-Object System.Windows.Forms.Form
-    $form.Text          = 'Herramientas (instalar / versiones)'
+    $form.Text          = (Get-CvText -Key 'herr.tit')
     $form.StartPosition = 'CenterParent'
     $form.Size          = New-Object System.Drawing.Size(720, 500)
 
@@ -33,13 +33,13 @@ function Show-CvToolsWindow {
     $form.Controls.Add($lstApps)
 
     $lblApps = New-Object System.Windows.Forms.Label
-    $lblApps.Text     = 'Herramienta:'
+    $lblApps.Text     = (Get-CvText -Key 'herr.herramienta')
     $lblApps.AutoSize = $true
     $lblApps.Location = New-Object System.Drawing.Point(12, 10)
     $form.Controls.Add($lblApps)
 
     $lblVers = New-Object System.Windows.Forms.Label
-    $lblVers.Text     = 'Version a instalar:'
+    $lblVers.Text     = (Get-CvText -Key 'herr.version')
     $lblVers.AutoSize = $true
     $lblVers.Location = New-Object System.Drawing.Point(360, 10)
     $form.Controls.Add($lblVers)
@@ -51,14 +51,14 @@ function Show-CvToolsWindow {
     $form.Controls.Add($lstVers)
 
     $chkDef = New-Object System.Windows.Forms.CheckBox
-    $chkDef.Text     = 'Fijar como version por defecto (selected)'
+    $chkDef.Text     = (Get-CvText -Key 'herr.pordefecto')
     $chkDef.AutoSize = $true
     $chkDef.Checked  = $true
     $chkDef.Location = New-Object System.Drawing.Point(360, 290)
     $form.Controls.Add($chkDef)
 
     $btnInstall = New-Object System.Windows.Forms.Button
-    $btnInstall.Text     = 'Instalar'
+    $btnInstall.Text     = (Get-CvText -Key 'herr.btn.instalar')
     $btnInstall.Location = New-Object System.Drawing.Point(360, 318)
     $btnInstall.Size     = New-Object System.Drawing.Size(150, 30)
     $form.Controls.Add($btnInstall)
@@ -67,14 +67,14 @@ function Show-CvToolsWindow {
     # para volver atras sin reinstalar (y para arreglar un 'selected' que apunta a una version que se
     # ha borrado). La regla -solo versiones instaladas- vive en Set-CvSetupVersionInUse.
     $btnUse = New-Object System.Windows.Forms.Button
-    $btnUse.Text     = 'Usar esta version'
+    $btnUse.Text     = (Get-CvText -Key 'herr.btn.usar')
     $btnUse.Location = New-Object System.Drawing.Point(360, 356)
     $btnUse.Size     = New-Object System.Drawing.Size(150, 30)
     $btnUse.Name     = 'cvToolUse'
     $form.Controls.Add($btnUse)
 
     $btnClose = New-Object System.Windows.Forms.Button
-    $btnClose.Text     = 'Cerrar'
+    $btnClose.Text     = (Get-CvText -Key 'comun.cerrar')
     $btnClose.Location = New-Object System.Drawing.Point(530, 318)
     $btnClose.Size     = New-Object System.Drawing.Size(150, 30)
     $form.Controls.Add($btnClose)
@@ -94,10 +94,10 @@ function Show-CvToolsWindow {
         $lstApps.Items.Clear()
         foreach ($t in $st.Apps) {
             if (-not $t.Supported) {
-                [void]$lstApps.Items.Add(("{0} {1,-10} NO SOPORTADO ({2})" -f (Get-CvMark $false), $t.Name, $t.Platform))
+                [void]$lstApps.Items.Add((Get-CvText -Key 'herr.fila.no' -Values @((Get-CvMark $false), $t.Name, $t.Platform)))
             } else {
-                $instTxt = if (@($t.Installed).Count) { (@($t.Installed) -join ', ') } else { 'ninguna' }
-                [void]$lstApps.Items.Add(("{0} {1,-10} sel:{2,-8} inst: {3}" -f (Get-CvMark $t.SelectedOk), $t.Name, $t.Selected, $instTxt))
+                $instTxt = if (@($t.Installed).Count) { (@($t.Installed) -join ', ') } else { (Get-CvText -Key 'comun.ninguna') }
+                [void]$lstApps.Items.Add((Get-CvText -Key 'herr.fila.ok' -Values @((Get-CvMark $t.SelectedOk), $t.Name, $t.Selected, $instTxt)))
             }
         }
         if ($lstApps.Items.Count -gt 0) { $lstApps.SelectedIndex = [Math]::Max(0, [Math]::Min($sel, $lstApps.Items.Count - 1)) }
@@ -110,16 +110,16 @@ function Show-CvToolsWindow {
         $t = @($st.Apps)[$i]
         foreach ($v in (Get-CvSetupAppVersions -Context $Context -Name $t.Name)) {
             $tag = ''
-            if ("$v" -eq "$($t.Selected)") { $tag = '   (por defecto)' }
-            if (@($t.Installed) -contains "$v") { $tag += '   [instalada]' }
+            if ("$v" -eq "$($t.Selected)") { $tag = (Get-CvText -Key 'herr.ver.defecto') }
+            if (@($t.Installed) -contains "$v") { $tag += (Get-CvText -Key 'herr.ver.instalada') }
             [void]$lstVers.Items.Add(("{0}{1}" -f $v, $tag))
         }
         if ($lstVers.Items.Count -gt 0) { $lstVers.SelectedIndex = 0 }
         $btnUse.Enabled = ($t.Supported -and @($t.Installed).Count -gt 0)
         $lblInfo.Text = if ($t.Supported) {
-            'Instalar descarga y verifica (consola aparte). "Usar esta version" solo cambia cual se usa, entre las ya instaladas.'
+            (Get-CvText -Key 'herr.info')
         } else {
-            ("{0} no tiene build para la plataforma de este equipo ({1})." -f $t.Name, $t.Platform)
+            (Get-CvText -Key 'herr.info.no' -Values @($t.Name, $t.Platform))
         }
     })
 
@@ -127,10 +127,10 @@ function Show-CvToolsWindow {
         $i = $lstApps.SelectedIndex
         if ($i -lt 0 -or $i -ge @($st.Apps).Count) { return }
         $t = @($st.Apps)[$i]
-        if (-not $t.Supported) { Show-CvGuiInfo -Title 'Herramientas' -Message ("{0} no esta soportada en esta plataforma." -f $t.Name); return }
-        if ($lstVers.SelectedIndex -lt 0) { Show-CvGuiInfo -Title 'Herramientas' -Message 'Elige una version.'; return }
+        if (-not $t.Supported) { Show-CvGuiInfo -Title (Get-CvText -Key 'herr.tit') -Message (Get-CvText -Key 'herr.no.soportada' -Values @($t.Name)); return }
+        if ($lstVers.SelectedIndex -lt 0) { Show-CvGuiInfo -Title (Get-CvText -Key 'herr.tit') -Message (Get-CvText -Key 'herr.elige.version'); return }
         $ver = ("$($lstVers.SelectedItem)" -split '\s+')[0]
-        if (-not (Show-CvGuiConfirm -Title 'Instalar' -Message ("Instalar {0} {1}?`n`nSe borra esa version si ya estaba y se descarga de nuevo." -f $t.Name, $ver))) { return }
+        if (-not (Show-CvGuiConfirm -Title (Get-CvText -Key 'herr.instalar.tit') -Message (Get-CvText -Key 'herr.instalar.msg' -Values @($t.Name, $ver)))) { return }
         $targs = @('-Task', 'install', '-App', $t.Name, '-Version', $ver)
         if ($chkDef.Checked) { $targs += '-SetDefault' }
         $form.Enabled = $false
@@ -147,10 +147,10 @@ function Show-CvToolsWindow {
         $i = $lstApps.SelectedIndex
         if ($i -lt 0 -or $i -ge @($st.Apps).Count) { return }
         $t = @($st.Apps)[$i]
-        if ($lstVers.SelectedIndex -lt 0) { Show-CvGuiInfo -Title 'Herramientas' -Message 'Elige una version.'; return }
+        if ($lstVers.SelectedIndex -lt 0) { Show-CvGuiInfo -Title (Get-CvText -Key 'herr.tit') -Message (Get-CvText -Key 'herr.elige.version'); return }
         $ver = ("$($lstVers.SelectedItem)" -split '\s+')[0]
         $r = Set-CvSetupVersionInUse -Context $Context -CfgPath $CfgPath -Name $t.Name -Version $ver
-        $lblInfo.Text = $(if ($r.Ok) { ("Hecho: {0} (en {1}). No se ha descargado nada." -f $r.Reason, (Split-Path -Leaf $CfgPath)) } else { $r.Reason })
+        $lblInfo.Text = $(if ($r.Ok) { (Get-CvText -Key 'herr.usada' -Values @($r.Reason, (Split-Path -Leaf $CfgPath))) } else { $r.Reason })
         if ($r.Ok) { & $reload }
     })
     $btnClose.Add_Click({ $form.Close() })

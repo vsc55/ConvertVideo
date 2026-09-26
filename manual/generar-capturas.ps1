@@ -29,7 +29,11 @@ param(
     # Tema de las ventanas para esta tanda. Por defecto CLARO y no 'system': si no, las capturas
     # saldrian de un color o de otro segun como tenga Windows la maquina donde se generen.
     # En oscuro los PNG se guardan con el sufijo '-oscuro', para no pisar los del manual.
-    [ValidateSet('light', 'dark')][string]$Theme = 'light'
+    [ValidateSet('light', 'dark')][string]$Theme = 'light',
+    # Idioma de las ventanas de ESTA tanda. Las del manual van en castellano pase lo que pase (con
+    # 'auto' saldrian en el idioma de la maquina donde se generen); el parametro esta para poder
+    # MIRAR como queda una traduccion sin tocar nada.
+    [string]$Lang = 'es'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -393,7 +397,7 @@ function New-ShotRoot {
     }
     $ctx = New-CvContext -Root $tmp -ConfigPath $cfg
     [void](Set-CvGuiThemeDefault -Theme "$($ctx.GuiTheme)")   # el tema de ESTA tanda, no el de la maquina
-    [void](Set-CvLanguage -Lang 'es')                        # y en castellano, sea cual sea el Windows
+    [void](Set-CvLanguage -Lang $Lang)                       # y en el idioma de la tanda (por defecto, castellano)
     $script:shotCfg = $cfg
     return $ctx
 }
@@ -762,7 +766,7 @@ if (Test-Group 'setup') {
     $script:findNode = $findNode
     Start-Flow -Body {
         $f = Get-TopForm
-        if ($null -eq $f -or "$($f.Text)" -notmatch 'Editar configuracion') { Wait-Step; return }
+        if ($null -eq $f) { Wait-Step; return }
         $tr = @($f.Controls.Find('cvTree', $true))
         if ($tr.Count -eq 0 -or $tr[0].Nodes.Count -eq 0) { Wait-Step; return }
         if ($script:step -eq 0) {
@@ -780,7 +784,7 @@ if (Test-Group 'setup') {
 
     Start-Flow -Body {
         $f = Get-TopForm
-        if ($null -eq $f -or "$($f.Text)" -notmatch 'Herramientas') { Wait-Step; return }
+        if ($null -eq $f -or @($f.Controls.Find('cvToolUse', $true)).Count -eq 0) { Wait-Step; return }
         $shotTimer.Stop()
         Save-Shot -Form $f -Name 'setup-herramientas'
         $f.Close()

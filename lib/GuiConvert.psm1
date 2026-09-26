@@ -23,14 +23,14 @@ function Get-CvQueueColumns {
         sincronia aplicada, varias pistas, una 5.1 mezclada a estereo).
     #>
     $cols = @(
-        @{ Key = 'file';    Text = 'Archivo';  Width = 300 }
-        @{ Key = 'size';    Text = 'Tamano';   Width = 85  }
-        @{ Key = 'state';   Text = 'Estado';   Width = 120 }
-        @{ Key = 'borders'; Text = 'Bordes';   Width = 55  }
-        @{ Key = 'audio';   Text = 'Audio';    Width = 150 }
-        @{ Key = 'worker';  Text = 'Worker';   Width = 70  }
-        @{ Key = 'prog';    Text = 'Progreso'; Width = 300 }
-        @{ Key = 'eta';     Text = 'ETA';      Width = 80  }
+        @{ Key = 'file';    Text = (Get-CvText -Key 'cola.col.archivo');  Width = 300 }
+        @{ Key = 'size';    Text = (Get-CvText -Key 'cola.col.tamano');   Width = 85  }
+        @{ Key = 'state';   Text = (Get-CvText -Key 'cola.col.estado');   Width = 120 }
+        @{ Key = 'borders'; Text = (Get-CvText -Key 'cola.col.bordes');   Width = 55  }
+        @{ Key = 'audio';   Text = (Get-CvText -Key 'cola.col.audio');    Width = 150 }
+        @{ Key = 'worker';  Text = (Get-CvText -Key 'cola.col.worker');   Width = 70  }
+        @{ Key = 'prog';    Text = (Get-CvText -Key 'cola.col.progreso'); Width = 300 }
+        @{ Key = 'eta';     Text = (Get-CvText -Key 'cola.col.eta');      Width = 80  }
     )
     return ,$cols
 }
@@ -69,21 +69,21 @@ function Format-CvQueueRow {
     elseif ($Row.State -eq 'done') {
         $prog = Format-CvSize -Kb $Row.OutSizeKb
         if ($Row.SizeKb -gt 0 -and $Row.OutSizeKb -gt 0) {
-            $prog += (' ({0:N0}% del original)' -f (100.0 * $Row.OutSizeKb / $Row.SizeKb))
+            $prog += (Get-CvText -Key 'cola.pct.original' -Values @((100.0 * $Row.OutSizeKb / $Row.SizeKb)))
         }
         # Si la salida lleva el video ORIGINAL (recodificar lo engordaba), se dice: es justo lo que
         # no se ve mirando el tamano. Sin marca no se pinta nada, que es el caso normal -y en una
         # salida anterior a esta opcion no se puede saber-.
-        if ("$($Row.VideoGuess)" -eq 'original') { $prog += '   [video ORIGINAL]' }
+        if ("$($Row.VideoGuess)" -eq 'original') { $prog += (Get-CvText -Key 'cola.videooriginal') }
     }
     elseif ($Row.State -eq 'partial') {
-        $prog = ("{0} a medias: borra la salida para rehacerlo" -f (Format-CvSize -Kb $Row.OutSizeKb))
+        $prog = (Get-CvText -Key 'cola.amedias' -Values @((Format-CvSize -Kb $Row.OutSizeKb)))
     }
     elseif ($Row.State -eq 'stale') {
-        $prog = 'su worker ya no existe'
+        $prog = (Get-CvText -Key 'cola.sinworker')
     }
     elseif ($Row.State -eq 'pending') {
-        $prog = 'falta PREPARAR'
+        $prog = (Get-CvText -Key 'cola.faltaprep')
     }
     return @(
         "$($Row.Name)"
@@ -105,16 +105,16 @@ function Get-CvQueueSummaryLine {
     <# PURO. Resumen de una linea bajo la lista (lo mismo que el recuento de Get-CvQueueTotals). #>
     param($Totals, [int]$Workers = 0, [bool]$Stopping = $false)
     $p = @()
-    $p += ("{0} archivo(s)" -f [int]$Totals.Total)
-    if ([int]$Totals.Working -gt 0) { $p += ("{0} codificando" -f $Totals.Working) }
-    if ([int]$Totals.Queued  -gt 0) { $p += ("{0} en cola"     -f $Totals.Queued) }
-    if ([int]$Totals.Pending -gt 0) { $p += ("{0} sin preparar" -f $Totals.Pending) }
-    if ([int]$Totals.Done    -gt 0) { $p += ("{0} hecho(s)"    -f $Totals.Done) }
-    if ([int]$Totals.Partial -gt 0) { $p += ("{0} sin terminar" -f $Totals.Partial) }
-    if ([int]$Totals.Stale   -gt 0) { $p += ("{0} bloqueo(s) huerfano(s)" -f $Totals.Stale) }
-    $p += ("{0} worker(s) activo(s)" -f $Workers)
+    $p += (Get-CvText -Key 'cola.res.total' -Values @([int]$Totals.Total))
+    if ([int]$Totals.Working -gt 0) { $p += (Get-CvText -Key 'cola.res.working' -Values @($Totals.Working)) }
+    if ([int]$Totals.Queued  -gt 0) { $p += (Get-CvText -Key 'cola.res.queued'  -Values @($Totals.Queued)) }
+    if ([int]$Totals.Pending -gt 0) { $p += (Get-CvText -Key 'cola.res.pending' -Values @($Totals.Pending)) }
+    if ([int]$Totals.Done    -gt 0) { $p += (Get-CvText -Key 'cola.res.done'    -Values @($Totals.Done)) }
+    if ([int]$Totals.Partial -gt 0) { $p += (Get-CvText -Key 'cola.res.partial' -Values @($Totals.Partial)) }
+    if ([int]$Totals.Stale   -gt 0) { $p += (Get-CvText -Key 'cola.res.stale'   -Values @($Totals.Stale)) }
+    $p += (Get-CvText -Key 'cola.res.workers' -Values @($Workers))
     $txt = ($p -join '  -  ')
-    if ($Stopping) { $txt += '   [PARADA PEDIDA: terminan el archivo en curso y no cogen mas]' }
+    if ($Stopping) { $txt += (Get-CvText -Key 'cola.res.parada') }
     return $txt
 }
 
@@ -317,12 +317,12 @@ function Get-CvQueueBulkActions {
         Drop      = @($drop)
         Purge     = @($purge)
         Edit      = @($edit)
-        StartText = $(if ($start.Count -gt 1) { 'Codificar solo estos {0}' -f $start.Count } else { 'Codificar solo este' })
-        KillText  = $(if ($kill.Count  -gt 1) { 'Cortar la codificacion de estos {0}' -f $kill.Count } else { 'Cortar la codificacion de este' })
-        FreeText  = $(if ($free.Count  -gt 1) { 'Liberar los {0} bloqueos huerfanos' -f $free.Count } else { 'Liberar el bloqueo huerfano' })
-        DropText  = $(if ($drop.Count  -gt 1) { 'Quitar de la cola los {0} seleccionados (borrar sus jobs)' -f $drop.Count } else { 'Quitar de la cola (borrar su job)' })
-        PurgeText = $(if ($purge.Count -gt 1) { 'Eliminar las {0} salidas a medias (se rehacen)' -f $purge.Count } else { 'Eliminar la salida a medias (se rehace)' })
-        EditText  = $(if ($edit.Count  -gt 1) { 'Editar los {0} jobs elegidos a la vez...' -f $edit.Count } else { 'Editar varios jobs a la vez...' })
+        StartText = $(if ($start.Count -gt 1) { Get-CvText -Key 'cola.acc.start.n' -Values @($start.Count) } else { Get-CvText -Key 'cola.acc.start.1' })
+        KillText  = $(if ($kill.Count  -gt 1) { Get-CvText -Key 'cola.acc.kill.n'  -Values @($kill.Count)  } else { Get-CvText -Key 'cola.acc.kill.1'  })
+        FreeText  = $(if ($free.Count  -gt 1) { Get-CvText -Key 'cola.acc.free.n'  -Values @($free.Count)  } else { Get-CvText -Key 'cola.acc.free.1'  })
+        DropText  = $(if ($drop.Count  -gt 1) { Get-CvText -Key 'cola.acc.drop.n'  -Values @($drop.Count)  } else { Get-CvText -Key 'cola.acc.drop.1'  })
+        PurgeText = $(if ($purge.Count -gt 1) { Get-CvText -Key 'cola.acc.purge.n' -Values @($purge.Count) } else { Get-CvText -Key 'cola.acc.purge.1' })
+        EditText  = $(if ($edit.Count  -gt 1) { Get-CvText -Key 'cola.acc.edit.n'  -Values @($edit.Count)  } else { Get-CvText -Key 'cola.acc.edit.1'  })
     }
 }
 
@@ -345,18 +345,18 @@ function Get-CvQueueStartState {
         [bool]$JustStarted = $false
     )
     if ($Stopping) {
-        return @{ Enabled = $false; Tip = 'Hay una parada pedida: espera a que los workers terminen' }
+        return @{ Enabled = $false; Tip = (Get-CvText -Key 'cola.ini.parando') }
     }
     if ($JustStarted -and $Live -le 0) {
-        return @{ Enabled = $false; Tip = 'Los workers estan arrancando...' }
+        return @{ Enabled = $false; Tip = (Get-CvText -Key 'cola.ini.arrancando') }
     }
     if ($Live -gt 0) {
-        return @{ Enabled = $false; Tip = ("Ya hay {0} worker(s) en marcha: para antes de volver a arrancar" -f $Live) }
+        return @{ Enabled = $false; Tip = (Get-CvText -Key 'cola.ini.yahay' -Values @($Live)) }
     }
     if ($Queued -le 0) {
-        return @{ Enabled = $false; Tip = 'No hay ningun archivo en cola' }
+        return @{ Enabled = $false; Tip = (Get-CvText -Key 'cola.ini.vacia') }
     }
-    return @{ Enabled = $true; Tip = 'Abre los workers y empieza a codificar' }
+    return @{ Enabled = $true; Tip = (Get-CvText -Key 'cola.ini.ok') }
 }
 
 function Get-CvQueueStartScope {
@@ -378,22 +378,22 @@ function Get-CvQueueStartScope {
     }
     return @{
         Ask     = $true
-        Message = ("Tienes {0} archivo(s) marcados de los {1} que hay en cola.`n`nQue codifico?" -f $Selected, $Total)
+        Message = (Get-CvText -Key 'cola.scope.msg' -Values @($Selected, $Total))
         Options = @(
             @{
                 Value = 'sel'
-                Text  = ("Solo los {0} marcados" -f $Selected)
-                Hint  = 'Los workers ignoran el resto de la cola (-Only)'
+                Text  = (Get-CvText -Key 'cola.scope.sel' -Values @($Selected))
+                Hint  = (Get-CvText -Key 'cola.scope.sel.h')
             }
             @{
                 Value = 'all'
-                Text  = 'Toda la cola'
-                Hint  = ("Los {0} archivos en cola, en orden" -f $Total)
+                Text  = (Get-CvText -Key 'cola.scope.all')
+                Hint  = (Get-CvText -Key 'cola.scope.all.h' -Values @($Total))
             }
             @{
                 Value = 'cancel'
-                Text  = 'No arrancar'
-                Hint  = 'Volver a la cola'
+                Text  = (Get-CvText -Key 'cola.scope.no')
+                Hint  = (Get-CvText -Key 'cola.scope.no.h')
             }
         )
     }
@@ -408,23 +408,23 @@ function Get-CvQueueCloseActions {
     @(
         @{
             Value = 'background'
-            Text  = 'Dejarlos en segundo plano'
-            Hint  = 'Siguen codificando sin ventana; al volver a abrir la cola se ven otra vez.'
+            Text  = (Get-CvText -Key 'cola.cerrar.bg')
+            Hint  = (Get-CvText -Key 'cola.cerrar.bg.h')
         }
         @{
             Value = 'stop'
-            Text  = 'Parada ordenada'
-            Hint  = 'Terminan el archivo que tengan y no cogen mas. No se pierde nada.'
+            Text  = (Get-CvText -Key 'cola.cerrar.stop')
+            Hint  = (Get-CvText -Key 'cola.cerrar.stop.h')
         }
         @{
             Value = 'kill'
-            Text  = 'Cancelar ahora'
-            Hint  = 'Corta los workers y su ffmpeg: se pierde el archivo en curso.'
+            Text  = (Get-CvText -Key 'cola.cerrar.kill')
+            Hint  = (Get-CvText -Key 'cola.cerrar.kill.h')
         }
         @{
             Value = 'cancel'
-            Text  = 'No cerrar'
-            Hint  = 'Volver a la cola.'
+            Text  = (Get-CvText -Key 'cola.cerrar.no')
+            Hint  = (Get-CvText -Key 'cola.cerrar.no.h')
         }
     )
 }
@@ -432,8 +432,8 @@ function Get-CvQueueCloseActions {
 function Get-CvQueueCloseMessage {
     <# PURO. El texto del aviso de cierre: lo primero, que cerrar NO para nada. #>
     param([int]$Workers = 0)
-    $q = if ($Workers -eq 1) { 'Hay 1 worker codificando' } else { ("Hay {0} workers codificando" -f $Workers) }
-    return ("{0}.`n`nCada worker es un proceso aparte: cerrar esta ventana NO lo para, seguira codificando sin nada a la vista (su consola va oculta).`n`nQue hago?" -f $q)
+    $q = if ($Workers -eq 1) { Get-CvText -Key 'cola.cerrar.1' } else { Get-CvText -Key 'cola.cerrar.n' -Values @($Workers) }
+    return (Get-CvText -Key 'cola.cerrar.msg' -Values @($q))
 }
 
 function Get-CvConvertLogChoices {
@@ -456,7 +456,7 @@ function Get-CvConvertLogChoices {
             Date      = $l.Date
             SizeKb    = $l.SizeKb
             WorkerPid = $wpid
-            Text      = ("{0:dd/MM HH:mm}  {1,6} KB  {2}{3}" -f $l.Date, $l.SizeKb, $l.Name, $(if ($wpid) { '   <- en curso' } else { '' }))
+            Text      = (Get-CvText -Key 'cola.log.fila' -Values @($l.Date, $l.SizeKb, $l.Name, $(if ($wpid) { (Get-CvText -Key 'cola.log.encurso') } else { '' })))
         }
     }
     return @($out)

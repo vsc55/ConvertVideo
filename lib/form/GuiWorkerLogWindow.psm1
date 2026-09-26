@@ -45,9 +45,10 @@ function Show-CvWorkerLogWindow {
 
     $form = New-Object System.Windows.Forms.Form
     $form.Text          = $(if ($vivo) {
-        ("Worker #{0}{1}" -f $WorkerPid, $(if ($File) { " - $File" } else { '' }))
+        $(if ($File) { Get-CvText -Key 'logworker.tit.vivoarch' -Values @($WorkerPid, $File) }
+          else       { Get-CvText -Key 'logworker.tit.vivo'     -Values @($WorkerPid) })
     } else {
-        ("Proceso de {0}" -f $(if ($File) { $File } else { 'este archivo' }))
+        Get-CvText -Key 'logworker.tit.hecho' -Values @($(if ($File) { $File } else { Get-CvText -Key 'logworker.estearchivo' }))
     })
     $form.StartPosition = 'CenterParent'
     $form.Size          = New-Object System.Drawing.Size(980, 560)
@@ -89,7 +90,7 @@ function Show-CvWorkerLogWindow {
     $grid.Controls.Add($bar, 0, 2)
 
     $chkFollow = New-Object System.Windows.Forms.CheckBox
-    $chkFollow.Text     = 'Seguir el final'
+    $chkFollow.Text     = (Get-CvText -Key 'logworker.seguir')
     $chkFollow.Checked  = $true
     $chkFollow.Visible  = $vivo     # en un log ya terminado no hay nada que seguir
     $chkFollow.AutoSize = $true
@@ -98,14 +99,14 @@ function Show-CvWorkerLogWindow {
     $bar.Controls.Add($chkFollow)
 
     $btnOpen = New-Object System.Windows.Forms.Button
-    $btnOpen.Text   = 'Abrir fuera'
+    $btnOpen.Text   = (Get-CvText -Key 'comun.abrirfuera')
     $btnOpen.Width  = 110
     $btnOpen.Height = 26
     $btnOpen.Name   = 'cvWlOpen'
     $bar.Controls.Add($btnOpen)
     $btnOpen.Add_Click({
         if (-not $st.Path) { return }
-        [void](Open-CvGuiPath -Path "$($st.Path)" -Title 'Log' -Quiet)
+        [void](Open-CvGuiPath -Path "$($st.Path)" -Title (Get-CvText -Key 'logs.tit') -Quiet)
     })
 
     # Refresco: solo se relee si el fichero ha cambiado (tamano+fecha), y solo el rabo. En el modo
@@ -113,28 +114,35 @@ function Show-CvWorkerLogWindow {
     $tick = {
         try {
             if (-not $vivo) {
-                $lblHead.Text = ("Asi quedo: {0}{1}" -f $File, $(if ($st.Path) { "   (de {0})" -f [System.IO.Path]::GetFileName($st.Path) } else { '' }))
+                $lblHead.Text = $(if ($st.Path) {
+                    Get-CvText -Key 'logworker.asiquedo.de' -Values @($File, [System.IO.Path]::GetFileName($st.Path))
+                } else {
+                    Get-CvText -Key 'logworker.asiquedo' -Values @($File)
+                })
                 if ($txt.Text -eq '') {
-                    $txt.Text = $(if ("$Text" -ne '') { $Text } else { 'No se encontro en los logs el paso de este archivo (puede que se convirtiera hace mucho, o con behavior.log apagado).' })
+                    $txt.Text = $(if ("$Text" -ne '') { $Text } else { Get-CvText -Key 'logworker.nopaso' })
                 }
                 return
             }
             $w = @(Get-CvWorkerStates -Context $Context | Where-Object { [int]$_.Pid -eq $WorkerPid })
             if ($w.Count -gt 0) {
                 if ("$($w[0].Log)" -ne '') { $st.Path = "$($w[0].Log)" }
-                $lblHead.Text = $(if ([bool]$w[0].Alive) {
-                    ("Worker #{0}: {1}{2}" -f $WorkerPid, $(if ("$($w[0].File)") { "$($w[0].File)" } else { 'sin archivo' }), $(if ("$($w[0].Step)") { "  -  $($w[0].Step)" } else { '' }))
+                $arch = $(if ("$($w[0].File)") { "$($w[0].File)" } else { Get-CvText -Key 'logworker.sinarchivo' })
+                $lblHead.Text = $(if (-not [bool]$w[0].Alive) {
+                    Get-CvText -Key 'logworker.muerto.ultimo' -Values @($WorkerPid)
+                } elseif ("$($w[0].Step)") {
+                    Get-CvText -Key 'logworker.cab.paso' -Values @($WorkerPid, $arch, "$($w[0].Step)")
                 } else {
-                    ("Worker #{0}: ya no esta en marcha (esto es lo ultimo que dejo escrito)" -f $WorkerPid)
+                    Get-CvText -Key 'logworker.cab' -Values @($WorkerPid, $arch)
                 })
             } else {
-                $lblHead.Text = ("Worker #{0}: ya no esta en marcha" -f $WorkerPid)
+                $lblHead.Text = (Get-CvText -Key 'logworker.muerto' -Values @($WorkerPid))
             }
             # Seguir el log (solo relee si ha cambiado, solo repinta si es otro texto): lo mismo
             # que hace la pestana Log de la cola, en una sola funcion (Update-CvGuiLogView).
             [void](Update-CvGuiLogView -TextBox $txt -State $st -Key 'Stamp' -Path "$($st.Path)" `
                 -Follow ([bool]$chkFollow.Checked) `
-                -EmptyText 'Este worker no dejo log. Se escribe solo con behavior.log activado en la configuracion.')
+                -EmptyText (Get-CvText -Key 'logworker.sinlog'))
         } catch { }
     }
 

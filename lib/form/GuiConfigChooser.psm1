@@ -20,10 +20,10 @@ function Show-CvSetupConfigChooser {
     if (-not (Initialize-CvGui)) { return '' }
 
     $items = @(Get-CvSetupConfigCandidates -Root $Root)
-    $otro  = 'Otro... (buscar un fichero)'
+    $otro  = (Get-CvText -Key 'elegircfg.otro')
 
     $form = New-Object System.Windows.Forms.Form
-    $form.Text            = 'Que configuracion quieres gestionar?'
+    $form.Text            = (Get-CvText -Key 'elegircfg.tit')
     $form.StartPosition   = 'CenterScreen'
     $form.Size            = New-Object System.Drawing.Size(520, 300)
     $form.FormBorderStyle = 'FixedDialog'
@@ -37,7 +37,7 @@ function Show-CvSetupConfigChooser {
     $lst.Name     = 'cvCfgList'
     foreach ($c in $items) {
         $tag = if ($c.Text) { "   ({0})" -f $c.Text } else { '' }
-        $ex  = if ($c.Exists) { '' } else { '   [no existe -> valores por defecto]' }
+        $ex  = if ($c.Exists) { '' } else { (Get-CvText -Key 'elegircfg.noexiste') }
         [void]$lst.Items.Add(("{0}{1}{2}" -f $c.Name, $tag, $ex))
     }
     [void]$lst.Items.Add($otro)
@@ -55,14 +55,14 @@ function Show-CvSetupConfigChooser {
     $form.ClientSize = New-Object System.Drawing.Size(504, ($btnTop + 42))
 
     $btnOk = New-Object System.Windows.Forms.Button
-    $btnOk.Text     = 'Aceptar'
+    $btnOk.Text     = (Get-CvText -Key 'comun.aceptar')
     $btnOk.Size     = New-Object System.Drawing.Size(110, 30)
     $btnOk.Location = New-Object System.Drawing.Point(262, $btnTop)
     $btnOk.Name     = 'cvCfgOk'
     $form.Controls.Add($btnOk)
 
     $btnCancel = New-Object System.Windows.Forms.Button
-    $btnCancel.Text     = 'Cancelar'
+    $btnCancel.Text     = (Get-CvText -Key 'comun.cancelar')
     $btnCancel.Size     = New-Object System.Drawing.Size(110, 30)
     $btnCancel.Location = New-Object System.Drawing.Point(382, $btnTop)
     $form.Controls.Add($btnCancel)
@@ -76,9 +76,9 @@ function Show-CvSetupConfigChooser {
         if ($i -ge $items.Count) {
             # 'Otro...': buscador de ficheros. Si se cancela, se vuelve a la lista (no se cierra).
             $dlg = New-Object System.Windows.Forms.OpenFileDialog
-            $dlg.Title            = 'Elige un fichero de configuracion'
+            $dlg.Title            = (Get-CvText -Key 'elegircfg.dlg.tit')
             $dlg.InitialDirectory = $Root
-            $dlg.Filter           = 'Configuracion JSON (*.json)|*.json|Todos (*.*)|*.*'
+            $dlg.Filter           = (Get-CvText -Key 'elegircfg.dlg.filtro')
             if ($dlg.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { return }
             $st.Path = $dlg.FileName
         } else {

@@ -910,54 +910,54 @@ function Get-CvJobBulkFields {
         [pscustomobject]@{
             Key  = 'prof'
             Kind = 'profile'
-            Text = 'Perfil de codificacion'
-            Help = 'El perfil entero y si se recodifica video y audio (lo de abajo manda).'
+            Text = (Get-CvText -Key 'bulk.prof.text')
+            Help = (Get-CvText -Key 'bulk.prof.help')
         }
         [pscustomobject]@{
             Key  = 'videoCopy'
             Kind = 'bool'
-            Text = 'Video'
-            On   = 'Copiar (sin recodificar)'
-            Off  = 'Recodificar'
-            Help = 'Copiar deja la pista de video tal cual, sin recodificarla.'
+            Text = (Get-CvText -Key 'bulk.video.text')
+            On   = (Get-CvText -Key 'job.copiar')
+            Off  = (Get-CvText -Key 'job.recodificar')
+            Help = (Get-CvText -Key 'bulk.video.help')
         }
         [pscustomobject]@{
             Key  = 'audioCopy'
             Kind = 'bool'
-            Text = 'Audio'
-            On   = 'Copiar (sin recodificar)'
-            Off  = 'Recodificar'
-            Help = 'No cambia QUE pistas se conservan, solo si se recodifican.'
+            Text = (Get-CvText -Key 'bulk.audio.text')
+            On   = (Get-CvText -Key 'job.copiar')
+            Off  = (Get-CvText -Key 'job.recodificar')
+            Help = (Get-CvText -Key 'bulk.audio.help')
         }
         [pscustomobject]@{
             Key  = 'keepOriginal'
             Kind = 'bool'
-            Text = 'Si engorda al recodificar'
-            On   = 'Quedarse con el video ORIGINAL'
-            Off   = 'Dejar el recodificado igualmente'
-            Help = 'Usar la original si recodificar la hace mas grande (sin tocar la imagen).'
+            Text = (Get-CvText -Key 'bulk.keep.text')
+            On   = (Get-CvText -Key 'bulk.keep.on')
+            Off  = (Get-CvText -Key 'bulk.keep.off')
+            Help = (Get-CvText -Key 'bulk.keep.help')
         }
         [pscustomobject]@{
             Key  = 'anim'
             Kind = 'bool'
-            Text = 'Animacion'
-            On   = 'Si'
-            Off  = 'No'
-            Help = 'El ajuste del encoder para dibujos (tune animation).'
+            Text = (Get-CvText -Key 'bulk.anim.text')
+            On   = (Get-CvText -Key 'comun.si')
+            Off  = (Get-CvText -Key 'comun.no')
+            Help = (Get-CvText -Key 'bulk.anim.help')
         }
         [pscustomobject]@{
             Key  = 'resize'
             Kind = 'text'
-            Text = 'Escalado'
-            Hint = 'vacio = sin escalar'
-            Help = 'W:H igual en todos: usa -2 de alto si varian de proporcion.'
+            Text = (Get-CvText -Key 'bulk.resize.text')
+            Hint = (Get-CvText -Key 'bulk.resize.hint')
+            Help = (Get-CvText -Key 'bulk.resize.help')
         }
         [pscustomobject]@{
             Key  = 'crop'
             Kind = 'text'
-            Text = 'Recorte'
-            Hint = 'W:H:X:Y, vacio = quitarlo'
-            Help = 'Los bordes son de cada archivo: en bloque lo normal es dejarlo vacio.'
+            Text = (Get-CvText -Key 'bulk.crop.text')
+            Hint = (Get-CvText -Key 'bulk.crop.hint')
+            Help = (Get-CvText -Key 'bulk.crop.help')
         }
     )
 }

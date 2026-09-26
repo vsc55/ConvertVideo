@@ -40,7 +40,7 @@ function Show-CvJobWindow {
     # en vez de dejar que reviente el primer ffprobe con un "no se encuentra el archivo".
     $ready = Test-CvConvertReady -Context $Context
     if (-not $ready.Ok) {
-        Show-CvGuiInfo -Title 'Faltan herramientas' -Message ("No se puede preparar: {0}" -f $ready.Reason)
+        Show-CvGuiInfo -Title (Get-CvText -Key 'prep.faltan.tit') -Message (Get-CvText -Key 'prep.faltan.msg' -Values @($ready.Reason))
         return $false
     }
 
@@ -50,7 +50,7 @@ function Show-CvJobWindow {
     # desplegable); si viene -Draft, el recorrido ya pregunto el perfil una vez para todo el lote.
     $baseProf = $null
     if ($null -eq $Draft -and -not (Test-CvJob -Context $Context -Name $Name)) {
-        $baseProf = Show-CvJobProfileDialog -Context $Context -Info ("Perfil con el que preparar {0}:" -f $Name)
+        $baseProf = Show-CvJobProfileDialog -Context $Context -Info (Get-CvText -Key 'job.perfil.info' -Values @($Name))
         if ($null -eq $baseProf) { return $false }
     }
 
@@ -73,7 +73,7 @@ function Show-CvJobWindow {
     }
 
     $form = New-Object System.Windows.Forms.Form
-    $form.Text          = ("Preparar: {0}" -f $Name)
+    $form.Text          = (Get-CvText -Key 'job.tit' -Values @($Name))
     $form.StartPosition = 'CenterParent'
     $form.Size          = New-Object System.Drawing.Size(1000, 820)
     $form.MinimumSize   = New-Object System.Drawing.Size(820, 640)
@@ -107,7 +107,7 @@ function Show-CvJobWindow {
     $lblHead.Dock      = 'Fill'
     $lblHead.TextAlign = 'MiddleLeft'
     $lblHead.Name      = 'cvJobHead'
-    $lblHead.Text      = ("Analizando {0}..." -f $Name)
+    $lblHead.Text      = (Get-CvText -Key 'job.analizando' -Values @($Name))
     $head.Controls.Add($lblHead, 0, 0)
 
     # Barra PINTADA (New-CvGuiProgressPanel) y no la del sistema: esa la dibuja Windows e ignora los
@@ -133,7 +133,7 @@ function Show-CvJobWindow {
         $l.Margin    = New-Object System.Windows.Forms.Padding(3, 7, 3, 3)
         return $l
     }
-    $topBar.Controls.Add((& $mkLabel 'Perfil:'))
+    $topBar.Controls.Add((& $mkLabel (Get-CvText -Key 'comun.perfil')))
 
     $cmbProf = New-Object System.Windows.Forms.ComboBox
     $cmbProf.DropDownStyle = 'DropDownList'
@@ -144,7 +144,7 @@ function Show-CvJobWindow {
     $topBar.Controls.Add($cmbProf)
 
     $btnTuneProf = New-Object System.Windows.Forms.Button
-    $btnTuneProf.Text    = 'Ajustar...'
+    $btnTuneProf.Text    = (Get-CvText -Key 'comun.ajustar')
     $btnTuneProf.Width   = 110
     $btnTuneProf.Height  = 26
     $btnTuneProf.Margin  = New-Object System.Windows.Forms.Padding(10, 2, 3, 3)
@@ -154,7 +154,7 @@ function Show-CvJobWindow {
 
     # ---------- Video ----------
     $gbV = New-Object System.Windows.Forms.GroupBox
-    $gbV.Text = ' Video '
+    $gbV.Text = (Get-CvText -Key 'job.grupo.video')
     $gbV.Dock = 'Fill'
     $grid.Controls.Add($gbV, 0, 2)
 
@@ -184,7 +184,7 @@ function Show-CvJobWindow {
 
     # ---------- Audio ----------
     $gbA = New-Object System.Windows.Forms.GroupBox
-    $gbA.Text = ' Audio  (marca las pistas a conservar) '
+    $gbA.Text = (Get-CvText -Key 'job.grupo.audio')
     $gbA.Dock = 'Fill'
     $grid.Controls.Add($gbA, 0, 3)
 
@@ -229,7 +229,7 @@ function Show-CvJobWindow {
 
     # ---------- Subtitulos ----------
     $gbS = New-Object System.Windows.Forms.GroupBox
-    $gbS.Text = ' Subtitulos  (marca los que se conservan) '
+    $gbS.Text = (Get-CvText -Key 'job.grupo.subs')
     $gbS.Dock = 'Fill'
     $grid.Controls.Add($gbS, 0, 4)
 
@@ -286,14 +286,14 @@ function Show-CvJobWindow {
     $grid.Controls.Add($btnBar, 0, 6)
 
     $btnCancel = New-Object System.Windows.Forms.Button
-    $btnCancel.Text   = 'Cancelar'
+    $btnCancel.Text   = (Get-CvText -Key 'comun.cancelar')
     $btnCancel.Width  = 110
     $btnCancel.Height = 30
     $btnCancel.Name   = 'cvJobCancel'
     $btnBar.Controls.Add($btnCancel)
 
     $btnSave = New-Object System.Windows.Forms.Button
-    $btnSave.Text    = 'Guardar job'
+    $btnSave.Text    = (Get-CvText -Key 'job.btn.guardar')
     $btnSave.Width   = 120
     $btnSave.Height  = 30
     $btnSave.Margin  = New-Object System.Windows.Forms.Padding(8, 3, 3, 3)
@@ -317,7 +317,7 @@ function Show-CvJobWindow {
                 [void]$it.SubItems.Add("$($r.Lang)")
                 [void]$it.SubItems.Add("$($r.Channels)")
                 [void]$it.SubItems.Add("$($r.Codec)")
-                [void]$it.SubItems.Add($(if ($r.Default) { 'si' } else { '' }))
+                [void]$it.SubItems.Add($(if ($r.Default) { (Get-CvText -Key 'comun.si.corto') } else { '' }))
                 [void]$it.SubItems.Add((Format-CvNumber $r.Sync))
                 $it.Checked = [bool]$r.Keep
                 [void]$lvA.Items.Add($it)
@@ -334,7 +334,7 @@ function Show-CvJobWindow {
                 $it.SubItems[1].Text = "$($r.Lang)"
                 $it.SubItems[2].Text = "$($r.Channels)"
                 $it.SubItems[3].Text = "$($r.Codec)"
-                $it.SubItems[4].Text = $(if ($r.Default) { 'si' } else { '' })
+                $it.SubItems[4].Text = $(if ($r.Default) { (Get-CvText -Key 'comun.si.corto') } else { '' })
                 $it.SubItems[5].Text = (Format-CvNumber $r.Sync)
                 if ($it.Checked -ne [bool]$r.Keep) { $it.Checked = [bool]$r.Keep }
             }
@@ -348,8 +348,8 @@ function Show-CvJobWindow {
                 $it = New-Object System.Windows.Forms.ListViewItem("$($r.Text)")
                 [void]$it.SubItems.Add("$($r.Lang)")
                 [void]$it.SubItems.Add($(if ($r.Cues -ge 0) { "$($r.Cues)" } else { '?' }))
-                [void]$it.SubItems.Add($(if ($r.Forced)  { 'si' } else { '' }))
-                [void]$it.SubItems.Add($(if ($r.Default) { 'si' } else { '' }))
+                [void]$it.SubItems.Add($(if ($r.Forced)  { (Get-CvText -Key 'comun.si.corto') } else { '' }))
+                [void]$it.SubItems.Add($(if ($r.Default) { (Get-CvText -Key 'comun.si.corto') } else { '' }))
                 $it.Checked = [bool]$r.Keep
                 [void]$lvS.Items.Add($it)
             }
@@ -364,8 +364,8 @@ function Show-CvJobWindow {
                 $it = $lvS.Items[$i]
                 $it.SubItems[1].Text = "$($r.Lang)"
                 $it.SubItems[2].Text = $(if ($r.Cues -ge 0) { "$($r.Cues)" } else { '?' })
-                $it.SubItems[3].Text = $(if ($r.Forced)  { 'si' } else { '' })
-                $it.SubItems[4].Text = $(if ($r.Default) { 'si' } else { '' })
+                $it.SubItems[3].Text = $(if ($r.Forced)  { (Get-CvText -Key 'comun.si.corto') } else { '' })
+                $it.SubItems[4].Text = $(if ($r.Default) { (Get-CvText -Key 'comun.si.corto') } else { '' })
                 if ($it.Checked -ne [bool]$r.Keep) { $it.Checked = [bool]$r.Keep }
             }
         } finally { $st.Loading = $false }
@@ -382,13 +382,13 @@ function Show-CvJobWindow {
         $v = Test-CvJobDraft -Draft $d
         if (@($v.Errors).Count -gt 0) {
             $lblMsg.ForeColor = (Get-CvGuiCurrentPalette).Error
-            $lblMsg.Text = ('ERROR: ' + (@($v.Errors) -join '; '))
+            $lblMsg.Text = (Get-CvText -Key 'job.msg.error' -Values @((@($v.Errors) -join '; ')))
         } elseif (@($v.Warnings).Count -gt 0) {
             $lblMsg.ForeColor = (Get-CvGuiCurrentPalette).Warn
-            $lblMsg.Text = ('Aviso: ' + (@($v.Warnings) -join '; '))
+            $lblMsg.Text = (Get-CvText -Key 'job.msg.aviso' -Values @((@($v.Warnings) -join '; ')))
         } else {
             $lblMsg.ForeColor = (Get-CvGuiCurrentPalette).Ok
-            $lblMsg.Text = ("Listo para guardar ({0} pista(s) de audio, {1} subtitulo(s))." -f @($d.Audio).Count, @($d.Subtitles).Count)
+            $lblMsg.Text = (Get-CvText -Key 'job.msg.listo' -Values @(@($d.Audio).Count, @($d.Subtitles).Count))
         }
         $btnSave.Enabled = [bool]$v.Ok
     }
@@ -408,7 +408,7 @@ function Show-CvJobWindow {
             for ($k = 0; $k -lt $vo.Count; $k++) { if ([int]$vo[$k].Index -eq [int]$st.Draft.VideoIndex) { $i = $k } }
             if ($cmbVid.Items.Count -gt 0) { $cmbVid.SelectedIndex = $i }
             $v = if ($vo.Count -gt 0) { $vo[$i] } else { $null }
-            $lblVInfo.Text = if ($v -and $v.Anamorphic) { 'anamorfico' } else { '' }
+            $lblVInfo.Text = if ($v -and $v.Anamorphic) { (Get-CvText -Key 'job.anamorfico') } else { '' }
             # En copy la pista se copia tal cual: no hay recorte, ni escalado, ni tune de animacion.
             $canEdit = -not [bool]$st.Draft.VideoSkip
             $txtCrop.Enabled   = $canEdit
@@ -507,7 +507,7 @@ function Show-CvJobWindow {
     $btnCrop.Add_Click({
         # Escaneo REAL de bordes (varios ffmpeg): se avisa arriba y se bloquea la ventana con el
         # cursor de espera, en vez de fingir que sigue viva.
-        $lblHead.Text = 'Detectando bordes negros (varios puntos del video)...'
+        $lblHead.Text = (Get-CvText -Key 'job.paso.bordes.pts')
         $bar.Visible  = $true
         $form.Cursor  = [System.Windows.Forms.Cursors]::WaitCursor
         $form.Enabled = $false
@@ -516,23 +516,23 @@ function Show-CvJobWindow {
             $c = Get-CvJobCropCandidates -Context $Context -Info $st.Info -Index ([int]$st.Draft.VideoIndex)
             if (@($c.Groups).Count -eq 0) {
                 $lblMsg.ForeColor = (Get-CvGuiCurrentPalette).Warn
-                $lblMsg.Text = 'No se han detectado bordes negros en el tramo analizado.'
+                $lblMsg.Text = (Get-CvText -Key 'job.recorte.sinbordes')
             } else {
                 $st.Draft.Crop = "$($c.Top)"
                 $txtCrop.Text  = "$($c.Top)"
                 $lblMsg.ForeColor = (Get-CvGuiCurrentPalette).Fore
-                $lblMsg.Text = ("Recorte {0} ({1}% de los puntos, margen +{2}){3}. Candidatos: {4}" -f `
-                    $c.Top, $c.TopPct, $c.Margin, $(if ($c.Reliable) { '' } else { ' - SIN mayoria fiable, revisalo' }), `
-                    ((@($c.Groups) | ForEach-Object { "{0} ({1})" -f $_.Crop, $_.Count }) -join ' / '))
+                $lblMsg.Text = (Get-CvText -Key 'job.recorte.ok' -Values @(
+                    $c.Top, $c.TopPct, $c.Margin, $(if ($c.Reliable) { '' } else { (Get-CvText -Key 'job.recorte.nofiable.rev') }),
+                    ((@($c.Groups) | ForEach-Object { "{0} ({1})" -f $_.Crop, $_.Count }) -join ' / ')))
             }
         } catch {
             $lblMsg.ForeColor = (Get-CvGuiCurrentPalette).Error
-            $lblMsg.Text = ("No se pudo analizar: {0}" -f $_.Exception.Message)
+            $lblMsg.Text = (Get-CvText -Key 'job.recorte.no' -Values @($_.Exception.Message))
         } finally {
             $form.Enabled = $true
             $form.Cursor  = [System.Windows.Forms.Cursors]::Default
             $bar.Visible  = $false
-            $lblHead.Text = ("Preparando {0}" -f $Name)
+            $lblHead.Text = (Get-CvText -Key 'job.preparando' -Values @($Name))
         }
     })
     $btnPrev.Add_Click({
@@ -610,7 +610,7 @@ function Show-CvJobWindow {
         # Un subtitulo que no se puede leer (codec ilegible) no se puede conservar: se desmarca solo.
         if ($_.Item.Checked -and -not $r.Usable) {
             $lblMsg.ForeColor = (Get-CvGuiCurrentPalette).Warn
-            $lblMsg.Text = ("La pista {0} tiene un codec que no se puede copiar ni convertir; no se conserva." -f $r.Index)
+            $lblMsg.Text = (Get-CvText -Key 'job.pista.nocopia' -Values @($r.Index))
             $r.Keep = $false
             & $renderSubs
             return
@@ -620,7 +620,7 @@ function Show-CvJobWindow {
             # Se deja marcar (con dropEmpty=false es lo normal), pero avisando: una pista sin un solo
             # cue no ensena nada y ademas congela la barra de progreso de ffmpeg.
             $lblMsg.ForeColor = (Get-CvGuiCurrentPalette).Warn
-            $lblMsg.Text = ("La pista {0} esta VACIA (0 cues): no se vera nada y puede dejar la barra de progreso clavada en 0%." -f $r.Index)
+            $lblMsg.Text = (Get-CvText -Key 'job.pista.vacia' -Values @($r.Index))
             return
         }
         & $validate
@@ -637,11 +637,11 @@ function Show-CvJobWindow {
             # Las pistas de IMAGEN (PGS, VobSub) no tienen texto que ensenar -son mapas de bits-, pero
             # SI se pueden SACAR a su formato (.sup / .idx) y abrir con el programa asociado, que es
             # quien las lee (y hace OCR). El boton lo dice: 'Ver texto' o 'Extraer y abrir'.
-            $btnSubView.Text    = $(if ($r.IsText) { 'Ver texto' } else { 'Extraer y abrir' })
+            $btnSubView.Text    = $(if ($r.IsText) { (Get-CvText -Key 'job.vertexto') } else { (Get-CvText -Key 'job.extraerabrir') })
             $btnSubView.Enabled = $true
             if (-not $r.IsText) {
                 $lblMsg.ForeColor = (Get-CvGuiCurrentPalette).Muted
-                $lblMsg.Text = ("La pista {0} es de imagen ({1}): no hay texto, pero se puede extraer a '{2}' y abrir con el programa asociado." -f $r.Index, $r.Codec, (Get-CvSubtitleFileExt -Codec $r.Codec -Context $Context))
+                $lblMsg.Text = (Get-CvText -Key 'job.pista.imagen' -Values @($r.Index, $r.Codec, (Get-CvSubtitleFileExt -Codec $r.Codec -Context $Context)))
             }
         } finally { $st.Loading = $false }
     })
@@ -687,24 +687,24 @@ function Show-CvJobWindow {
             # Imagen: se saca el fichero y lo abre Windows con su programa. Aqui se hace paso a paso
             # -en vez de delegar en Show-SubtitleContent- para poder CONTAR que ha pasado en el pie:
             # sus avisos van al log, que con la ventana no se ve.
-            $lblHead.Text = ("Extrayendo la pista {0}..." -f $r.Index)
+            $lblHead.Text = (Get-CvText -Key 'job.extrayendo' -Values @($r.Index))
             [System.Windows.Forms.Application]::DoEvents()
             $path = Export-CvSubtitleFile -Context $Context -File $File -Stream $r.Stream
             if ($path -eq '') {
                 $lblMsg.ForeColor = (Get-CvGuiCurrentPalette).Warn
-                $lblMsg.Text = ("No se ha podido extraer la pista {0} ({1}). Prueba 'Reproducir con este' para verla." -f $r.Index, $r.Codec)
+                $lblMsg.Text = (Get-CvText -Key 'job.extraer.no' -Values @($r.Index, $r.Codec))
             } elseif (-not (Open-CvFileDefault -Path $path)) {
                 $lblMsg.ForeColor = (Get-CvGuiCurrentPalette).Warn
-                $lblMsg.Text = ("Windows no tiene programa asociado a '{0}'. El fichero esta en: {1}" -f [System.IO.Path]::GetExtension($path), $path)
+                $lblMsg.Text = (Get-CvText -Key 'job.abrir.no' -Values @([System.IO.Path]::GetExtension($path), $path))
             } else {
                 $lblMsg.ForeColor = (Get-CvGuiCurrentPalette).Fore
-                $lblMsg.Text = ("Abierto {0} con el programa asociado de Windows." -f [System.IO.Path]::GetFileName($path))
+                $lblMsg.Text = (Get-CvText -Key 'job.abierto' -Values @([System.IO.Path]::GetFileName($path)))
             }
         }
-        catch { $lblMsg.Text = ("No se pudo abrir el subtitulo: {0}" -f $_.Exception.Message) }
+        catch { $lblMsg.Text = (Get-CvText -Key 'job.abrir.fallo' -Values @($_.Exception.Message)) }
         finally {
             $form.Enabled = $true
-            $lblHead.Text = ("Preparando {0}" -f $Name)
+            $lblHead.Text = (Get-CvText -Key 'job.preparando' -Values @($Name))
         }
     })
 
@@ -713,10 +713,10 @@ function Show-CvJobWindow {
         $v = Test-CvJobDraft -Draft $d
         if (-not $v.Ok) {
             $lblMsg.ForeColor = (Get-CvGuiCurrentPalette).Error
-            $lblMsg.Text = ('ERROR: ' + (@($v.Errors) -join '; '))
+            $lblMsg.Text = (Get-CvText -Key 'job.msg.error' -Values @((@($v.Errors) -join '; ')))
             return
         }
-        $lblHead.Text = 'Guardando el job...'
+        $lblHead.Text = (Get-CvText -Key 'job.guardando')
         [System.Windows.Forms.Application]::DoEvents()
         [void](Save-CvJobDraft -Context $Context -Draft $d -Info $st.Info)
         $st.Saved = $true
@@ -751,7 +751,7 @@ function Show-CvJobWindow {
         $kind = if ($auto) { 'auto' } else { 'full' }
         try {
             if ($null -eq $st.CropScan -or $st.CropKind -ne $kind) {
-                & $say $(if ($auto) { 'Comprobando si hay barras negras (pre-escaneo)...' } else { 'Detectando bordes negros (varios puntos)...' })
+                & $say $(if ($auto) { (Get-CvText -Key 'job.paso.prescan') } else { (Get-CvText -Key 'job.paso.bordes') })
                 $st.CropScan = $(if ($auto) {
                     Get-CvJobCropCandidates -Context $Context -Info $st.Info -Index ([int]$st.Draft.VideoIndex) `
                         -Duration ([int]$Context.BorderAutoDuration) -Samples ([int]$Context.BorderAutoSamples)
@@ -769,46 +769,46 @@ function Show-CvJobWindow {
                     -MinCropPct ([double]$Context.BorderMinCropPct) -MaxCropPct ([int]$Context.BorderAutoMaxCropPct)
                 switch ("$($dec.Decision)") {
                     'crop'   { $st.Draft.Crop = "$($dec.Crop)"; $st.CropNote = "$($dec.Reason)" }
-                    'manual' { $st.Draft.Crop = "$($dec.Crop)"; $st.CropNote = ("{0}. Se propone el mas votado: revisalo con 'Ver recorte'." -f $dec.Reason) }
+                    'manual' { $st.Draft.Crop = "$($dec.Crop)"; $st.CropNote = (Get-CvText -Key 'job.recorte.votado' -Values @($dec.Reason)) }
                     default  { $st.Draft.Crop = ''; $st.CropNote = "$($dec.Reason)" }
                 }
             } elseif (@($c.Groups).Count -gt 0) {
                 $st.Draft.Crop = "$($c.Top)"
-                $st.CropNote = ("Recorte propuesto {0} ({1}% de los puntos){2}. Revisalo con 'Ver recorte'." -f `
-                    $c.Top, $c.TopPct, $(if ($c.Reliable) { '' } else { ' - SIN mayoria fiable' }))
+                $st.CropNote = (Get-CvText -Key 'job.recorte.prop' -Values @(
+                    $c.Top, $c.TopPct, $(if ($c.Reliable) { '' } else { (Get-CvText -Key 'job.recorte.nofiable') })))
             } else {
                 $st.Draft.Crop = ''
-                $st.CropNote = 'No se han detectado bordes negros en el tramo analizado.'
+                $st.CropNote = (Get-CvText -Key 'job.recorte.sinbordes')
             }
         } catch {
-            $st.CropNote = ("No se pudieron detectar los bordes: {0}" -f $_.Exception.Message)
+            $st.CropNote = (Get-CvText -Key 'job.recorte.fallo' -Values @($_.Exception.Message))
         }
     }
 
     $analyze = {
         try {
             if ($null -eq $st.Info) {
-                & $say ("Leyendo {0} (ffprobe)..." -f $Name)
+                & $say (Get-CvText -Key 'job.paso.leer' -Values @($Name))
                 $st.Info = Get-MediaInfo -Context $Context -File $File
             }
             if ($null -eq $st.Info) {
-                $lblHead.Text = 'No se pudo leer el archivo (ffprobe).'
+                $lblHead.Text = (Get-CvText -Key 'job.noleido')
                 $bar.Visible  = $false
                 return
             }
-            & $say 'Perfiles disponibles...'
+            & $say (Get-CvText -Key 'job.paso.perfiles')
             $st.ProfOpts = @(Get-CvJobProfileOptions -Context $Context)
-            & $say 'Pistas de video...'
+            & $say (Get-CvText -Key 'job.paso.video')
             $st.VidOpts  = @(Get-CvJobVideoOptions -Context $Context -Info $st.Info)
-            & $say 'Pistas de audio...'
+            & $say (Get-CvText -Key 'job.paso.audio')
             $audOpts     = @(Get-CvJobAudioOptions -Context $Context -Info $st.Info)
             # Este es el paso que puede tardar de verdad: sin el tag NUMBER_OF_FRAMES, contar los cues
             # demultiplexa el fichero entero por cada pista. Por eso se avisa de que puede tardar.
-            & $say 'Subtitulos (contando cues; en ficheros grandes puede tardar)...'
+            & $say (Get-CvText -Key 'job.paso.subs')
             $subOpts     = @(Get-CvJobSubtitleOptions -Context $Context -Info $st.Info)
 
             if ($null -eq $st.Draft) {
-                & $say 'Preparando la propuesta...'
+                & $say (Get-CvText -Key 'job.paso.propuesta')
                 if (Test-CvJob -Context $Context -Name $Name) {
                     $st.Draft = Read-CvJobDraft -Context $Context -Name $Name
                 } else {
@@ -866,7 +866,7 @@ function Show-CvJobWindow {
                 if ($cmbProf.Items.Count -gt 0) { $cmbProf.SelectedIndex = $i }
                 $cmbVid.Items.Clear()
                 foreach ($v in @($st.VidOpts)) { [void]$cmbVid.Items.Add($v.Text) }
-                if ($cmbVid.Items.Count -eq 0) { [void]$cmbVid.Items.Add('(el archivo no tiene pista de video)') }
+                if ($cmbVid.Items.Count -eq 0) { [void]$cmbVid.Items.Add((Get-CvText -Key 'job.sinvideo')) }
             } finally { $st.Loading = $false }
 
             $cmbProf.Enabled = $true
@@ -891,14 +891,14 @@ function Show-CvJobWindow {
             $rs = @($Reasons)
             if ($rs.Count -gt 0) {
                 $lblHead.ForeColor = [System.Drawing.Color]::DarkBlue
-                $lblHead.Text = ('Revisa: ' + ($rs -join '  |  '))
+                $lblHead.Text = (Get-CvText -Key 'job.revisa' -Values @(($rs -join '  |  ')))
             } else {
-                $lblHead.Text = ("Preparando {0}" -f $Name)
+                $lblHead.Text = (Get-CvText -Key 'job.preparando' -Values @($Name))
             }
         } catch {
             $bar.Visible = $false
             $lblHead.ForeColor = (Get-CvGuiCurrentPalette).Error
-            $lblHead.Text = ("Error al analizar: {0}" -f $_.Exception.Message)
+            $lblHead.Text = (Get-CvText -Key 'job.error.analizar' -Values @($_.Exception.Message))
         }
     }
 

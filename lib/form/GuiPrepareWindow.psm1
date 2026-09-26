@@ -30,12 +30,12 @@ function Show-CvPrepareWindow {
     # una vez al principio que dejar una fila con una excepcion cruda por cada archivo.
     $ready = Test-CvConvertReady -Context $Context
     if (-not $ready.Ok) {
-        Show-CvGuiInfo -Title 'Faltan herramientas' -Message ("No se puede preparar: {0}" -f $ready.Reason)
+        Show-CvGuiInfo -Title (Get-CvText -Key 'prep.faltan.tit') -Message (Get-CvText -Key 'prep.faltan.msg' -Values @($ready.Reason))
         return 0
     }
 
     # 1) El perfil, UNA vez para todo el lote (igual que al empezar PREPARAR en consola).
-    $prof = Show-CvJobProfileDialog -Context $Context -Info ("Perfil con el que preparar los {0} archivo(s) pendientes:" -f $items.Count)
+    $prof = Show-CvJobProfileDialog -Context $Context -Info (Get-CvText -Key 'prep.perfil.info' -Values @($items.Count))
     if ($null -eq $prof) { return 0 }
 
     $st = @{
@@ -49,7 +49,7 @@ function Show-CvPrepareWindow {
     }
 
     $form = New-Object System.Windows.Forms.Form
-    $form.Text          = 'Preparar pendientes'
+    $form.Text          = (Get-CvText -Key 'prep.tit')
     $form.StartPosition = 'CenterScreen'
     $form.Size          = New-Object System.Drawing.Size(900, 520)
     $form.MinimumSize   = New-Object System.Drawing.Size(700, 400)
@@ -69,7 +69,7 @@ function Show-CvPrepareWindow {
     $lblProf = New-Object System.Windows.Forms.Label
     $lblProf.Dock      = 'Fill'
     $lblProf.TextAlign = 'MiddleLeft'
-    $lblProf.Text      = ("Perfil: {0}" -f (Format-CvProfileLabel -Prof $prof))
+    $lblProf.Text      = (Get-CvText -Key 'prep.perfil' -Values @((Format-CvProfileLabel -Prof $prof)))
     $lblProf.Name      = 'cvPrepProfile'
     $grid.Controls.Add($lblProf, 0, 0)
 
@@ -80,15 +80,15 @@ function Show-CvPrepareWindow {
     $lv.GridLines     = $true
     $lv.Font          = (New-CvGuiFont 9)
     $lv.Name          = 'cvPrepList'
-    [void]$lv.Columns.Add('Archivo', 360)
-    [void]$lv.Columns.Add('Estado', 130)
+    [void]$lv.Columns.Add((Get-CvText -Key 'prep.col.archivo'), 360)
+    [void]$lv.Columns.Add((Get-CvText -Key 'prep.col.estado'), 130)
     # Bordes: en que archivos ha entrado el recorte y con que tamano quedan, sin tener que abrir nada.
-    [void]$lv.Columns.Add('Bordes / tamano', 150)
-    [void]$lv.Columns.Add('Detalle', 300)
+    [void]$lv.Columns.Add((Get-CvText -Key 'prep.col.bordes'), 150)
+    [void]$lv.Columns.Add((Get-CvText -Key 'prep.col.detalle'), 300)
     [void](Set-CvGuiDoubleBuffered -Control $lv)
     foreach ($f in $items) {
         $it = New-Object System.Windows.Forms.ListViewItem("$($f.Name)")
-        [void]$it.SubItems.Add('pendiente')
+        [void]$it.SubItems.Add((Get-CvText -Key 'prep.est.pendiente'))
         [void]$it.SubItems.Add('')
         [void]$it.SubItems.Add('')
         [void]$lv.Items.Add($it)
@@ -116,7 +116,7 @@ function Show-CvPrepareWindow {
     $foot.Controls.Add($prog, 0, 0)
 
     $btnClose = New-Object System.Windows.Forms.Button
-    $btnClose.Text   = 'Cancelar'
+    $btnClose.Text   = (Get-CvText -Key 'comun.cancelar')
     $btnClose.Height = 30
     $btnClose.Dock   = 'Fill'
     $btnClose.Margin = New-Object System.Windows.Forms.Padding(3, 7, 3, 7)
@@ -151,7 +151,7 @@ function Show-CvPrepareWindow {
     }
 
     $btnClose.Add_Click({
-        if ($st.Running) { $st.Cancel = $true; $lblSt.Text = 'Cancelando al terminar el archivo en curso...' }
+        if ($st.Running) { $st.Cancel = $true; $lblSt.Text = (Get-CvText -Key 'prep.cancelando') }
         else { $form.Close() }
     })
 
@@ -164,41 +164,41 @@ function Show-CvPrepareWindow {
         $timer.Stop()
         if ($st.Cancel -or $st.Index -ge $items.Count) {
             $st.Running = $false
-            $btnClose.Text = 'Cerrar'
+            $btnClose.Text = (Get-CvText -Key 'comun.cerrar')
             [void](Set-CvGuiProgressValue -Bar $prog -Percent 100)
-            $lblSt.Text = ("Hecho: {0} preparado(s) ({1} con revision), {2} omitido(s), {3} con error{4}." -f `
-                $st.Done, $st.Manual, $st.Skipped, $st.Failed, $(if ($st.Cancel) { ' - cancelado' } else { '' }))
+            $lblSt.Text = (Get-CvText -Key 'prep.hecho' -Values @(
+                $st.Done, $st.Manual, $st.Skipped, $st.Failed, $(if ($st.Cancel) { (Get-CvText -Key 'prep.cancelado') } else { '' })))
             return
         }
 
         $i = $st.Index
         $f = $items[$i]
-        & $setRow $i 'analizando...' ''
-        & $say ("[{0}/{1}] {2}: leyendo el archivo (ffprobe)..." -f ($i + 1), $items.Count, $f.Name)
+        & $setRow $i (Get-CvText -Key 'prep.est.analizando') ''
+        & $say (Get-CvText -Key 'prep.paso.leer' -Values @(($i + 1), $items.Count, $f.Name))
 
         try {
             $info = Get-MediaInfo -Context $Context -File $f.Path
             if ($null -eq $info) {
                 $st.Failed++
-                & $setRow $i 'error' 'no se pudo leer (ffprobe)'
+                & $setRow $i (Get-CvText -Key 'prep.est.error') (Get-CvText -Key 'prep.det.noleido')
             } else {
                 # Regla del prefijo '_': fuerza la deteccion de bordes, igual que en consola.
                 $force = "$($f.Name)".StartsWith('_')
                 $plan = Get-CvJobAutoPlan -Context $Context -Prof $prof -Info $info -File $f.Path -ForceBorder $force -OnStep {
                     param($t)
-                    & $say ("[{0}/{1}] {2}: {3}" -f ($i + 1), $items.Count, $f.Name, $t)
+                    & $say (Get-CvText -Key 'prep.paso' -Values @(($i + 1), $items.Count, $f.Name, $t))
                 }
                 if (-not $plan.Manual) {
                     [void](Save-CvJobDraft -Context $Context -Draft $plan.Draft -Info $info)
                     $st.Done++
                     # 'Notes' = lo que se ha decidido solo y conviene contar (p. ej. el retardo de
                     # audio detectado); no obliga a revisar, pero tiene que verse.
-                    $det = 'automatico'
-                    if (@($plan.Notes).Count -gt 0) { $det = ("automatico - {0}" -f (@($plan.Notes) -join ' | ')) }
-                    & $setRow $i 'preparado' $det (& $borderCell $plan.Draft $info)
+                    $det = (Get-CvText -Key 'prep.det.auto')
+                    if (@($plan.Notes).Count -gt 0) { $det = (Get-CvText -Key 'prep.det.auto.notas' -Values @((@($plan.Notes) -join ' | '))) }
+                    & $setRow $i (Get-CvText -Key 'prep.est.preparado') $det (& $borderCell $plan.Draft $info)
                 } else {
-                    & $setRow $i 'revisar...' (@($plan.Reasons) -join ' | ') (& $borderCell $plan.Draft $info)
-                    & $say ("[{0}/{1}] {2}: necesita una decision" -f ($i + 1), $items.Count, $f.Name)
+                    & $setRow $i (Get-CvText -Key 'prep.est.revisar') (@($plan.Reasons) -join ' | ') (& $borderCell $plan.Draft $info)
+                    & $say (Get-CvText -Key 'prep.paso.decision' -Values @(($i + 1), $items.Count, $f.Name))
                     $saved = Show-CvJobWindow -Context $Context -Name $f.Name -File $f.Path -Draft $plan.Draft -Info $info -Reasons $plan.Reasons
                     if ($saved) {
                         $st.Done++; $st.Manual++
@@ -206,16 +206,16 @@ function Show-CvPrepareWindow {
                         # ventana se puede cambiar el recorte, quitarlo o poner otro escalado.
                         $final = $plan.Draft
                         try { $final = Read-CvJobDraft -Context $Context -Name $f.Name } catch { }
-                        & $setRow $i 'preparado' 'revisado a mano' (& $borderCell $final $info)
+                        & $setRow $i (Get-CvText -Key 'prep.est.preparado') (Get-CvText -Key 'prep.det.revisado') (& $borderCell $final $info)
                     } else {
                         $st.Skipped++
-                        & $setRow $i 'omitido' (@($plan.Reasons) -join ' | ')
+                        & $setRow $i (Get-CvText -Key 'prep.est.omitido') (@($plan.Reasons) -join ' | ')
                     }
                 }
             }
         } catch {
             $st.Failed++
-            & $setRow $i 'error' "$($_.Exception.Message)"
+            & $setRow $i (Get-CvText -Key 'prep.est.error') "$($_.Exception.Message)"
         }
 
         $st.Index++

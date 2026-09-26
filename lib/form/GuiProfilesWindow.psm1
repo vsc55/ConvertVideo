@@ -22,7 +22,7 @@ function Show-CvProfilesWindow {
     if (-not (Initialize-CvGui)) { return $false }
 
     $form = New-Object System.Windows.Forms.Form
-    $form.Text          = ("Perfiles ({0})" -f (Split-Path -Leaf $CfgPath))
+    $form.Text          = (Get-CvText -Key 'perfiles.tit.cfg' -Values @((Split-Path -Leaf $CfgPath)))
     $form.StartPosition = 'CenterParent'
     $form.Size          = New-Object System.Drawing.Size(880, 520)
     $form.MinimumSize   = New-Object System.Drawing.Size(700, 420)
@@ -48,9 +48,9 @@ function Show-CvProfilesWindow {
     $lv.MultiSelect   = $false
     $lv.Font          = (New-CvGuiFont 9)
     $lv.Name          = 'cvProfilesList'
-    [void]$lv.Columns.Add('Nombre', 240)   # cabe el '*' del predeterminado sin comerse el nombre
-    [void]$lv.Columns.Add('Tipo', 90)
-    [void]$lv.Columns.Add('Que hace', 520)
+    [void]$lv.Columns.Add((Get-CvText -Key 'perfiles.col.nombre'), 240)   # cabe el '*' del predeterminado
+    [void]$lv.Columns.Add((Get-CvText -Key 'perfiles.col.tipo'), 90)
+    [void]$lv.Columns.Add((Get-CvText -Key 'perfiles.col.hace'), 520)
     # 'Que hace' se queda con lo que sobre (y de paso no queda cabecera sin columna).
     [void](Set-CvGuiListFillColumn -List $lv -Index 2 -Min 300)
     [void](Set-CvGuiDoubleBuffered -Control $lv)
@@ -83,12 +83,12 @@ function Show-CvProfilesWindow {
         $bar.Controls.Add($b)
         return $b
     }
-    $btnNew   = & $mkBtn 'Nuevo...'  'cvProfilesNew'
-    $btnDup   = & $mkBtn 'Duplicar'  'cvProfilesDup'
-    $btnEdit  = & $mkBtn 'Editar...' 'cvProfilesEdit'
-    $btnDel   = & $mkBtn 'Borrar'    'cvProfilesDel'
-    $btnDef   = & $mkBtn 'Predeterminado' 'cvProfilesDef' 130
-    $btnClose = & $mkBtn 'Cerrar'    'cvProfilesClose'
+    $btnNew   = & $mkBtn (Get-CvText -Key 'comun.nuevo')      'cvProfilesNew'
+    $btnDup   = & $mkBtn (Get-CvText -Key 'comun.duplicar')   'cvProfilesDup'
+    $btnEdit  = & $mkBtn (Get-CvText -Key 'comun.editar')     'cvProfilesEdit'
+    $btnDel   = & $mkBtn (Get-CvText -Key 'comun.borrar')     'cvProfilesDel'
+    $btnDef   = & $mkBtn (Get-CvText -Key 'perfiles.btn.def') 'cvProfilesDef' 130
+    $btnClose = & $mkBtn (Get-CvText -Key 'comun.cerrar')     'cvProfilesClose'
 
     $st = @{ Rows = @(); Default = 'Auto' }
     $current = {
@@ -109,7 +109,7 @@ function Show-CvProfilesWindow {
         # lo de fabrica). Cualquiera vale, tambien uno de serie: elegir no es editar.
         $esDef = ($null -ne $r -and "$($r.Label)" -eq "$($st.Default)")
         $btnDef.Enabled = ($null -ne $r)
-        $btnDef.Text    = $(if ($esDef) { 'Quitar predet.' } else { 'Predeterminado' })
+        $btnDef.Text    = $(if ($esDef) { (Get-CvText -Key 'perfiles.btn.quitardef') } else { (Get-CvText -Key 'perfiles.btn.def') })
     }
     $reload = {
         # Rehacer la lista pierde la seleccion (Items.Clear), y aqui se rehace tambien al marcar el
@@ -123,7 +123,7 @@ function Show-CvProfilesWindow {
             foreach ($r in $st.Rows) {
                 # '*' delante del predeterminado, como en el menu de consola y en el dialogo.
                 $it = New-Object System.Windows.Forms.ListViewItem($(if ("$($r.Label)" -eq "$($st.Default)") { "* $($r.Label)" } else { "  $($r.Label)" }))
-                [void]$it.SubItems.Add($(if ("$($r.Kind)" -eq 'serie') { 'de serie' } else { 'propio' }))
+                [void]$it.SubItems.Add($(if ("$($r.Kind)" -eq 'serie') { (Get-CvText -Key 'perfiles.tipo.serie') } else { (Get-CvText -Key 'perfiles.tipo.propio') }))
                 [void]$it.SubItems.Add("$($r.Text)")
                 # Los de serie, en gris: se ve de un vistazo que ahi no se puede escribir.
                 if ("$($r.Kind)" -eq 'serie') { $it.ForeColor = (Get-CvGuiCurrentPalette).Muted }
@@ -134,9 +134,9 @@ function Show-CvProfilesWindow {
         $propios = @($st.Rows | Where-Object { "$($_.Kind)" -eq 'propio' }).Count
         $serie   = @($st.Rows).Count - $propios
         $lblInfo.Text = $(if ($propios -eq 0) {
-            ('Todavia no hay perfiles propios: con "Nuevo..." creas uno, o marca uno de los {0} de serie y "Duplicar" para partir de el.   *  = {1} (el que sale marcado al preparar).' -f $serie, $st.Default)
+            (Get-CvText -Key 'perfiles.info.vacio' -Values @($serie, $st.Default))
         } else {
-            ('{0} propios (salen como [config] en el menu de perfiles) y {1} de serie, que no se editan pero se duplican.   *  = {2} (el que sale marcado al preparar).' -f $propios, $serie, $st.Default)
+            (Get-CvText -Key 'perfiles.info' -Values @($propios, $serie, $st.Default))
         })
         & $enable
     }
@@ -162,9 +162,9 @@ function Show-CvProfilesWindow {
     $btnDel.Add_Click({
         $r = & $current
         if ($null -eq $r -or "$($r.Kind)" -ne 'propio') { return }
-        if (-not (Show-CvGuiConfirm -Title 'Perfiles' -Message ("Borrar el perfil '{0}'?" -f $r.Label))) { return }
+        if (-not (Show-CvGuiConfirm -Title (Get-CvText -Key 'perfiles.tit') -Message (Get-CvText -Key 'perfil.borrar.msg' -Values @($r.Label)))) { return }
         $res = Remove-CvConfigProfile -Path $CfgPath -Label $r.Label
-        if (-not $res.Ok) { Show-CvGuiInfo -Title 'Perfiles' -Message ("No se pudo borrar: {0}" -f $res.Error) }
+        if (-not $res.Ok) { Show-CvGuiInfo -Title (Get-CvText -Key 'perfiles.tit') -Message (Get-CvText -Key 'perfil.borrar.no' -Values @($res.Error)) }
         & $reload
     })
     $btnDef.Add_Click({
@@ -172,7 +172,7 @@ function Show-CvProfilesWindow {
         if ($null -eq $r) { return }
         $nuevo = $(if ("$($r.Label)" -eq "$($st.Default)") { 'Auto' } else { "$($r.Label)" })
         $res = Save-CvConfigDefaultProfile -Path $CfgPath -Label $nuevo
-        if (-not $res.Ok) { Show-CvGuiInfo -Title 'Perfiles' -Message ("No se pudo guardar: {0}" -f $res.Error) }
+        if (-not $res.Ok) { Show-CvGuiInfo -Title (Get-CvText -Key 'perfiles.tit') -Message (Get-CvText -Key 'perfiles.guardar.no' -Values @($res.Error)) }
         & $reload
     })
     $btnClose.Add_Click({ $form.Close() })

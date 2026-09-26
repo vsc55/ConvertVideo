@@ -32,7 +32,7 @@ function Show-CvSetupWindow {
     if (-not (Initialize-CvGui)) { return $false }
 
     $form = New-Object System.Windows.Forms.Form
-    $form.Text          = ("{0} {1} - Setup" -f $Context.AppName, $Context.Version)
+    $form.Text          = (Get-CvText -Key 'setup.tit' -Values @($Context.AppName, $Context.Version))
     $form.StartPosition = 'CenterScreen'
     $form.MinimumSize   = New-Object System.Drawing.Size(860, 560)
     # Se abre COMO SE DEJO (lo mismo que la cola): el tamano recordado se valida contra los minimos y
@@ -90,7 +90,7 @@ function Show-CvSetupWindow {
     $outTitle.AutoSize  = $false
     $outTitle.Font      = New-Object System.Drawing.Font('Segoe UI', 10, [System.Drawing.FontStyle]::Bold)
     $outTitle.ForeColor = (Get-CvGuiCurrentPalette).Muted
-    $outTitle.Text      = 'ESTADO'
+    $outTitle.Text      = (Get-CvText -Key 'setup.cab.estado')
     $outBox.Controls.Add($outTitle, 0, 0)
 
     $out = New-Object System.Windows.Forms.RichTextBox
@@ -106,7 +106,7 @@ function Show-CvSetupWindow {
 
     $status = New-Object System.Windows.Forms.StatusStrip
     $lblStatus = New-Object System.Windows.Forms.ToolStripStatusLabel
-    $lblStatus.Text = ("config: {0}" -f $CfgPath)
+    $lblStatus.Text = (Get-CvText -Key 'setup.cfg.actual' -Values @($CfgPath))
     [void]$status.Items.Add($lblStatus)
     $form.Controls.Add($status)
 
@@ -150,27 +150,28 @@ function Show-CvSetupWindow {
         return $b
     }
 
-    & $addHeader 'Herramientas'
-    [void](& $addButton '  Instalar / gestionar herramientas...' {
+    # Los dos espacios de delante de cada boton son sangria del menu, no parte del texto.
+    & $addHeader (Get-CvText -Key 'setup.sec.herr')
+    [void](& $addButton ('  ' + (Get-CvText -Key 'setup.btn.herr')) {
         Show-CvToolsWindow -Context $Context -Root $Root -CfgPath $CfgPath
-        & $write 'ESTADO' (Get-CvSetupStatusText -Context $Context -CfgPath $CfgPath -IsAlt $IsAlt)
+        & $write (Get-CvText -Key 'setup.cab.estado') (Get-CvSetupStatusText -Context $Context -CfgPath $CfgPath -IsAlt $IsAlt)
     })
 
-    & $addHeader 'Estado'
-    [void](& $addButton '  Ver estado (directorios y herramientas)' {
-        & $busy 'Recogiendo el estado...'
-        try { & $write 'ESTADO' (Get-CvSetupStatusText -Context $Context -CfgPath $CfgPath -IsAlt $IsAlt) }
+    & $addHeader (Get-CvText -Key 'setup.sec.estado')
+    [void](& $addButton ('  ' + (Get-CvText -Key 'setup.btn.estado')) {
+        & $busy (Get-CvText -Key 'setup.busy.estado')
+        try { & $write (Get-CvText -Key 'setup.cab.estado') (Get-CvSetupStatusText -Context $Context -CfgPath $CfgPath -IsAlt $IsAlt) }
         finally { $form.Cursor = [System.Windows.Forms.Cursors]::Default }
     })
 
-    & $addHeader 'Compatibilidad'
-    [void](& $addButton '  Comprobar compatibilidad GPU (NVENC)' {
-        & $busy 'Sondeando los encoders por GPU (puede tardar unos segundos)...'
-        try { & $write 'COMPATIBILIDAD GPU' (Get-CvSetupGpuText -Context $Context) }
+    & $addHeader (Get-CvText -Key 'setup.sec.compat')
+    [void](& $addButton ('  ' + (Get-CvText -Key 'setup.btn.gpu')) {
+        & $busy (Get-CvText -Key 'setup.busy.gpu')
+        try { & $write (Get-CvText -Key 'setup.cab.gpu') (Get-CvSetupGpuText -Context $Context) }
         finally { $form.Cursor = [System.Windows.Forms.Cursors]::Default }
     })
 
-    & $addHeader 'Pruebas'
+    & $addHeader (Get-CvText -Key 'setup.sec.pruebas')
     foreach ($s in (Get-CvSetupTestSuites)) {
         # Copia local: sin ella todos los botones compartirian la ultima $s del bucle.
         $suite = "$($s.Value)"
@@ -178,48 +179,48 @@ function Show-CvSetupWindow {
         $info  = "$($s.Info)"
         [void](& $addButton ("  {0}" -f $label) {
             [void](Start-CvSetupTask -Root $Root -CfgPath $CfgPath -TaskArgs @('-Task', 'tests', '-Suite', $suite))
-            & $write 'PRUEBAS' ("Lanzada la bateria '{0}' en una consola aparte ({1})." -f $label, $info)
+            & $write (Get-CvText -Key 'setup.cab.pruebas') (Get-CvText -Key 'setup.pruebas.lanzada' -Values @($label, $info))
         }.GetNewClosure())
     }
 
-    & $addHeader 'Configuracion'
-    [void](& $addButton ("  Editar configuracion ({0})" -f $CfgName) {
+    & $addHeader (Get-CvText -Key 'setup.sec.config')
+    [void](& $addButton ('  ' + (Get-CvText -Key 'setup.btn.config' -Values @($CfgName))) {
         if (Show-CvConfigWindow -Root $Root -CfgPath $CfgPath -CfgName $CfgName) {
-            & $write 'CONFIGURACION' ("{0} actualizado. Los cambios se aplican en la proxima conversion." -f $CfgName)
+            & $write (Get-CvText -Key 'setup.cab.config') (Get-CvText -Key 'setup.cfg.guardado' -Values @($CfgName))
         } else {
-            & $write 'CONFIGURACION' 'Sin cambios.'
+            & $write (Get-CvText -Key 'setup.cab.config') (Get-CvText -Key 'setup.cfg.sincambios')
         }
     })
     # Perfiles: crear / duplicar / editar / borrar los PROPIOS de config.json ('profiles'), y los
     # de serie en solo lectura para poder duplicarlos. La ventana vive en GuiProfile.psm1 porque la
     # comparten setup y la cola.
-    [void](& $addButton '  Perfiles...' {
+    [void](& $addButton ('  ' + (Get-CvText -Key 'setup.btn.perfiles')) {
         [void](Show-CvProfilesWindow -Context $Context -CfgPath $CfgPath)
-        & $write 'PERFILES' (Get-CvSetupProfilesText -CfgPath $CfgPath)
+        & $write (Get-CvText -Key 'setup.cab.perfiles') (Get-CvSetupProfilesText -CfgPath $CfgPath)
     })
-    [void](& $addButton ("  Restablecer {0}" -f $CfgName) {
-        $msg = ("Restablecer {0} a los valores por defecto?`n`nSe CONSERVA el catalogo de herramientas (downloads).`nSe guarda una copia en {0}.bak." -f $CfgName)
-        if (-not (Show-CvGuiConfirm -Title 'Restablecer configuracion' -Message $msg)) { & $write 'CONFIGURACION' 'Cancelado.'; return }
+    [void](& $addButton ('  ' + (Get-CvText -Key 'setup.btn.reset' -Values @($CfgName))) {
+        $msg = Get-CvText -Key 'setup.reset.msg' -Values @($CfgName)
+        if (-not (Show-CvGuiConfirm -Title (Get-CvText -Key 'setup.reset.tit') -Message $msg)) { & $write (Get-CvText -Key 'setup.cab.config') (Get-CvText -Key 'setup.reset.cancel'); return }
         [void](Reset-CvConfig -Path $CfgPath)
-        & $write 'CONFIGURACION' ("{0} restablecido (copia en {0}.bak; catalogo de herramientas conservado)." -f $CfgName)
+        & $write (Get-CvText -Key 'setup.cab.config') (Get-CvText -Key 'setup.reset.hecho' -Values @($CfgName))
     })
 
     # MANTENIMIENTO en un sitio: jobs, bloqueos, temporales, logs viejos y caches de las ventanas.
     # Antes eran tres botones repartidos entre 'Limpieza' y 'Logs' y habia que ir a buscarlos.
-    & $addHeader 'Mantenimiento'
-    [void](& $addButton '  Limpiar (jobs, bloqueos, logs, caches)...' {
+    & $addHeader (Get-CvText -Key 'setup.sec.mant')
+    [void](& $addButton ('  ' + (Get-CvText -Key 'setup.btn.mant')) {
         $n = Show-CvMaintenanceWindow -Context $Context -CurrentLog $CurrentLog
-        & $write 'MANTENIMIENTO' (("Borrados {0} elemento(s). Queda esto:`n`n" -f $n) + (Get-CvSetupMaintenanceText -Context $Context -CurrentLog $CurrentLog))
+        & $write (Get-CvText -Key 'setup.cab.mant') (Get-CvText -Key 'setup.mant.hecho' -Values @($n, (Get-CvSetupMaintenanceText -Context $Context -CurrentLog $CurrentLog)))
     })
-    [void](& $addButton '  Limpiar Proceso fichero a fichero...' {
+    [void](& $addButton ('  ' + (Get-CvText -Key 'setup.btn.limpiar')) {
         Show-CvCleanWindow -Context $Context
-        & $write 'ESTADO' (Get-CvSetupStatusText -Context $Context -CfgPath $CfgPath -IsAlt $IsAlt)
+        & $write (Get-CvText -Key 'setup.cab.estado') (Get-CvSetupStatusText -Context $Context -CfgPath $CfgPath -IsAlt $IsAlt)
     })
 
-    & $addHeader 'Logs'
-    [void](& $addButton '  Ver logs...' {
+    & $addHeader (Get-CvText -Key 'setup.sec.logs')
+    [void](& $addButton ('  ' + (Get-CvText -Key 'setup.btn.logs')) {
         Show-CvLogsWindow -Context $Context -CurrentLog $CurrentLog
-        & $write 'LOGS' ("{0} log(s) en {1}." -f @(Get-CvSetupLogFiles -Context $Context).Count, $Context.Logs)
+        & $write (Get-CvText -Key 'setup.cab.logs') (Get-CvText -Key 'setup.logs.hay' -Values @(@(Get-CvSetupLogFiles -Context $Context).Count, $Context.Logs))
     })
     # Si el MENU no cabe en el alto de la ventana, se agranda hasta que quepa (sin pasarse de la
     # pantalla). Asi anadir una opcion no deja la ultima seccion cortada detras de una barra de
@@ -239,7 +240,7 @@ function Show-CvSetupWindow {
     }.GetNewClosure())
 
     # Estado nada mas abrir, para que la ventana no arranque vacia.
-    & $write 'ESTADO' (Get-CvSetupStatusText -Context $Context -CfgPath $CfgPath -IsAlt $IsAlt)
+    & $write (Get-CvText -Key 'setup.cab.estado') (Get-CvSetupStatusText -Context $Context -CfgPath $CfgPath -IsAlt $IsAlt)
     # Tema de la SESION (lo fija el lanzador con lo que diga la config, y lo cambia el boton
     # "Tema" de la cola): asi una ventana que se abre DESPUES de cambiarlo sale ya con el nuevo.
     [void](Set-CvGuiTheme -Form $form)
