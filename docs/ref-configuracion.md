@@ -97,7 +97,7 @@ Los textos no están en el código: están en `lang\<idioma>.json`, una clave po
 
 **Añadir un idioma es soltar un `.json` en `lang\`** y nada más: la lista de idiomas no está escrita en ningún sitio, sale de los ficheros que haya, y **cada idioma dice su propio nombre** en su fichero (`"lang.name": "English"`). Si el nombre lo tuviera que dar otro fichero, cada idioma nuevo obligaría a tocar **todos** los demás para traducir cómo se llama.
 
-**Las ventanas ya están traducidas** (las 15, con sus menús, avisos y ayudas). La consola y el log siguen en castellano: van en fases siguientes, así que con `en` verás las ventanas en inglés y los mensajes del worker en castellano. Ver [ref-arquitectura.md](ref-arquitectura.md).
+**Traducidas**: las 15 ventanas y **la ayuda de cada opción de este fichero** (las 177 entradas de `Get-CvConfigHelp`), más los catálogos de valores que se ofrecen al editarlas (temas, contenedores, tone-mapping, calidad, reproductor…). Siguen en castellano los catálogos de **encoders y perfiles**, los resúmenes del job, la consola y el log: van en fases siguientes, así que con `en` verás la ventana en inglés y algún desplegable todavía en castellano. Ver [ref-arquitectura.md](ref-arquitectura.md).
 
 ## `encode`
 

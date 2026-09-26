@@ -212,9 +212,9 @@ function Get-CvSetupMaintenanceItems {
     )
     $out = @()
     foreach ($par in @(
-        @{ Key = 'jobs';  Text = 'Jobs preparados (*.job.json)';            Warn = $true;  Detail = 'Lo decidido para cada archivo: habria que volver a PREPARAR.' }
-        @{ Key = 'locks'; Text = 'Bloqueos y estado de los workers';        Warn = $false; Detail = 'Lo que reparte el trabajo entre workers; con la cola parada no sirve de nada.' }
-        @{ Key = 'temps'; Text = 'Temporales de Proceso (mkv / m4a / wav)'; Warn = $false; Detail = 'Restos de conversiones a medias.' }
+        @{ Key = 'jobs';  Warn = $true;  Text = (Get-CvText -Key 'mant.it.jobs');  Detail = (Get-CvText -Key 'mant.it.jobs.d') }
+        @{ Key = 'locks'; Warn = $false; Text = (Get-CvText -Key 'mant.it.locks'); Detail = (Get-CvText -Key 'mant.it.locks.d') }
+        @{ Key = 'temps'; Warn = $false; Text = (Get-CvText -Key 'mant.it.temps'); Detail = (Get-CvText -Key 'mant.it.temps.d') }
     )) {
         $out += [pscustomobject]@{
             Key    = $par.Key
@@ -229,23 +229,23 @@ function Get-CvSetupMaintenanceItems {
     foreach ($l in $logs) { $kb += [int]$l.SizeKb }
     $out += [pscustomobject]@{
         Key    = 'logs'
-        Text   = 'Logs de sesiones anteriores'
-        Detail = ("Ocupan {0}. El log de ESTA sesion no se toca." -f (Format-CvSize -Kb $kb))
+        Text   = (Get-CvText -Key 'mant.it.logs')
+        Detail = (Get-CvText -Key 'mant.it.logs.d' -Values @((Format-CvSize -Kb $kb)))
         Count  = $logs.Count
         Warn   = $false
     }
     $c = Get-CvGuiCacheStatus -Context $Context
     $out += [pscustomobject]@{
         Key    = 'cacheLayout'
-        Text   = 'Cache: como quedaron las ventanas'
-        Detail = 'Tamano, divisor y anchos de columna. Volveran a abrirse con los tamanos del config.'
+        Text   = (Get-CvText -Key 'mant.it.layout')
+        Detail = (Get-CvText -Key 'mant.it.layout.d')
         Count  = [int]$c.Layouts
         Warn   = $false
     }
     $out += [pscustomobject]@{
         Key    = 'cacheFiles'
-        Text   = 'Cache: archivos ya analizados'
-        Detail = 'Si a cada convertido se le quitaron barras. Se vuelve a deducir al abrir la cola.'
+        Text   = (Get-CvText -Key 'mant.it.files')
+        Detail = (Get-CvText -Key 'mant.it.files.d')
         Count  = [int]$c.Files
         Warn   = $false
     }
@@ -577,26 +577,26 @@ function Get-CvSetupTestSuites {
         @{
             Value = 'unit'
             File  = 'test\unit-tests.ps1'
-            Text  = 'Tests unitarios'
-            Info  = 'funciones puras; sin GPU ni ffmpeg, < 1 s'
+            Text  = (Get-CvText -Key 'suite.unit')
+            Info  = (Get-CvText -Key 'suite.unit.i')
         }
         @{
             Value = 'features'
             File  = 'test\feature-tests.ps1'
-            Text  = 'Bateria de features'
-            Info  = 'E2E; usa ffmpeg; los casos de GPU se saltan si no hay NVENC'
+            Text  = (Get-CvText -Key 'suite.features')
+            Info  = (Get-CvText -Key 'suite.features.i')
         }
         @{
             Value = 'gui'
             File  = 'test\gui-tests.ps1'
-            Text  = 'Bateria de setup'
-            Info  = 'datos de setup + editor de configuracion en ventana; sin GUI se salta'
+            Text  = (Get-CvText -Key 'suite.gui')
+            Info  = (Get-CvText -Key 'suite.gui.i')
         }
         @{
             Value = 'cola'
             File  = 'test\gui-convert-tests.ps1'
-            Text  = 'Bateria de la cola'
-            Info  = 'datos de la cola + ventana de Convert-gui; sin GUI se salta'
+            Text  = (Get-CvText -Key 'suite.cola')
+            Info  = (Get-CvText -Key 'suite.cola.i')
         }
     )
 }

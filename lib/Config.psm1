@@ -43,15 +43,15 @@ function Get-CvVolumeMethods {
     @(
         @{
             Value = 'loudnorm'
-            Text  = 'Sonoridad EBU R128 (I/TP/LRA): mismo volumen percibido entre archivos (recomendado)'
+            Text  = (Get-CvText -Key 'cat.vol.loudnorm')
         }
         @{
             Value = 'peak'
-            Text  = 'LEGACY: amplifica hasta el pico objetivo (peakTarget); rapido, pero no iguala el volumen percibido'
+            Text  = (Get-CvText -Key 'cat.vol.peak')
         }
         @{
             Value = 'aacgain'
-            Text  = 'ReplayGain sobre el .m4a ya codificado (sin recodificar); solo AAC y solo por etapas'
+            Text  = (Get-CvText -Key 'cat.vol.aacgain')
         }
     )
 }
@@ -86,72 +86,72 @@ function Get-CvTonemapCurves {
 function Get-CvOutputContainers {
     <# Contenedores de salida válidos (encode.outputExtension). #>
     @(
-        @{ Value = 'mkv'; Text = 'Matroska (recomendado)' }
-        @{ Value = 'mp4'; Text = 'MP4 (+faststart)' }
-        @{ Value = 'mov'; Text = 'QuickTime (+faststart)' }
+        @{ Value = 'mkv'; Text = (Get-CvText -Key 'cat.cont.mkv') }
+        @{ Value = 'mp4'; Text = (Get-CvText -Key 'cat.cont.mp4') }
+        @{ Value = 'mov'; Text = (Get-CvText -Key 'cat.cont.mov') }
     )
 }
 
 function Get-CvTonemapHdrModes {
     <# Modos de tone-mapping HDR->SDR (encode.video.tonemapHdr). El 1o es el default de fábrica. #>
     @(
-        @{ Value = 'auto'; Text = 'HDR->SDR solo si el origen es HDR' }
-        @{ Value = 'off';  Text = 'no aplicar tone-mapping' }
+        @{ Value = 'auto'; Text = (Get-CvText -Key 'cat.hdr.auto') }
+        @{ Value = 'off';  Text = (Get-CvText -Key 'cat.hdr.off') }
     )
 }
 
 function Get-CvAnamorphicModes {
     <# Tratamiento del vídeo anamórfico SAR!=1 (encode.video.anamorphic). El 1o = default de fábrica. #>
     @(
-        @{ Value = 'square';       Text = 'cuadrar por ancho (píxeles cuadrados)' }
-        @{ Value = 'squareheight'; Text = 'cuadrar por alto' }
-        @{ Value = 'keep';         Text = 'conservar el SAR/DAR' }
+        @{ Value = 'square';       Text = (Get-CvText -Key 'cat.anam.square') }
+        @{ Value = 'squareheight'; Text = (Get-CvText -Key 'cat.anam.height') }
+        @{ Value = 'keep';         Text = (Get-CvText -Key 'cat.anam.keep') }
     )
 }
 
 function Get-CvQualityCheckModes {
     <# Métricas de control de calidad de la salida vs origen (encode.video.qualityCheck). #>
     @(
-        @{ Value = 'off';  Text = 'no medir' }
-        @{ Value = 'ssim'; Text = 'SSIM (estructural, rápido)' }
-        @{ Value = 'vmaf'; Text = 'VMAF (perceptual, requiere libvmaf; lento)' }
+        @{ Value = 'off';  Text = (Get-CvText -Key 'cat.qc.off') }
+        @{ Value = 'ssim'; Text = (Get-CvText -Key 'cat.qc.ssim') }
+        @{ Value = 'vmaf'; Text = (Get-CvText -Key 'cat.qc.vmaf') }
     )
 }
 
 function Get-CvMaxCodecOptions {
     <# Tope de códec del perfil Auto (encode.video.auto.maxCodec); '' = sin tope. #>
     @(
-        @{ Value = '';     Text = 'sin tope' }
-        @{ Value = 'h264'; Text = 'no subir de H.264' }
-        @{ Value = 'h265'; Text = 'no subir de H.265' }
-        @{ Value = 'av1';  Text = 'permitir hasta AV1' }
+        @{ Value = '';     Text = (Get-CvText -Key 'cat.codec.sin') }
+        @{ Value = 'h264'; Text = (Get-CvText -Key 'cat.codec.h264') }
+        @{ Value = 'h265'; Text = (Get-CvText -Key 'cat.codec.h265') }
+        @{ Value = 'av1';  Text = (Get-CvText -Key 'cat.codec.av1') }
     )
 }
 
 function Get-CvSubtitleEditorModes {
     <# Como abrir el texto de un subtitulo con 'V N' (preview.subtitleEditor). El 1o = default de fábrica. #>
     @(
-        @{ Value = 'start';    Text = 'programa asociado de Windows (fallback a Notepad)' }
-        @{ Value = 'win';      Text = 'ventana propia (WinForms + RichTextBox)' }
-        @{ Value = 'external'; Text = 'el .exe definido en subtitleEditorExe' }
+        @{ Value = 'start';    Text = (Get-CvText -Key 'cat.subed.start') }
+        @{ Value = 'win';      Text = (Get-CvText -Key 'cat.subed.win') }
+        @{ Value = 'external'; Text = (Get-CvText -Key 'cat.subed.ext') }
     )
 }
 
 function Get-CvGuiThemes {
     <# Aspecto de las ventanas (gui.theme). El 1o = default de fabrica. #>
     @(
-        @{ Value = 'system'; Text = 'el de Windows (si lo pones oscuro, las ventanas tambien)' }
-        @{ Value = 'light';  Text = 'claro siempre' }
-        @{ Value = 'dark';   Text = 'oscuro siempre' }
+        @{ Value = 'system'; Text = (Get-CvText -Key 'cat.tema.system') }
+        @{ Value = 'light';  Text = (Get-CvText -Key 'cat.tema.light') }
+        @{ Value = 'dark';   Text = (Get-CvText -Key 'cat.tema.dark') }
     )
 }
 
 function Get-CvPlayerModes {
     <# Con que se reproduce un video entero desde la cola (preview.player). El 1o = default. #>
     @(
-        @{ Value = 'start';    Text = 'reproductor asociado de Windows (si no hay, ffplay)' }
-        @{ Value = 'ffplay';   Text = 'el ffplay de tools (siempre esta, no depende del equipo)' }
-        @{ Value = 'external'; Text = 'el reproductor de playerExe (VLC, MPC-HC...)' }
+        @{ Value = 'start';    Text = (Get-CvText -Key 'cat.play.start') }
+        @{ Value = 'ffplay';   Text = (Get-CvText -Key 'cat.play.ffplay') }
+        @{ Value = 'external'; Text = (Get-CvText -Key 'cat.play.ext') }
     )
 }
 
@@ -823,201 +823,206 @@ function Get-CvConfigHelp {
         'seccion'; anidadas 'seccion/clave'; profundas 'seccion/sub/clave'. Lo consume setup.ps1
         para mostrar, junto a cada opcion, que hace. Fuente unica de los textos (los comentarios
         de Get-CvConfigDefaults son la version larga).
+
+        El TEXTO no esta aqui: vive en lang\<idioma>.json con la clave cfg.help.<ruta con puntos>,
+        y aqui solo se pide. El marcador de AVANZADA, en cambio, SI se queda en el codigo -se
+        concatena con (Get-CvConfigAdvancedMark)-, porque es metadato del editor y no texto: metido
+        en la traduccion, un descuido al traducir desmarcaria la opcion sin que nadie lo notara.
     #>
     @{
-        'downloads' = '[av] Catalogo de herramientas descargables (ffmpeg, aacgain, 7zr, mkvpropedit); se gestiona desde el menu Herramientas'
+        'downloads' = ((Get-CvConfigAdvancedMark) + (Get-CvText -Key 'cfg.help.downloads'))
 
-        'languages'          = "Idiomas preferidos (etiquetas que cuentan como 'espanol')"
-        'languages/audio'    = 'Etiquetas de idioma preferidas al elegir la pista de audio'
-        'languages/subtitle' = 'Etiquetas de idioma preferidas al elegir/conservar subtitulos'
+        'languages' = (Get-CvText -Key 'cfg.help.languages')
+        'languages/audio' = (Get-CvText -Key 'cfg.help.languages.audio')
+        'languages/subtitle' = (Get-CvText -Key 'cfg.help.languages.subtitle')
 
-        'encode'                = 'Ajustes de codificacion (contenedor + subsecciones video/audio)'
-        'encode/outputExtension'= 'Contenedor de salida (mkv recomendado; mp4/mov admiten +faststart)'
-        'encode/extensions'     = 'Extensiones de entrada que se procesan de Original\ (sin punto)'
-        'encode/threads'        = '-threads de ffmpeg: 0 = todos los nucleos; N para limitar'
-        'encode/video'          = 'Ajustes de VIDEO (fps, HDR, anamorfico, perfil Auto, tuning...)'
-        'encode/video/videoEncoder'= 'Codec de video por defecto (semilla del builder custom): libx264|h264_nvenc|libx265|hevc_nvenc|libsvtav1|av1_nvenc|copy|auto'
-        'encode/video/videoProfile'= 'Perfil del codec por defecto (main|main10|...); se ignora si no aplica'
-        'encode/video/videoLevel'  = 'Nivel del codec por defecto (4.0|4.1|5.0|...); se ignora si no aplica'
-        'encode/video/fps'      = "Fps de salida cuando forceFps=true (ej 23.976)"
-        'encode/video/forceFps' = "true = fuerza la salida a 'fps' (-r); false = conserva el fps de origen"
-        'encode/video/multipass'= '2-pass NVENC: off | qres (1/4 res) | fullres. Mas calidad, mas GPU'
-        'encode/video/tonemapHdr' = 'HDR->SDR BT.709 al recodificar: auto (solo si origen HDR) | off'
-        'encode/video/tonemapCurve'= 'Curva de tone-mapping libplacebo: bt.2390 (rec.) | bt.2446a | spline | reinhard | mobius | hable | ...'
-        'encode/video/anamorphic' = 'Video anamorfico (SAR!=1): keep | square (cuadra por ancho) | squareheight (por alto)'
-        'encode/video/keepOriginalIfBigger' = 'Si el video recodificado sale mas grande que el original (y no se toca la imagen), usar la pista ORIGINAL en vez de la recodificada'
-        'encode/video/keepOriginalRatio' = 'Desde que proporcion se da por no compensado (1.00 = solo si es mas grande; 0.95 = si no ahorra ni un 5%)'
-        'encode/video/qualityCheck' = 'Medir calidad de la salida vs origen tras codificar: off | ssim | vmaf (pasada extra, mas lento)'
-        'encode/video/auto'         = 'Ajustes del perfil Auto (filtros de encoder + control de tasa)'
-        'encode/video/auto/gpuOnly' = 'Perfil Auto: si true, solo considera encoders por GPU (NVENC); false = permite CPU'
-        'encode/video/auto/maxCodec'= 'Perfil Auto: tope de codec ("" sin tope | h264 | h265 | av1); Auto no sube de ahi'
-        'encode/video/auto/crf'     = 'Perfil Auto: CRF de libx264/libx265 (0-51, menor = mejor calidad)'
-        'encode/video/auto/crfAv1'  = 'Perfil Auto: CRF de libsvtav1/AV1 (0-63, escala distinta a H.26x)'
-        'encode/video/auto/qmin'    = 'Perfil Auto: Qmin de los encoders NVENC (control por QP)'
-        'encode/video/auto/qmax'    = 'Perfil Auto: Qmax de los encoders NVENC (control por QP)'
-        'encode/video/auto/level'   = 'Perfil Auto: -level:v de H.264/H.265 NVENC (AV1 no usa level)'
-        'encode/video/tuning'                = '[av] Tuning del encoder de video (preset por familia, lookahead, refs, tier)'
-        'encode/video/tuning/presetNvenc'    = 'Preset de hevc_nvenc/h264_nvenc (p. ej. slow, o p1-p7)'
-        'encode/video/tuning/presetX26x'     = 'Preset de libx264/libx265 (ultrafast..placebo; def slow)'
-        'encode/video/tuning/presetSvtav1'   = 'Preset de libsvtav1 (0-13; menor = mas lento/mejor)'
-        'encode/video/tuning/presetAv1Nvenc' = 'Preset de av1_nvenc (p1-p7)'
-        'encode/video/tuning/rcLookahead'    = 'rc-lookahead de los encoders NVENC (frames)'
-        'encode/video/tuning/refs'           = 'Frames de referencia de libx264/libx265 (-refs)'
-        'encode/video/tuning/tier'           = 'Tier de hevc_nvenc (main | high)'
-        'encode/audio'          = 'Ajustes de AUDIO (canales, downmix, sincronia, multipista...)'
-        'encode/audio/hz'       = 'Frecuencia del audio recodificado (Hz); opus fuerza 48000'
-        'encode/audio/channels' = 'Canales de salida (MAXIMO, no hace upmix): 2 = estereo, 6 = 5.1, 8 = 7.1'
-        'encode/audio/encoder'  = 'Salida de audio por defecto: aac_coder (recodificar) | copy'
-        'encode/audio/codec'    = 'Codec de recodificacion por defecto: aac|ac3|eac3|libmp3lame|flac|libopus'
-        'encode/audio/bitrate'  = "Bitrate de audio por defecto ('copy' = copiar la pista sin recodificar)"
-        'encode/audio/downmixMode'    = 'Al bajar 5.1->estereo: default | dialogue (refuerza la voz)'
-        'encode/audio/downmixCoeffs'        = '[av] Pesos del downmix dialogue (voz reforzada); solo con downmixMode=dialogue'
-        'encode/audio/downmixCoeffs/center' = 'Peso del canal central (dialogos) en el downmix dialogue'
-        'encode/audio/downmixCoeffs/front'  = 'Peso de los frontales L/R en el downmix dialogue'
-        'encode/audio/downmixCoeffs/surround' = 'Peso de los surrounds en el downmix dialogue (el LFE se descarta)'
-        'encode/audio/syncAdelay'     = 'Sincronia: true (por defecto) = adelay en 1 pasada (sin WAV); false = clasico (WAV silencio+pista)'
-        'encode/audio/multiAudio'     = 'Con 2+ pistas del idioma preferido, conservar varias y elegir la predeterminada (false = monopista, solo la mejor)'
-        'encode/audio/keepTitle'      = 'Conservar el titulo del audio de origen en la salida (false = titulo en blanco)'
-        'encode/audio/syncThreshold'  = 'Detectar audio adelantado si acaba N s antes que el video (0 = off); PREPARAR pregunta el retardo'
-        'encode/audio/aacCoder'       = 'Coder del encoder AAC nativo (twoloop = mayor calidad)'
-        'encode/subtitles/toSrt'      = 'Tipos de subtitulo (por codec) a convertir a SRT (p.ej. webvtt); el WEBVTT ilegible se rescata con mkvextract. Vacio = no convertir'
-        'encode/subtitles/defaultLang' = 'Idioma por defecto de la pregunta de idioma del fallback de subtitulos (ENTER lo usa). Vacio = mantener el del subtitulo elegido'
-        'encode/subtitles/textCodecs'  = 'Codecs de subtitulo que son TEXTO (el resto se trata como imagen)'
-        'encode/subtitles/imageExtensions' = 'A que fichero se saca cada codec de IMAGEN al extraerlo (codec -> extension); se suma a los de serie'
-        'encode/subtitles/dropEmpty'  = 'Descartar las pistas de subtitulo VACIAS (sin cues); evitan una pista muerta en la salida y que se congele la barra de progreso'
+        'encode' = (Get-CvText -Key 'cfg.help.encode')
+        'encode/outputExtension' = (Get-CvText -Key 'cfg.help.encode.outputExtension')
+        'encode/extensions' = (Get-CvText -Key 'cfg.help.encode.extensions')
+        'encode/threads' = (Get-CvText -Key 'cfg.help.encode.threads')
+        'encode/video' = (Get-CvText -Key 'cfg.help.encode.video')
+        'encode/video/videoEncoder' = (Get-CvText -Key 'cfg.help.encode.video.videoEncoder')
+        'encode/video/videoProfile' = (Get-CvText -Key 'cfg.help.encode.video.videoProfile')
+        'encode/video/videoLevel' = (Get-CvText -Key 'cfg.help.encode.video.videoLevel')
+        'encode/video/fps' = (Get-CvText -Key 'cfg.help.encode.video.fps')
+        'encode/video/forceFps' = (Get-CvText -Key 'cfg.help.encode.video.forceFps')
+        'encode/video/multipass' = (Get-CvText -Key 'cfg.help.encode.video.multipass')
+        'encode/video/tonemapHdr' = (Get-CvText -Key 'cfg.help.encode.video.tonemapHdr')
+        'encode/video/tonemapCurve' = (Get-CvText -Key 'cfg.help.encode.video.tonemapCurve')
+        'encode/video/anamorphic' = (Get-CvText -Key 'cfg.help.encode.video.anamorphic')
+        'encode/video/keepOriginalIfBigger' = (Get-CvText -Key 'cfg.help.encode.video.keepOriginalIfBigger')
+        'encode/video/keepOriginalRatio' = (Get-CvText -Key 'cfg.help.encode.video.keepOriginalRatio')
+        'encode/video/qualityCheck' = (Get-CvText -Key 'cfg.help.encode.video.qualityCheck')
+        'encode/video/auto' = (Get-CvText -Key 'cfg.help.encode.video.auto')
+        'encode/video/auto/gpuOnly' = (Get-CvText -Key 'cfg.help.encode.video.auto.gpuOnly')
+        'encode/video/auto/maxCodec' = (Get-CvText -Key 'cfg.help.encode.video.auto.maxCodec')
+        'encode/video/auto/crf' = (Get-CvText -Key 'cfg.help.encode.video.auto.crf')
+        'encode/video/auto/crfAv1' = (Get-CvText -Key 'cfg.help.encode.video.auto.crfAv1')
+        'encode/video/auto/qmin' = (Get-CvText -Key 'cfg.help.encode.video.auto.qmin')
+        'encode/video/auto/qmax' = (Get-CvText -Key 'cfg.help.encode.video.auto.qmax')
+        'encode/video/auto/level' = (Get-CvText -Key 'cfg.help.encode.video.auto.level')
+        'encode/video/tuning' = ((Get-CvConfigAdvancedMark) + (Get-CvText -Key 'cfg.help.encode.video.tuning'))
+        'encode/video/tuning/presetNvenc' = (Get-CvText -Key 'cfg.help.encode.video.tuning.presetNvenc')
+        'encode/video/tuning/presetX26x' = (Get-CvText -Key 'cfg.help.encode.video.tuning.presetX26x')
+        'encode/video/tuning/presetSvtav1' = (Get-CvText -Key 'cfg.help.encode.video.tuning.presetSvtav1')
+        'encode/video/tuning/presetAv1Nvenc' = (Get-CvText -Key 'cfg.help.encode.video.tuning.presetAv1Nvenc')
+        'encode/video/tuning/rcLookahead' = (Get-CvText -Key 'cfg.help.encode.video.tuning.rcLookahead')
+        'encode/video/tuning/refs' = (Get-CvText -Key 'cfg.help.encode.video.tuning.refs')
+        'encode/video/tuning/tier' = (Get-CvText -Key 'cfg.help.encode.video.tuning.tier')
+        'encode/audio' = (Get-CvText -Key 'cfg.help.encode.audio')
+        'encode/audio/hz' = (Get-CvText -Key 'cfg.help.encode.audio.hz')
+        'encode/audio/channels' = (Get-CvText -Key 'cfg.help.encode.audio.channels')
+        'encode/audio/encoder' = (Get-CvText -Key 'cfg.help.encode.audio.encoder')
+        'encode/audio/codec' = (Get-CvText -Key 'cfg.help.encode.audio.codec')
+        'encode/audio/bitrate' = (Get-CvText -Key 'cfg.help.encode.audio.bitrate')
+        'encode/audio/downmixMode' = (Get-CvText -Key 'cfg.help.encode.audio.downmixMode')
+        'encode/audio/downmixCoeffs' = ((Get-CvConfigAdvancedMark) + (Get-CvText -Key 'cfg.help.encode.audio.downmixCoeffs'))
+        'encode/audio/downmixCoeffs/center' = (Get-CvText -Key 'cfg.help.encode.audio.downmixCoeffs.center')
+        'encode/audio/downmixCoeffs/front' = (Get-CvText -Key 'cfg.help.encode.audio.downmixCoeffs.front')
+        'encode/audio/downmixCoeffs/surround' = (Get-CvText -Key 'cfg.help.encode.audio.downmixCoeffs.surround')
+        'encode/audio/syncAdelay' = (Get-CvText -Key 'cfg.help.encode.audio.syncAdelay')
+        'encode/audio/multiAudio' = (Get-CvText -Key 'cfg.help.encode.audio.multiAudio')
+        'encode/audio/keepTitle' = (Get-CvText -Key 'cfg.help.encode.audio.keepTitle')
+        'encode/audio/syncThreshold' = (Get-CvText -Key 'cfg.help.encode.audio.syncThreshold')
+        'encode/audio/aacCoder' = (Get-CvText -Key 'cfg.help.encode.audio.aacCoder')
+        'encode/subtitles/toSrt' = (Get-CvText -Key 'cfg.help.encode.subtitles.toSrt')
+        'encode/subtitles/defaultLang' = (Get-CvText -Key 'cfg.help.encode.subtitles.defaultLang')
+        'encode/subtitles/textCodecs' = (Get-CvText -Key 'cfg.help.encode.subtitles.textCodecs')
+        'encode/subtitles/imageExtensions' = (Get-CvText -Key 'cfg.help.encode.subtitles.imageExtensions')
+        'encode/subtitles/dropEmpty' = (Get-CvText -Key 'cfg.help.encode.subtitles.dropEmpty')
 
-        'customProfile'             = '[av] Valores por defecto del constructor de perfil CUSTOM (opcion 0 de USAR PERFIL); mismos campos que un profiles[]'
-        'customProfile/videoEncoder'= 'Codec de video: libx264|h264_nvenc|libx265|hevc_nvenc|libsvtav1|av1_nvenc|copy|auto'
-        'customProfile/videoProfile'= 'Perfil del codec (main|main10|...); se ignora si no aplica'
-        'customProfile/videoLevel'  = 'Nivel del codec (4.0|4.1|5.0|...); se ignora si no aplica'
-        'customProfile/qmin'        = 'Q minimo del control de tasa en NVENC (0-51)'
-        'customProfile/qmax'        = 'Q maximo del control de tasa en NVENC (0-51)'
-        'customProfile/crf'         = 'CRF por defecto en encoders de CPU (0-51); -1 = auto'
-        'customProfile/detectBorder'= 'Deteccion de bordes por defecto: false | true | auto'
-        'customProfile/changeSize'  = 'Reescalado fijo por defecto ("" = no; ej "1920:-2")'
-        'customProfile/noUpscale'   = 'changeSize SOLO reduce: no amplia videos mas pequeños que el destino (true/false)'
-        'customProfile/maxWidth'    = 'Ancho maximo por defecto (0 = no; ej 1920 reduce solo si es mayor)'
-        'customProfile/multipass'   = '2-pass NVENC del perfil custom: off | qres | fullres'
-        'customProfile/audioEncoder'= 'Audio por defecto: aac_coder (recodificar) | copy'
-        'customProfile/audioCodec'  = 'Codec de audio: aac|ac3|eac3|libmp3lame|flac|libopus'
-        'customProfile/audioBitrate'= "Bitrate de audio ('copy' = copiar sin recodificar)"
-        'customProfile/audioHz'     = 'Frecuencia de audio por defecto (Hz); opus fuerza 48000'
-        'customProfile/audioChannels'= 'Canales de salida por defecto (MAXIMO, no upmix): 2 | 6 | 8'
-        'customProfile/downmixMode' = 'Downmix 5.1->estereo por defecto: default | dialogue'
-        'customProfile/downmixCoeffs'= 'Pesos del downmix dialogue por defecto (center/front/surround)'
-        'customProfile/downmixCoeffs/center'  = 'Peso del canal central (dialogos) en el downmix dialogue'
-        'customProfile/downmixCoeffs/front'   = 'Peso de los frontales L/R en el downmix dialogue'
-        'customProfile/downmixCoeffs/surround'= 'Peso de los surrounds en el downmix dialogue (el LFE se descarta)'
+        'customProfile' = ((Get-CvConfigAdvancedMark) + (Get-CvText -Key 'cfg.help.customProfile'))
+        'customProfile/videoEncoder' = (Get-CvText -Key 'cfg.help.customProfile.videoEncoder')
+        'customProfile/videoProfile' = (Get-CvText -Key 'cfg.help.customProfile.videoProfile')
+        'customProfile/videoLevel' = (Get-CvText -Key 'cfg.help.customProfile.videoLevel')
+        'customProfile/qmin' = (Get-CvText -Key 'cfg.help.customProfile.qmin')
+        'customProfile/qmax' = (Get-CvText -Key 'cfg.help.customProfile.qmax')
+        'customProfile/crf' = (Get-CvText -Key 'cfg.help.customProfile.crf')
+        'customProfile/detectBorder' = (Get-CvText -Key 'cfg.help.customProfile.detectBorder')
+        'customProfile/changeSize' = (Get-CvText -Key 'cfg.help.customProfile.changeSize')
+        'customProfile/noUpscale' = (Get-CvText -Key 'cfg.help.customProfile.noUpscale')
+        'customProfile/maxWidth' = (Get-CvText -Key 'cfg.help.customProfile.maxWidth')
+        'customProfile/multipass' = (Get-CvText -Key 'cfg.help.customProfile.multipass')
+        'customProfile/audioEncoder' = (Get-CvText -Key 'cfg.help.customProfile.audioEncoder')
+        'customProfile/audioCodec' = (Get-CvText -Key 'cfg.help.customProfile.audioCodec')
+        'customProfile/audioBitrate' = (Get-CvText -Key 'cfg.help.customProfile.audioBitrate')
+        'customProfile/audioHz' = (Get-CvText -Key 'cfg.help.customProfile.audioHz')
+        'customProfile/audioChannels' = (Get-CvText -Key 'cfg.help.customProfile.audioChannels')
+        'customProfile/downmixMode' = (Get-CvText -Key 'cfg.help.customProfile.downmixMode')
+        'customProfile/downmixCoeffs' = (Get-CvText -Key 'cfg.help.customProfile.downmixCoeffs')
+        'customProfile/downmixCoeffs/center' = (Get-CvText -Key 'cfg.help.customProfile.downmixCoeffs.center')
+        'customProfile/downmixCoeffs/front' = (Get-CvText -Key 'cfg.help.customProfile.downmixCoeffs.front')
+        'customProfile/downmixCoeffs/surround' = (Get-CvText -Key 'cfg.help.customProfile.downmixCoeffs.surround')
 
-        'encode/video/border'                    = '[av] Deteccion de bordes negros con cropdetect'
-        'encode/video/border/start'              = 'Segundo del primer punto de escaneo'
-        'encode/video/border/duration'           = 'Segundos que escanea CADA punto'
-        'encode/video/border/samples'            = 'En cuantos puntos repartidos se escanea (1 = solo al inicio)'
-        'encode/video/border/autoAcceptPct'      = '% de puntos que deben coincidir para auto-aceptar el recorte'
-        'encode/video/border/autoAcceptMinMargin'= 'Votos de ventaja sobre el 2o para auto-aceptar (0 = sin margen)'
-        'encode/video/border/autoSamples'        = "Puntos del pre-escaneo del modo 'auto' del perfil"
-        'encode/video/border/autoMaxCropPct'     = "Tope de recorte que el modo 'auto' aplica solo (% de ancho/alto); mas que eso, se confirma"
-        'encode/video/border/autoDuration'       = "Segundos por punto del pre-escaneo 'auto' (minimo real 5 s)"
-        'encode/video/border/minCropPct'         = 'Reduccion minima (%) para considerar barras (menos = no recorta)'
+        'encode/video/border' = ((Get-CvConfigAdvancedMark) + (Get-CvText -Key 'cfg.help.encode.video.border'))
+        'encode/video/border/start' = (Get-CvText -Key 'cfg.help.encode.video.border.start')
+        'encode/video/border/duration' = (Get-CvText -Key 'cfg.help.encode.video.border.duration')
+        'encode/video/border/samples' = (Get-CvText -Key 'cfg.help.encode.video.border.samples')
+        'encode/video/border/autoAcceptPct' = (Get-CvText -Key 'cfg.help.encode.video.border.autoAcceptPct')
+        'encode/video/border/autoAcceptMinMargin' = (Get-CvText -Key 'cfg.help.encode.video.border.autoAcceptMinMargin')
+        'encode/video/border/autoSamples' = (Get-CvText -Key 'cfg.help.encode.video.border.autoSamples')
+        'encode/video/border/autoMaxCropPct' = (Get-CvText -Key 'cfg.help.encode.video.border.autoMaxCropPct')
+        'encode/video/border/autoDuration' = (Get-CvText -Key 'cfg.help.encode.video.border.autoDuration')
+        'encode/video/border/minCropPct' = (Get-CvText -Key 'cfg.help.encode.video.border.minCropPct')
 
 
-        'preview'         = 'Previsualizacion con ffplay en PREPARAR'
-        'preview/start'   = 'Segundo en que empieza la muestra (0 = desde el principio)'
-        'preview/seconds' = 'Duracion de la muestra en seg (0 = sin limite, todo el video)'
-        'preview/syncSeconds' = 'Tope (seg) del preview A/B de sincronia de audio (0 = sin limite, hasta el final o q/ESC)'
-        'preview/player'         = "Reproducir un video desde la cola: 'start' = asociado de Windows | 'ffplay' = el de tools | 'external' = el .exe de playerExe"
-        'preview/playerExe'      = 'Reproductor para player=external (ruta al .exe: VLC, MPC-HC...)'
-        'preview/subtitleEditor' = "Ver texto de subtitulo ('V N'): 'start' = asociado de Windows | 'win' = ventana propia (WinForms) | 'external' = el .exe de subtitleEditorExe"
-        'preview/subtitleEditorExe' = "Ruta al .exe para el modo 'external' de subtitleEditor (p. ej. Subtitle Edit, VS Code); ignorado en 'start'/'win'"
+        'preview' = (Get-CvText -Key 'cfg.help.preview')
+        'preview/start' = (Get-CvText -Key 'cfg.help.preview.start')
+        'preview/seconds' = (Get-CvText -Key 'cfg.help.preview.seconds')
+        'preview/syncSeconds' = (Get-CvText -Key 'cfg.help.preview.syncSeconds')
+        'preview/player' = (Get-CvText -Key 'cfg.help.preview.player')
+        'preview/playerExe' = (Get-CvText -Key 'cfg.help.preview.playerExe')
+        'preview/subtitleEditor' = (Get-CvText -Key 'cfg.help.preview.subtitleEditor')
+        'preview/subtitleEditorExe' = (Get-CvText -Key 'cfg.help.preview.subtitleEditorExe')
 
-        'encode/audio/volume'             = 'Normalizacion de volumen del audio'
-        'encode/audio/volume/method'      = ('Metodo: {0} (peak = legacy)' -f ((Get-CvVolumeMethodValues) -join ' | '))
-        'encode/audio/volume/peakTarget'  = "Pico objetivo dBFS de 'peak' (LEGACY; 0 = maximo; -1 deja headroom)"
-        'encode/audio/volume/loudnorm'    = '[av] Parametros EBU R128 del metodo loudnorm'
-        'encode/audio/volume/loudnorm/I'  = 'Loudness integrada objetivo (LUFS), ej -16'
-        'encode/audio/volume/loudnorm/TP' = 'True Peak maximo (dBTP), ej -1.5'
-        'encode/audio/volume/loudnorm/LRA'= 'Rango de loudness objetivo (LU), ej 11'
+        'encode/audio/volume' = (Get-CvText -Key 'cfg.help.encode.audio.volume')
+        'encode/audio/volume/method' = (Get-CvText -Key 'cfg.help.encode.audio.volume.method' -Values @(((Get-CvVolumeMethodValues) -join ' | ')))
+        'encode/audio/volume/peakTarget' = (Get-CvText -Key 'cfg.help.encode.audio.volume.peakTarget')
+        'encode/audio/volume/loudnorm' = ((Get-CvConfigAdvancedMark) + (Get-CvText -Key 'cfg.help.encode.audio.volume.loudnorm'))
+        'encode/audio/volume/loudnorm/I' = (Get-CvText -Key 'cfg.help.encode.audio.volume.loudnorm.I')
+        'encode/audio/volume/loudnorm/TP' = (Get-CvText -Key 'cfg.help.encode.audio.volume.loudnorm.TP')
+        'encode/audio/volume/loudnorm/LRA' = (Get-CvText -Key 'cfg.help.encode.audio.volume.loudnorm.LRA')
 
-        'postprocess'                    = 'Postproceso del MKV final'
-        'postprocess/stripTags'          = 'Limpiar con mkvpropedit las etiquetas DURATION que anade ffmpeg'
-        'postprocess/mkvpropedit'        = 'Ruta a mkvpropedit (vacio = usar la de tools\)'
-        'postprocess/attachments'        = 'Conservar adjuntos del original (fuentes, caratulas...)'
-        'postprocess/attachments/keep'   = 'Interruptor maestro: conservar adjuntos del original'
-        'postprocess/attachments/fonts'  = 'Conservar fuentes (p. ej. para subtitulos ASS)'
-        'postprocess/attachments/covers' = 'Conservar caratulas/imagenes'
-        'postprocess/attachments/other'  = 'Conservar el resto de adjuntos'
+        'postprocess' = (Get-CvText -Key 'cfg.help.postprocess')
+        'postprocess/stripTags' = (Get-CvText -Key 'cfg.help.postprocess.stripTags')
+        'postprocess/mkvpropedit' = (Get-CvText -Key 'cfg.help.postprocess.mkvpropedit')
+        'postprocess/attachments' = (Get-CvText -Key 'cfg.help.postprocess.attachments')
+        'postprocess/attachments/keep' = (Get-CvText -Key 'cfg.help.postprocess.attachments.keep')
+        'postprocess/attachments/fonts' = (Get-CvText -Key 'cfg.help.postprocess.attachments.fonts')
+        'postprocess/attachments/covers' = (Get-CvText -Key 'cfg.help.postprocess.attachments.covers')
+        'postprocess/attachments/other' = (Get-CvText -Key 'cfg.help.postprocess.attachments.other')
 
-        'behavior'                          = 'Comportamiento general del conversor'
-        'behavior/cleanTemps'               = 'Borrar los temporales de Proceso\ al terminar cada archivo'
-        'behavior/separateWindow'           = 'Lanzar cada codificacion en su propia ventana'
-        'behavior/lockCloseButton'          = 'Desactivar el boton X mientras hay conversiones en marcha'
-        'behavior/log'                      = 'Guardar log (transcript) de la sesion en logs\'
-        'behavior/workers'                  = 'Codificaciones en paralelo al terminar PREPARAR (esta + N-1)'
-        'behavior/retries'                  = 'Reintentos por archivo cuando la codificacion falla'
-        'console/asciiMarks'                = 'Marcas en ASCII puro ([OK]/[ERROR]) en vez de simbolos'
-        'behavior/progress'                 = 'Linea viva con % y ETA al recodificar (inline); false = ventana aparte + solo ✓'
-        'behavior/promptTimeout'            = 'Auto-aceptar el valor por defecto en preguntas de PREPARAR tras N s de inactividad'
-        'behavior/promptTimeout/default'    = 'Timeout generico en segundos (0 = desactivado)'
-        'behavior/promptTimeout/sync'       = 'Timeout de la pregunta de sincronia (-1 = usar el generico)'
-        'behavior/promptTimeout/border'     = 'Timeout de la pregunta de bordes (-1 = usar el generico)'
-        'behavior/promptTimeout/animation'  = 'Timeout de la pregunta de animacion (-1 = usar el generico)'
-        'behavior/promptTimeout/anamorphic' = 'Timeout de la pregunta de video anamorfico (-1 = generico; toma el modo configurado)'
-        'behavior/promptTimeout/audioSync' = 'Timeout de la pregunta de audio adelantado (-1 = generico; al expirar aplica el retardo detectado)'
-        'behavior/promptTimeout/video'      = 'Timeout del menu de seleccion de pista de video (-1 = generico; toma la preseleccionada)'
-        'behavior/promptTimeout/audio'      = 'Timeout del menu de seleccion de pista de audio (-1 = generico; toma la preseleccionada)'
-        'behavior/promptTimeout/subtitle'   = 'Timeout del menu de subtitulos fallback (-1 = generico; al expirar no conserva ninguno)'
-        'behavior/promptTimeout/subtitleLang' = 'Timeout de la pregunta de idioma de los subtitulos elegidos (al expirar mantiene el idioma detectado; 0 = sin timeout)'
-        'behavior/promptTimeoutStopOnType'  = 'Al teclear algo se desactiva el auto (solo ENTER envia); false = clasico (al expirar envia lo tecleado)'
+        'behavior' = (Get-CvText -Key 'cfg.help.behavior')
+        'behavior/cleanTemps' = (Get-CvText -Key 'cfg.help.behavior.cleanTemps')
+        'behavior/separateWindow' = (Get-CvText -Key 'cfg.help.behavior.separateWindow')
+        'behavior/lockCloseButton' = (Get-CvText -Key 'cfg.help.behavior.lockCloseButton')
+        'behavior/log' = (Get-CvText -Key 'cfg.help.behavior.log')
+        'behavior/workers' = (Get-CvText -Key 'cfg.help.behavior.workers')
+        'behavior/retries' = (Get-CvText -Key 'cfg.help.behavior.retries')
+        'console/asciiMarks' = (Get-CvText -Key 'cfg.help.console.asciiMarks')
+        'behavior/progress' = (Get-CvText -Key 'cfg.help.behavior.progress')
+        'behavior/promptTimeout' = (Get-CvText -Key 'cfg.help.behavior.promptTimeout')
+        'behavior/promptTimeout/default' = (Get-CvText -Key 'cfg.help.behavior.promptTimeout.default')
+        'behavior/promptTimeout/sync' = (Get-CvText -Key 'cfg.help.behavior.promptTimeout.sync')
+        'behavior/promptTimeout/border' = (Get-CvText -Key 'cfg.help.behavior.promptTimeout.border')
+        'behavior/promptTimeout/animation' = (Get-CvText -Key 'cfg.help.behavior.promptTimeout.animation')
+        'behavior/promptTimeout/anamorphic' = (Get-CvText -Key 'cfg.help.behavior.promptTimeout.anamorphic')
+        'behavior/promptTimeout/audioSync' = (Get-CvText -Key 'cfg.help.behavior.promptTimeout.audioSync')
+        'behavior/promptTimeout/video' = (Get-CvText -Key 'cfg.help.behavior.promptTimeout.video')
+        'behavior/promptTimeout/audio' = (Get-CvText -Key 'cfg.help.behavior.promptTimeout.audio')
+        'behavior/promptTimeout/subtitle' = (Get-CvText -Key 'cfg.help.behavior.promptTimeout.subtitle')
+        'behavior/promptTimeout/subtitleLang' = (Get-CvText -Key 'cfg.help.behavior.promptTimeout.subtitleLang')
+        'behavior/promptTimeoutStopOnType' = (Get-CvText -Key 'cfg.help.behavior.promptTimeoutStopOnType')
 
-        'debug'                 = '[av] Depuracion (log detallado; tambien se activa con el marcador debug_on)'
-        'debug/enabled'         = 'Modo debug: log detallado (comandos ffmpeg, pasos internos) y codificacion en la ventana principal'
-        'debug/pausePerCommand' = 'En debug, pedir ENTER antes de cada comando de ffmpeg; false = ejecutar sin pausar'
+        'debug' = ((Get-CvConfigAdvancedMark) + (Get-CvText -Key 'cfg.help.debug'))
+        'debug/enabled' = (Get-CvText -Key 'cfg.help.debug.enabled')
+        'debug/pausePerCommand' = (Get-CvText -Key 'cfg.help.debug.pausePerCommand')
 
-        'test'            = '[av] Modo pruebas (codificacion parcial para validar ajustes)'
-        'test/enabled'    = "Activar modo pruebas: cada archivo solo se codifica hasta 'minutes' min"
-        'test/minutes'    = 'Minutos que se codifican por archivo en modo pruebas (>=1)'
-        'test/betaDownmix'= 'BETA: activa el downmix dialogue (voz reforzada); sin el, dialogue = downmix estandar'
-        'test/betaOnePass'= 'BETA: audio+video+mux en una sola ejecucion de ffmpeg (solo encode+adelay+loudnorm, sin HDR)'
+        'test' = ((Get-CvConfigAdvancedMark) + (Get-CvText -Key 'cfg.help.test'))
+        'test/enabled' = (Get-CvText -Key 'cfg.help.test.enabled')
+        'test/minutes' = (Get-CvText -Key 'cfg.help.test.minutes')
+        'test/betaDownmix' = (Get-CvText -Key 'cfg.help.test.betaDownmix')
+        'test/betaOnePass' = (Get-CvText -Key 'cfg.help.test.betaOnePass')
 
-        'console'             = 'Apariencia de la ventana de consola'
-        'console/background'  = 'Color de fondo de la consola'
-        'console/foreground'  = 'Color de texto de la consola'
-        'console/font'        = 'Fuente de la consola (ej Cascadia Code / Consolas)'
-        'console/fontSize'    = 'Tamano de la fuente'
-        'console/windowWidth' = 'Ancho de la ventana en columnas (0 = no cambiar)'
-        'console/windowHeight'= 'Alto de la ventana en lineas (0 = no cambiar)'
-        'console/sepWidth'    = 'Ancho (caracteres) de los separadores de seccion === / --- de la UI'
-        'console/progressBarWidth' = 'Ancho (caracteres) de la barra visual de progreso del worker; 0 = sin barra'
+        'console' = (Get-CvText -Key 'cfg.help.console')
+        'console/background' = (Get-CvText -Key 'cfg.help.console.background')
+        'console/foreground' = (Get-CvText -Key 'cfg.help.console.foreground')
+        'console/font' = (Get-CvText -Key 'cfg.help.console.font')
+        'console/fontSize' = (Get-CvText -Key 'cfg.help.console.fontSize')
+        'console/windowWidth' = (Get-CvText -Key 'cfg.help.console.windowWidth')
+        'console/windowHeight' = (Get-CvText -Key 'cfg.help.console.windowHeight')
+        'console/sepWidth' = (Get-CvText -Key 'cfg.help.console.sepWidth')
+        'console/progressBarWidth' = (Get-CvText -Key 'cfg.help.console.progressBarWidth')
 
-        'gui'                   = 'Apariencia de las ventanas (Convert-gui / setup-gui)'
-        'ui'                    = 'Interfaz: en que idioma te habla el programa'
-        'ui/language'           = "Idioma de la interfaz: 'auto' (el de Windows) / 'es' / 'en'; NO es el idioma de las pistas (eso es 'languages')"
+        'gui' = (Get-CvText -Key 'cfg.help.gui')
+        'ui' = (Get-CvText -Key 'cfg.help.ui')
+        'ui/language' = (Get-CvText -Key 'cfg.help.ui.language')
 
-        'gui/theme'             = "Aspecto de las ventanas: 'system' (sigue a Windows) / 'light' / 'dark'"
-        'gui/rememberLayout'    = 'Recordar como queda la ventana de la cola al cerrarla (en <config>.gui.json, donde tambien se cachea lo deducido de los bordes)'
-        'gui/confirmCloseWithWorkers' = 'Al cerrar la cola con workers codificando, preguntar que hacer (siguen vivos si no)'
-        'gui/queueWidth'        = 'Ancho (px) de la ventana de la cola la primera vez'
-        'gui/queueHeight'       = 'Alto (px) de la ventana de la cola la primera vez'
-        'gui/queueRefreshMs'     = 'Cada cuantos ms se repinta el progreso mientras hay workers (no relee las carpetas)'
-        'gui/queueIdleRefreshMs' = 'Cada cuantos ms se releen las carpetas sin nada en marcha (0 = solo cuando lo pidas)'
-        'gui/queueRefreshOnActivate' = 'Releer las carpetas al volver a la ventana de la cola'
-        'gui/queueFollowWorker'  = 'La lista se mueve sola para no perder de vista el archivo que se esta codificando (salvo si te has ido tu a otra parte)'
-        'gui/queueStartGraceSec' = 'Segundos que se espera a que un worker recien abierto publique su estado (la cola sigue mirando en ese hueco)'
-        'gui/queueFollowHoldSec' = 'Segundos que la lista se queda quieta despues de que la toques (no se mueve mientras eliges filas)'
-        'gui/queueDoneProbe'     = 'Cuantos archivos YA CONVERTIDOS se analizan por refresco -solo con la cola parada- para deducir si llevaron recorte (0 = ninguno)'
-        'gui/queueDoneTolerance' = 'Margen de proporcion (0.01 = 1%) para decidir que a un convertido se le quitaron barras'
-        'gui/setupWidth'        = 'Ancho de partida de la ventana de setup (px)'
-        'gui/setupHeight'       = 'Alto de partida de la ventana de setup (px)'
-        'gui/queueSplitPercent' = 'Porcentaje del alto para la lista de la cola (el resto, resumen y log)'
+        'gui/theme' = (Get-CvText -Key 'cfg.help.gui.theme')
+        'gui/rememberLayout' = (Get-CvText -Key 'cfg.help.gui.rememberLayout')
+        'gui/confirmCloseWithWorkers' = (Get-CvText -Key 'cfg.help.gui.confirmCloseWithWorkers')
+        'gui/queueWidth' = (Get-CvText -Key 'cfg.help.gui.queueWidth')
+        'gui/queueHeight' = (Get-CvText -Key 'cfg.help.gui.queueHeight')
+        'gui/queueRefreshMs' = (Get-CvText -Key 'cfg.help.gui.queueRefreshMs')
+        'gui/queueIdleRefreshMs' = (Get-CvText -Key 'cfg.help.gui.queueIdleRefreshMs')
+        'gui/queueRefreshOnActivate' = (Get-CvText -Key 'cfg.help.gui.queueRefreshOnActivate')
+        'gui/queueFollowWorker' = (Get-CvText -Key 'cfg.help.gui.queueFollowWorker')
+        'gui/queueStartGraceSec' = (Get-CvText -Key 'cfg.help.gui.queueStartGraceSec')
+        'gui/queueFollowHoldSec' = (Get-CvText -Key 'cfg.help.gui.queueFollowHoldSec')
+        'gui/queueDoneProbe' = (Get-CvText -Key 'cfg.help.gui.queueDoneProbe')
+        'gui/queueDoneTolerance' = (Get-CvText -Key 'cfg.help.gui.queueDoneTolerance')
+        'gui/setupWidth' = (Get-CvText -Key 'cfg.help.gui.setupWidth')
+        'gui/setupHeight' = (Get-CvText -Key 'cfg.help.gui.setupHeight')
+        'gui/queueSplitPercent' = (Get-CvText -Key 'cfg.help.gui.queueSplitPercent')
 
-        'paths'            = '[av] Carpetas de trabajo (vacio = junto al programa)'
-        'paths/original'   = 'Carpeta de entrada (videos a convertir)'
-        'paths/proceso'    = 'Carpeta de temporales durante la conversion'
-        'paths/convertido' = 'Carpeta de salida (videos ya convertidos)'
-        'paths/logs'       = 'Carpeta de logs de sesion'
+        'paths' = ((Get-CvConfigAdvancedMark) + (Get-CvText -Key 'cfg.help.paths'))
+        'paths/original' = (Get-CvText -Key 'cfg.help.paths.original')
+        'paths/proceso' = (Get-CvText -Key 'cfg.help.paths.proceso')
+        'paths/convertido' = (Get-CvText -Key 'cfg.help.paths.convertido')
+        'paths/logs' = (Get-CvText -Key 'cfg.help.paths.logs')
 
-        'profiles' = '[av] Perfiles propios (se anaden a los de serie); se crean desde setup > Perfiles propios o al ajustar un perfil'
-        'defaultProfile' = "Perfil marcado al preparar: nombre de uno propio, 'Perfil N' de los de serie, o Auto"
+        'profiles' = ((Get-CvConfigAdvancedMark) + (Get-CvText -Key 'cfg.help.profiles'))
+        'defaultProfile' = (Get-CvText -Key 'cfg.help.defaultProfile')
     }
 }
 
