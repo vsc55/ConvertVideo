@@ -2342,7 +2342,7 @@ Assert-Eq   'Bloque: escalado mal escrito' $false ([bool](Test-CvJobBulkChanges 
 Assert-True 'Bloque: escalado con alto automatico' ([bool](Test-CvJobBulkChanges -Changes @{ resize = '1280:-2' }).Ok)
 Assert-Eq   'Bloque: perfil sin elegir'    $false ([bool](Test-CvJobBulkChanges -Changes @{ prof = $null }).Ok)
 # Y lo que se va a hacer, en una linea.
-Assert-True 'Bloque: cuenta lo que cambia' ((Get-CvJobBulkSummary -Changes @{ videoCopy = $true }) -match 'video -> copiar')
+Assert-Eq   'Bloque: cuenta lo que cambia' (Get-CvText -Key 'bulk.sum.video' -Values @((Get-CvText -Key 'bulk.sum.copiar'))) (Get-CvJobBulkSummary -Changes @{ videoCopy = $true })
 Assert-True 'Bloque: y lo que se quita'    ((Get-CvJobBulkSummary -Changes @{ crop = '' }) -match 'sin recorte')
 Assert-Eq   'Bloque: sin nada, nada que contar' '' (Get-CvJobBulkSummary -Changes @{})
 

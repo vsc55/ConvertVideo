@@ -1204,20 +1204,21 @@ if ($null -eq $jobInfo) {
     $dTodas = New-CvJobDraft -Context $ctxJob -Prof $profCopy -Info $jobInfo -File $jobFile
     [void](Save-CvJobDraft -Context $ctxJob -Draft $dTodas -Info $jobInfo)
     $sumTodas = (@(Get-CvJobSummaryLines -Context $ctxJob -Name 'Serie_2x01' -Info $jobInfo) -join "`n")
-    Assert-True 'Resumen: lineas tambien en las descartadas' (@(($sumTodas -split "`n") | Where-Object { $_ -match '^\s+\[ \] .*\d+ lineas' }).Count -ge 1)
+    $palLineas = [regex]::Escape(((Get-CvText -Key 'sum.lineas' -Values @('')).Trim()))
+    Assert-True 'Resumen: lineas tambien en las descartadas' (@(($sumTodas -split "`n") | Where-Object { $_ -match ('^\s+\[ \] .*\d+ ' + $palLineas) }).Count -ge 1)
     # El nº de LINEAS: el job preparado por la ventana ya lo trae contado (la tabla del editor lo
     # necesita), asi que el resumen lo ensena sin volver a leer el fichero -que es lo lento-.
     $dCues = New-CvJobDraft -Context $ctxJob -Prof $profCopy -Info $jobInfo -File $jobFile
     [void](Save-CvJobDraft -Context $ctxJob -Draft $dCues -Info $jobInfo)
     $jobCues = Read-CvJob -Context $ctxJob -Name 'Serie_2x01'
     Assert-True 'Job: guarda las lineas de cada subtitulo' (@($jobCues.subtitles | Where-Object { [int]$_.Cues -gt 0 }).Count -ge 1)
-    Assert-True 'Resumen: ensena las lineas del job'       ((@(Get-CvJobSummaryLines -Context $ctxJob -Name 'Serie_2x01' -Info $jobInfo) -join ' ') -match '\d+ lineas')
+    Assert-True 'Resumen: ensena las lineas del job'       ((@(Get-CvJobSummaryLines -Context $ctxJob -Name 'Serie_2x01' -Info $jobInfo) -join ' ') -match ('\d+ ' + $palLineas))
     # Y un recuento pasado a mano manda sobre todo lo demas.
     $conMano = (@(Get-CvJobSummaryLines -Context $ctxJob -Name 'Serie_2x01' -Info $jobInfo -CueCounts @{ 4 = 4242 }) -join ' ')
-    Assert-True 'Resumen: respeta el recuento dado'        ($conMano -match '4242 lineas')
+    Assert-True 'Resumen: respeta el recuento dado'        ($conMano -match ('4242 ' + $palLineas))
     # El nº de lineas sale del JOB (el editor ya lo conto para su tabla) o del tag NUMBER_OF_FRAMES;
     # nunca se demultiplexa aqui para averiguarlo. Este job viene del editor, asi que lo trae.
-    Assert-True 'Resumen: ensena las lineas'          ($sumInfo -match '\d+ lineas')
+    Assert-True 'Resumen: ensena las lineas'          ($sumInfo -match ('\d+ ' + [regex]::Escape(((Get-CvText -Key 'sum.lineas' -Values @('')).Trim()))))
     # Y con un job que NO las trae (el camino de consola no las guarda) y sin tag, no se inventa nada.
     $sinCues = @($sOpts | Where-Object { $_.Auto } | ForEach-Object { ConvertTo-SubSel $_.Stream -Forced $false -Default $false -Action $_.Action })
     $recSin = ConvertTo-CvJobRecord -Context $ctxJob -File $jobFile -Prof $profCopy -Info $jobInfo -VideoIndex 0 -Subtitles $sinCues `
@@ -1812,7 +1813,7 @@ if (-not $sta) {
     Assert-Eq   'Ventana bloque: ensena los tres archivos' 3 $script:bwList
     Assert-Eq   'Ventana bloque: sin marcar nada no deja aplicar' $false $script:bwApply0
     Assert-True 'Ventana bloque: al marcar, se puede aplicar'     $script:bwApply1
-    Assert-True 'Ventana bloque: dice lo que va a cambiar'        ($script:bwMsg -match 'video -> copiar')
+    Assert-True 'Ventana bloque: dice lo que va a cambiar'        ($script:bwMsg.Contains((Get-CvText -Key 'bulk.sum.video' -Values @((Get-CvText -Key 'bulk.sum.copiar')))))
     Assert-True 'Ventana bloque: aplico'                          $bwHecho
     Assert-Eq   'Ventana bloque: los tres copian el video' 3 @(1..3 | Where-Object { [bool](Read-CvJob -Context $ctx -Name ('Serie_6x0{0}' -f $_)).video.skip }).Count
     Assert-Eq   'Ventana bloque: y cada uno con su pista' '1,2,3' ((@(1..3 | ForEach-Object { [int]@(Get-CvJobAudioTracks (Read-CvJob -Context $ctx -Name ('Serie_6x0{0}' -f $_)).audio)[0].Index })) -join ',')

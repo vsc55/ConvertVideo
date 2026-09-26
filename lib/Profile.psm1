@@ -43,15 +43,15 @@ function Get-CvAudioChannels {
     @(
         @{
             Value = '2'
-            Text  = 'estereo'
+            Text  = (Get-CvText -Key 'cat.ch.2')
         }
         @{
             Value = '6'
-            Text  = '5.1'
+            Text  = (Get-CvText -Key 'cat.ch.6')
         }
         @{
             Value = '8'
-            Text  = '7.1'
+            Text  = (Get-CvText -Key 'cat.ch.8')
         }
     )
 }
@@ -61,11 +61,11 @@ function Get-CvDownmixModes {
     @(
         @{
             Value = 'default'
-            Text  = 'estandar de ffmpeg'
+            Text  = (Get-CvText -Key 'cat.dmx.default')
         }
         @{
             Value = 'dialogue'
-            Text  = 'voz reforzada (BETA; requiere test.betaDownmix)'
+            Text  = (Get-CvText -Key 'cat.dmx.dialogue')
         }
     )
 }
@@ -73,8 +73,8 @@ function Get-CvDownmixModes {
 function Get-CvAudioEncoders {
     <# Catalogo de la salida de audio (campo audioEncoder / encode.audio.encoder): recodificar o copiar. #>
     @(
-        @{ Value = 'aac_coder'; Text = 'recodificar (AAC nativo)' }
-        @{ Value = 'copy';      Text = 'copiar la pista sin recodificar' }
+        @{ Value = 'aac_coder'; Text = (Get-CvText -Key 'cat.aenc.recod') }
+        @{ Value = 'copy';      Text = (Get-CvText -Key 'cat.aenc.copy') }
     )
 }
 
@@ -85,9 +85,9 @@ function Get-CvDetectBorderModes {
         el builder custom (New-CustomProfile) y el editor de setup.
     #>
     @(
-        @{ Value = $false; Text = 'No detectar bordes' }
-        @{ Value = $true;  Text = 'Si (interactivo, con preview)' }
-        @{ Value = 'auto'; Text = 'Auto (pre-escaneo decide solo)' }
+        @{ Value = $false; Text = (Get-CvText -Key 'cat.border.no') }
+        @{ Value = $true;  Text = (Get-CvText -Key 'cat.border.si') }
+        @{ Value = 'auto'; Text = (Get-CvText -Key 'cat.border.auto') }
     )
 }
 
@@ -178,31 +178,31 @@ function Get-CvVideoEncoders {
     @(
         @{
             Value = 'copy'
-            Text  = 'Copia la pista de video sin recodificar'
+            Text  = (Get-CvText -Key 'cat.venc.copy')
         }
         @{
             Value = 'libx264'
-            Text  = '[h264 - CPU]  muy compatible, mas lento'
+            Text  = (Get-CvText -Key 'cat.venc.libx264')
         }
         @{
             Value = 'h264_nvenc'
-            Text  = '[h264 - GPU]  rapido (GPU NVIDIA)'
+            Text  = (Get-CvText -Key 'cat.venc.h264nv')
         }
         @{
             Value = 'libx265'
-            Text  = '[h265 - CPU]  mejor compresion, mas lento'
+            Text  = (Get-CvText -Key 'cat.venc.libx265')
         }
         @{
             Value = 'hevc_nvenc'
-            Text  = '[h265 - GPU]  rapido (GPU NVIDIA)'
+            Text  = (Get-CvText -Key 'cat.venc.hevcnv')
         }
         @{
             Value = 'libsvtav1'
-            Text  = '[AV1  - CPU]  SVT-AV1, la mejor compresion (lento)'
+            Text  = (Get-CvText -Key 'cat.venc.svtav1')
         }
         @{
             Value = 'av1_nvenc'
-            Text  = '[AV1  - GPU]  rapido (GPU NVIDIA RTX 40+) [SIN PROBAR]'
+            Text  = (Get-CvText -Key 'cat.venc.av1nv')
         }
     )
 }
@@ -217,7 +217,7 @@ function Get-CvEncoderShortName {
     param([string]$Encoder)
     $e = "$Encoder".Trim().ToLower()
     if ($e -eq '')     { return '' }
-    if ($e -eq 'copy') { return 'se copia' }
+    if ($e -eq 'copy') { return (Get-CvText -Key 'enc.copia') }
     foreach ($o in (Get-CvVideoEncoders)) {
         if ("$($o.Value)".ToLower() -ne $e) { continue }
         if ("$($o.Text)" -match '^\[([^\]]+)\]') {
@@ -384,27 +384,27 @@ function Get-CvVideoSizes {
     @(
         @{
             Value = '640:360'
-            Text  = '360p  [Mobile]'
+            Text  = (Get-CvText -Key 'cat.size.360')
         }
         @{
             Value = '1024:576'
-            Text  = '576p  [PAL Widescreen]'
+            Text  = (Get-CvText -Key 'cat.size.576')
         }
         @{
             Value = '1280:720'
-            Text  = '720p  [HD]'
+            Text  = (Get-CvText -Key 'cat.size.720')
         }
         @{
             Value = '1920:1080'
-            Text  = '1080p [Full HD]'
+            Text  = (Get-CvText -Key 'cat.size.1080')
         }
         @{
             Value = '1920:-2'
-            Text  = '1080p [Full HD] (mantiene aspect ratio)'
+            Text  = (Get-CvText -Key 'cat.size.1080ar')
         }
         @{
             Value = '3840:2160'
-            Text  = '4K    [UHDTV]'
+            Text  = (Get-CvText -Key 'cat.size.4k')
         }
     )
 }
@@ -431,45 +431,45 @@ function Get-CvCodecOptions {
             Profiles = @(
                 @{
                     Value = 'main'
-                    Text  = '8 bits'
+                    Text  = (Get-CvText -Key 'cat.bits.8')
                 }
                 @{
                     Value = 'main10'
-                    Text  = '10 bits (mas color, menos banding)'
+                    Text  = (Get-CvText -Key 'cat.bits.10')
                 }
             )
             Levels = @(
                 @{
                     Value = '4.0'
-                    Text  = '~1080p30'
+                    Text  = (Get-CvText -Key 'cat.lvl.1080p30')
                 }
                 @{
                     Value = '4.1'
-                    Text  = '~1080p60'
+                    Text  = (Get-CvText -Key 'cat.lvl.1080p60')
                 }
                 @{
                     Value = '5.0'
-                    Text  = '~4K30'
+                    Text  = (Get-CvText -Key 'cat.lvl.4k30')
                 }
                 @{
                     Value = '5.1'
-                    Text  = '~4K60'
+                    Text  = (Get-CvText -Key 'cat.lvl.4k60')
                 }
                 @{
                     Value = '5.2'
-                    Text  = '~4K120 / 8K limitado'
+                    Text  = (Get-CvText -Key 'cat.lvl.4k120')
                 }
                 @{
                     Value = '6.0'
-                    Text  = '~8K30'
+                    Text  = (Get-CvText -Key 'cat.lvl.8k30')
                 }
                 @{
                     Value = '6.1'
-                    Text  = '~8K60'
+                    Text  = (Get-CvText -Key 'cat.lvl.8k60')
                 }
                 @{
                     Value = '6.2'
-                    Text  = '~8K120'
+                    Text  = (Get-CvText -Key 'cat.lvl.8k120')
                 }
             )
         }
@@ -480,11 +480,11 @@ function Get-CvCodecOptions {
             Profiles = @(
                 @{
                     Value = 'main'
-                    Text  = '8 bits'
+                    Text  = (Get-CvText -Key 'cat.bits.8')
                 }
                 @{
                     Value = 'main10'
-                    Text  = '10 bits (mas color, menos banding)'
+                    Text  = (Get-CvText -Key 'cat.bits.10')
                 }
             )
             Levels = @()
@@ -494,49 +494,49 @@ function Get-CvCodecOptions {
             Profiles = @(
                 @{
                     Value = 'baseline'
-                    Text  = 'basico, sin B-frames (dispositivos antiguos)'
+                    Text  = (Get-CvText -Key 'cat.prof.baseline')
                 }
                 @{
                     Value = 'main'
-                    Text  = 'estandar (SD/broadcast)'
+                    Text  = (Get-CvText -Key 'cat.prof.main')
                 }
                 @{
                     Value = 'high'
-                    Text  = '8 bits, el habitual en HD'
+                    Text  = (Get-CvText -Key 'cat.prof.high')
                 }
                 @{
                     Value = 'high10'
-                    Text  = '10 bits'
+                    Text  = (Get-CvText -Key 'cat.prof.high10')
                 }
             )
             Levels = @(
                 @{
                     Value = '3.0'
-                    Text  = '~480p (SD)'
+                    Text  = (Get-CvText -Key 'cat.lvl.480p')
                 }
                 @{
                     Value = '3.1'
-                    Text  = '~720p30'
+                    Text  = (Get-CvText -Key 'cat.lvl.720p30')
                 }
                 @{
                     Value = '4.0'
-                    Text  = '~1080p30'
+                    Text  = (Get-CvText -Key 'cat.lvl.1080p30')
                 }
                 @{
                     Value = '4.1'
-                    Text  = '~1080p30 (Blu-ray)'
+                    Text  = (Get-CvText -Key 'cat.lvl.1080p30bd')
                 }
                 @{
                     Value = '4.2'
-                    Text  = '~1080p60'
+                    Text  = (Get-CvText -Key 'cat.lvl.1080p60')
                 }
                 @{
                     Value = '5.0'
-                    Text  = '~1080p72 / 2K'
+                    Text  = (Get-CvText -Key 'cat.lvl.1080p72')
                 }
                 @{
                     Value = '5.1'
-                    Text  = '~4K30'
+                    Text  = (Get-CvText -Key 'cat.lvl.4k30')
                 }
             )
         }
@@ -561,27 +561,27 @@ function Get-CvAudioBitrates {
         @(
             @{
                 Value = '192k'
-                Text  = 'estereo / 5.1 basico'
+                Text  = (Get-CvText -Key 'cat.abr.ac3.384')
             }
             @{
                 Value = '256k'
-                Text  = '5.1 buena'
+                Text  = (Get-CvText -Key 'cat.abr.ac3.448')
             }
             @{
                 Value = '384k'
-                Text  = '5.1 alta (recomendado)'
+                Text  = (Get-CvText -Key 'cat.abr.ac3.512')
             }
             @{
                 Value = '448k'
-                Text  = '5.1 muy alta'
+                Text  = (Get-CvText -Key 'cat.abr.ac3.576')
             }
             @{
                 Value = '640k'
-                Text  = 'maxima de AC-3'
+                Text  = (Get-CvText -Key 'cat.abr.ac3.640')
             }
             @{
                 Value    = 'custom'
-                Text     = 'introducir un bitrate a mano (p. ej. 768k)'
+                Text     = (Get-CvText -Key 'cat.abr.mano.768')
                 Position = 'end'
             }
         )
@@ -589,31 +589,31 @@ function Get-CvAudioBitrates {
         @(
             @{
                 Value = '96k'
-                Text  = 'estereo bajo'
+                Text  = (Get-CvText -Key 'cat.abr.aac.96')
             }
             @{
                 Value = '128k'
-                Text  = 'estereo basico'
+                Text  = (Get-CvText -Key 'cat.abr.aac.128')
             }
             @{
                 Value = '160k'
-                Text  = 'estereo bueno'
+                Text  = (Get-CvText -Key 'cat.abr.aac.160')
             }
             @{
                 Value = '192k'
-                Text  = 'estereo alta calidad (recomendado)'
+                Text  = (Get-CvText -Key 'cat.abr.aac.192')
             }
             @{
                 Value = '256k'
-                Text  = 'muy alta'
+                Text  = (Get-CvText -Key 'cat.abr.aac.256')
             }
             @{
                 Value = '320k'
-                Text  = 'maxima habitual'
+                Text  = (Get-CvText -Key 'cat.abr.aac.320')
             }
             @{
                 Value    = 'custom'
-                Text     = 'introducir un bitrate a mano (p. ej. 224k)'
+                Text     = (Get-CvText -Key 'cat.abr.mano.224')
                 Position = 'end'
             }
         )
@@ -634,37 +634,37 @@ function Get-CvAudioCodecs {
         @{
             Value = 'copy'
             Short = 'COPY'
-            Text  = 'copiar la pista original (sin recodificar)'
+            Text  = (Get-CvText -Key 'cat.acod.copy')
         }
         @{
             Value = 'aac'
             Short = 'AAC'
-            Text  = 'AAC-LC  - muy compatible (por defecto)'
+            Text  = (Get-CvText -Key 'cat.acod.aac')
         }
         @{
             Value = 'ac3'
             Short = 'AC3'
-            Text  = 'Dolby Digital (AC-3)  - 5.1 compatible con TV/receptores'
+            Text  = (Get-CvText -Key 'cat.acod.ac3')
         }
         @{
             Value = 'eac3'
             Short = 'EAC3'
-            Text  = 'Dolby Digital Plus (E-AC-3)  - mejor que AC-3 a igual bitrate'
+            Text  = (Get-CvText -Key 'cat.acod.eac3')
         }
         @{
             Value = 'libmp3lame'
             Short = 'MP3'
-            Text  = 'MP3  - universal, con perdida'
+            Text  = (Get-CvText -Key 'cat.acod.mp3')
         }
         @{
             Value = 'flac'
             Short = 'FLAC'
-            Text  = 'FLAC  - sin perdida (ignora el bitrate)'
+            Text  = (Get-CvText -Key 'cat.acod.flac')
         }
         @{
             Value = 'libopus'
             Short = 'OPUS'
-            Text  = 'Opus  - muy eficiente (fuerza 48 kHz)'
+            Text  = (Get-CvText -Key 'cat.acod.opus')
         }
     )
 }
@@ -679,16 +679,16 @@ function Get-CvNvencMultipass {
     @(
         @{
             Value    = 'off'
-            Text     = 'sin 2-pass (1 sola pasada, lo mas rapido)'
+            Text     = (Get-CvText -Key 'cat.mp.off')
             Position = 'first'
         }
         @{
             Value = 'qres'
-            Text  = '2 pasadas, la 1a a 1/4 de resolucion (mejora calidad; algo mas lento)'
+            Text  = (Get-CvText -Key 'cat.mp.qres')
         }
         @{
             Value = 'fullres'
-            Text  = '2 pasadas, la 1a a resolucion completa (mejor calidad; el mas lento)'
+            Text  = (Get-CvText -Key 'cat.mp.fullres')
         }
     )
 }
@@ -1133,8 +1133,8 @@ function Format-CvProfileLabel {
         elseif (($null -ne $Prof.Qmin) -or ($null -ne $Prof.Qmax)) { $parts += ('Q({0}-{1})' -f $Prof.Qmin, $Prof.Qmax) }
         elseif (-not $isCpu) { $parts += 'Q(AUTO)' }
         if ("$($Prof.Multipass)" -in (Get-CvMultipass2Pass)) { $parts += ('2PASS:{0}' -f $Prof.Multipass) }
-        if ("$($Prof.DetectBorder)".ToLower() -eq 'auto') { $parts += 'AUTO-BORDE' }
-        elseif ([bool]$Prof.DetectBorder)                 { $parts += 'DETECT BORDE' }
+        if ("$($Prof.DetectBorder)".ToLower() -eq 'auto') { $parts += (Get-CvText -Key 'lbl.autoborde') }
+        elseif ([bool]$Prof.DetectBorder)                 { $parts += (Get-CvText -Key 'lbl.detectborde') }
         if ($Prof.ChangeSize)   { $parts += ('RESIZE{0} {1}' -f $(if ([bool]$Prof.NoUpscale) { '<=' } else { '' }), $Prof.ChangeSize) }
         if ($null -ne $Prof.MaxWidth -and [int]$Prof.MaxWidth -gt 0) { $parts += ('RESIZE<={0}w' -f [int]$Prof.MaxWidth) }
         $v = ($parts -join '/')

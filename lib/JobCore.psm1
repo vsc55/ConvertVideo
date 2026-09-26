@@ -158,7 +158,7 @@ function Get-CvJobProfileOptions {
     # 'Auto' = el mejor encoder de ESTE equipo; se resuelve al guardar (necesita la sonda de GPU).
     $out += [pscustomobject]@{
         Key    = 'A'
-        Text   = 'Auto (mejor encoder de este equipo: GPU si puede, si no CPU)'
+        Text   = (Get-CvText -Key 'job.prof.auto')
         Label  = ''
         Group  = 'auto'
         Prof   = (New-CvProfile -VideoEncoder 'auto' -AudioEncoder 'aac_coder' -AudioBitrate '128k')
@@ -184,7 +184,7 @@ function Get-CvJobVideoOptions {
         $dw  = Get-CvDisplayWidth -Width $w -Sar $sar
         $anam = ($w -gt 0 -and $dw -ne $w)
         $txt = ("[{0}] {1}x{2} {3}" -f $s.index, $w, $h, $s.codec_name)
-        if ($anam) { $txt += ("  (anamorfico: se ve a {0}px)" -f $dw) }
+        if ($anam) { $txt += (Get-CvText -Key 'job.op.anam' -Values @($dw)) }
         if (Test-CvHdr -Info $Info -Index ([int]$s.index)) { $txt += '  HDR' }
         $out += [pscustomobject]@{
             Index        = [int]$s.index
@@ -221,7 +221,7 @@ function Get-CvJobAudioOptions {
         if (-not $lang) { $lang = 'und' }
         $ch    = [int]$s.channels
         $title = "$(Get-Tag $s 'title')"
-        $br    = if ($s.bit_rate) { ("{0} kbps" -f [int]([double]$s.bit_rate / 1000)) } else { '' }
+        $br    = if ($s.bit_rate) { (Get-CvText -Key 'job.op.kbps' -Values @([int]([double]$s.bit_rate / 1000))) } else { '' }
         $txt   = ("[{0}] {1}  {2}ch  {3}" -f $s.index, $lang, $ch, $s.codec_name)
         if ($br)    { $txt += ("  {0}" -f $br) }
         if ($title) { $txt += ("  '{0}'" -f $title) }
@@ -284,13 +284,13 @@ function Get-CvJobSubtitleOptions {
         $empty = [bool](Test-CvSubtitleEmpty -Stream $s)
         $title = "$(Get-Tag $s 'title')"
         $conv  = switch ($act) {
-            'rescue' { ' -> rescatar a srt' }
-            'srt'    { ' -> srt' }
-            'discard'{ ' (ilegible: no se puede usar)' }
+            'rescue' { (Get-CvText -Key 'job.op.rescatar') }
+            'srt'    { (Get-CvText -Key 'job.op.asrt') }
+            'discard'{ (Get-CvText -Key 'job.op.ilegible') }
             default  { '' }
         }
-        $txt = ("[{0}] {1}  {2}{3}  {4}" -f $s.index, $lang, $s.codec_name, $conv, $(if ($cues -ge 0) { "$cues cues" } else { '? cues' }))
-        if ($empty) { $txt += '  VACIO' }
+        $txt = ("[{0}] {1}  {2}{3}  {4}" -f $s.index, $lang, $s.codec_name, $conv, $(if ($cues -ge 0) { (Get-CvText -Key 'job.op.cues' -Values @($cues)) } else { (Get-CvText -Key 'job.op.cues.no') }))
+        if ($empty) { $txt += ('  ' + (Get-CvText -Key 'job.op.vacio')) }
         if ($title) { $txt += ("  '{0}'" -f $title) }
         $out += [pscustomobject]@{
             Index     = [int]$s.index
@@ -478,16 +478,16 @@ function Test-CvJobDraft {
     param($Draft)
     $err  = @()
     $warn = @()
-    if ($null -eq $Draft) { return [pscustomobject]@{ Ok = $false; Errors = @('borrador vacio'); Warnings = @() } }
-    if ([string]::IsNullOrWhiteSpace("$($Draft.File)")) { $err += 'no hay archivo de origen' }
-    if (-not $Draft.VideoSkip -and [int]$Draft.VideoIndex -lt 0) { $err += 'no hay pista de video elegida' }
+    if ($null -eq $Draft) { return [pscustomobject]@{ Ok = $false; Errors = @((Get-CvText -Key 'job.val.vacio')); Warnings = @() } }
+    if ([string]::IsNullOrWhiteSpace("$($Draft.File)")) { $err += (Get-CvText -Key 'job.val.sinfile') }
+    if (-not $Draft.VideoSkip -and [int]$Draft.VideoIndex -lt 0) { $err += (Get-CvText -Key 'job.val.sinvideo') }
     $tr = @($Draft.Audio)
-    if ($tr.Count -eq 0 -and -not $Draft.AudioSkip) { $warn += 'sin pistas de audio: la salida quedara muda' }
-    if ($tr.Count -gt 0 -and @($tr | Where-Object { $_.Default }).Count -ne 1) { $err += 'tiene que haber exactamente UNA pista de audio predeterminada' }
+    if ($tr.Count -eq 0 -and -not $Draft.AudioSkip) { $warn += (Get-CvText -Key 'job.val.muda') }
+    if ($tr.Count -gt 0 -and @($tr | Where-Object { $_.Default }).Count -ne 1) { $err += (Get-CvText -Key 'job.val.unadef') }
     $crop = "$($Draft.Crop)"
-    if ($crop -and $crop -notmatch '^\d+:\d+:\d+:\d+$') { $err += ("recorte mal escrito ('{0}'): tiene que ser W:H:X:Y" -f $crop) }
+    if ($crop -and $crop -notmatch '^\d+:\d+:\d+:\d+$') { $err += (Get-CvText -Key 'job.val.recorte' -Values @($crop)) }
     foreach ($t in $tr) {
-        if ("$($t.Lang)" -notmatch '^[a-z]{3}$') { $warn += ("idioma '{0}' no es un codigo ISO 639-2 de 3 letras" -f $t.Lang) }
+        if ("$($t.Lang)" -notmatch '^[a-z]{3}$') { $warn += (Get-CvText -Key 'job.val.idioma' -Values @($t.Lang)) }
     }
     [pscustomobject]@{
         Ok       = ($err.Count -eq 0)
@@ -528,7 +528,7 @@ function Format-CvJobBorderCell {
     $geo = Get-CvOutputSize -Width $Width -Height $Height -Crop $Crop -Resize $Resize
     $tam = if ($geo.Width -gt 0) { "{0}x{1}" -f $geo.Width, $geo.Height } else { '' }
     if ("$Crop".Trim() -ne '') { return ("[x] {0}" -f $tam).Trim() }
-    if ($Detect) { return '[ ] sin barras' }
+    if ($Detect) { return (Get-CvText -Key 'job.cell.sinbarras') }
     if ($tam -ne '' -and ($geo.Width -ne $Width -or $geo.Height -ne $Height)) { return $tam }
     return ''
 }
@@ -551,11 +551,11 @@ function Format-CvJobAudioCell {
         [bool]$Skip = $false
     )
     $t = @($Tracks)
-    if ($t.Count -eq 0) { return $(if ($Skip) { '' } else { 'sin audio' }) }
+    if ($t.Count -eq 0) { return $(if ($Skip) { '' } else { (Get-CvText -Key 'job.cell.sinaudio') }) }
     $bits = @()
     $sync = @($t | Where-Object { [double]$_.Sync -ne 0 }) | Select-Object -First 1
-    if ($null -ne $sync) { $bits += ("[x] sync {0}s" -f (Format-CvNumber ([double]$sync.Sync))) }
-    if ($t.Count -gt 1)  { $bits += ("{0} pistas" -f $t.Count) }
+    if ($null -ne $sync) { $bits += (Get-CvText -Key 'job.cell.sync' -Values @((Format-CvNumber ([double]$sync.Sync)))) }
+    if ($t.Count -gt 1)  { $bits += (Get-CvText -Key 'job.cell.pistas' -Values @($t.Count)) }
     if (@($t | Where-Object { [bool]$_.Is51 }).Count -gt 0) { $bits += '5.1' }
     return ($bits -join '  ')
 }
@@ -626,11 +626,11 @@ function Get-CvJobSummaryLines {
         $CueCounts = $null
     )
     if (-not (Test-CvJob -Context $Context -Name $Name)) {
-        return @('Sin preparar: todavia no hay job, asi que no hay nada decidido.')
+        return @((Get-CvText -Key 'sum.sinpreparar'))
     }
     $job = $null
     try { $job = Read-CvJob -Context $Context -Name $Name } catch {
-        return @(("No se pudo leer el job: {0}" -f $_.Exception.Message))
+        return @((Get-CvText -Key 'sum.nolegible' -Values @($_.Exception.Message)))
     }
 
     # Indices -> stream, para poder anadir canales y cues cuando hay -Info.
@@ -646,7 +646,7 @@ function Get-CvJobSummaryLines {
     $fmtKbps = {
         param($Bps)
         if ($null -eq $Bps -or [int64]$Bps -le 0) { return '' }
-        return ("{0} kbps" -f [int]([int64]$Bps / 1000))
+        return (Get-CvText -Key 'sum.kbps' -Values @([int]([int64]$Bps / 1000)))
     }
 
     # Prefijo comun de TODAS las pistas: '*' = la predeterminada, [x] = se conserva, [ ] = no.
@@ -656,14 +656,14 @@ function Get-CvJobSummaryLines {
     }
 
     $L = New-Object System.Collections.Generic.List[string]
-    $dur = if ($null -ne $Info) { ("   dura {0}" -f (Get-DurationText $Info)) } else { '' }
-    $L.Add(("ARCHIVO : {0}{1}" -f $Name, $dur))
+    $dur = if ($null -ne $Info) { (Get-CvText -Key 'sum.dura' -Values @((Get-DurationText $Info))) } else { '' }
+    $L.Add((Get-CvText -Key 'sum.archivo' -Values @($Name, $dur)))
     $prof = $job.profile
-    $lblProf = '(el job no trae perfil)'
+    $lblProf = (Get-CvText -Key 'sum.sinperfil')
     if ($null -ne $prof) {
-        try { $lblProf = Format-CvProfileLabel -Prof $prof } catch { $lblProf = '(perfil ilegible)' }
+        try { $lblProf = Format-CvProfileLabel -Prof $prof } catch { $lblProf = (Get-CvText -Key 'sum.perfilmal') }
     }
-    $L.Add(("PERFIL  : {0}" -f $lblProf))
+    $L.Add((Get-CvText -Key 'sum.perfil' -Values @($lblProf)))
 
     # ---- Video ----
     # Mismo estilo que audio y subtitulos: la cabecera dice QUE se hace y debajo van las pistas del
@@ -671,36 +671,36 @@ function Get-CvJobSummaryLines {
     # salen del origen: es con lo que se compara lo que se va a hacer.
     $v = $job.video
     if ($null -eq $v) {
-        $L.Add('VIDEO   : (el job no trae la seccion de video)')
+        $L.Add((Get-CvText -Key 'sum.sinvideo'))
     } else {
-        $que = if ([bool]$v.skip) { 'se COPIA sin recodificar' } else { 'se recodifica' }
+        $que = if ([bool]$v.skip) { (Get-CvText -Key 'sum.v.copia') } else { (Get-CvText -Key 'sum.v.recod') }
         # El recorte y el escalado NO van en la cabecera: van debajo de la pista elegida, contados en
         # pixeles y con el tamano que queda. Un 'recorte 1920:960:0:60' no dice cuanto se va por cada
         # lado ni con que te quedas, que es justo lo que se quiere saber.
         $bits = @()
         if (-not [bool]$v.skip) {
-            if ([bool]$v.anim)  { $bits += 'tune animacion' }
-            if ([bool]$v.hdr)   { $bits += 'HDR: se tonemapea' }
+            if ([bool]$v.anim)  { $bits += (Get-CvText -Key 'sum.v.anim') }
+            if ([bool]$v.hdr)   { $bits += (Get-CvText -Key 'sum.v.hdr') }
             # Solo se dice cuando esta puesto: es la excepcion, no lo normal.
-            if (Get-CvJobKeepOriginal -Job $job) { $bits += 'si engorda, se queda el original' }
+            if (Get-CvJobKeepOriginal -Job $job) { $bits += (Get-CvText -Key 'sum.v.keep') }
         }
         $allV = @()
         if ($null -ne $Info) { $allV = @(Get-VideoStreams -Info $Info) }
-        $cab = if ($allV.Count -gt 0) { ("{0} pista(s) en el archivo, {1}" -f $allV.Count, $que) } else { $que }
+        $cab = if ($allV.Count -gt 0) { (Get-CvText -Key 'sum.v.pistas' -Values @($allV.Count, $que)) } else { $que }
         if ($bits.Count -gt 0) { $cab += ("  {0}" -f ($bits -join '  ')) }
-        $L.Add(("VIDEO   : {0}" -f $cab))
+        $L.Add((Get-CvText -Key 'sum.video' -Values @($cab)))
         foreach ($vs in $allV) {
             $i = [int]$vs.index
             $o = @((Get-VideoSize -VideoStream $vs), "$($vs.codec_name)")
             if ("$($vs.profile)") { $o += "$($vs.profile)" }
             $depth = Get-CvStreamBitDepth -Stream $vs
-            if ($depth -gt 0) { $o += ("{0} bits" -f $depth) }
+            if ($depth -gt 0) { $o += (Get-CvText -Key 'sum.bits' -Values @($depth)) }
             $fps = Get-CvFrameRate $vs
-            if ($fps -gt 0) { $o += ("{0} fps" -f (Format-CvNumber ([math]::Round($fps, 3)))) }
+            if ($fps -gt 0) { $o += (Get-CvText -Key 'sum.fps' -Values @((Format-CvNumber ([math]::Round($fps, 3))))) }
             $vbr = & $fmtKbps (Get-CvStreamBitrate -Stream $vs)
             if ($vbr) { $o += $vbr }
             $dw = Get-CvDisplayWidth -Width ([int]$vs.width) -Sar "$($vs.sample_aspect_ratio)"
-            if ([int]$vs.width -gt 0 -and $dw -ne [int]$vs.width) { $o += ("anamorfico: se ve a {0}px" -f $dw) }
+            if ([int]$vs.width -gt 0 -and $dw -ne [int]$vs.width) { $o += (Get-CvText -Key 'sum.anamorfico' -Values @($dw)) }
             if (Test-CvHdr -Info $Info -Index $i) { $o += 'HDR' }
             $usa = ($i -eq [int]$v.index)
             $L.Add(("   {0} [{1}] {2}" -f (& $mark $usa $usa), $i, ($o -join '  ')))
@@ -711,15 +711,15 @@ function Get-CvJobSummaryLines {
             if ($geo.Width -le 0) { continue }
             if ($geo.Cropped) {
                 $corte = Format-CvCropCut -Left $geo.Left -Top $geo.Top -Right $geo.Right -Bottom $geo.Bottom
-                $L.Add(("        recorte  {0}x{1}   {2}" -f $geo.CropWidth, $geo.CropHeight, $corte))
+                $L.Add((Get-CvText -Key 'sum.recorte' -Values @($geo.CropWidth, $geo.CropHeight, $corte)))
             }
             if ("$($v.resize)") {
                 $baseW = $(if ($geo.CropWidth  -gt 0) { $geo.CropWidth }  else { [int]$vs.width })
                 $baseH = $(if ($geo.CropHeight -gt 0) { $geo.CropHeight } else { [int]$vs.height })
                 $comoQueda = if ($geo.Width -ne $baseW -or $geo.Height -ne $baseH) {
                     ("-> {0}x{1}" -f $geo.Width, $geo.Height)
-                } else { 'no cambia el tamano' }
-                $L.Add(("        escalado {0}   {1}" -f $v.resize, $comoQueda))
+                } else { (Get-CvText -Key 'sum.nocambia') }
+                $L.Add((Get-CvText -Key 'sum.escalado' -Values @($v.resize, $comoQueda)))
             }
             # QUEDA: el tamano final con su proporcion (que es lo que dice si las barras se han ido
             # bien) y con que se codifica.
@@ -728,12 +728,12 @@ function Get-CvJobSummaryLines {
             if ($null -ne $prof) {
                 $enc = Get-CvEncoderShortName -Encoder "$($prof.VideoEncoder)"
                 if ($enc) { $q += $enc }
-                if ("$($prof.VideoProfile)" -match '10') { $q += '10 bits' }
+                if ("$($prof.VideoProfile)" -match '10') { $q += (Get-CvText -Key 'sum.10bits') }
             }
             $ofps = 0.0
             try { $ofps = [double](Get-CvOutputFps -Context $Context -Info $Info) } catch { $ofps = 0.0 }
-            if ($ofps -gt 0) { $q += ("{0} fps" -f (Format-CvNumber ([math]::Round($ofps, 3)))) }
-            $L.Add(("        QUEDA    {0}" -f ($q -join '  ')))
+            if ($ofps -gt 0) { $q += (Get-CvText -Key 'sum.fps' -Values @((Format-CvNumber ([math]::Round($ofps, 3))))) }
+            $L.Add((Get-CvText -Key 'sum.queda' -Values @(($q -join '  '))))
         }
     }
 
@@ -743,11 +743,11 @@ function Get-CvJobSummaryLines {
     $tracks = @(Get-CvJobAudioTracks $job.audio)
     $keepA  = @{}
     foreach ($t in $tracks) { $keepA[[int]$t.Index] = $t }
-    $modo = if ($null -ne $job.audio -and [bool]$job.audio.skip) { 'se COPIAN' } else { 'se recodifican' }
+    $modo = if ($null -ne $job.audio -and [bool]$job.audio.skip) { (Get-CvText -Key 'sum.a.copian') } else { (Get-CvText -Key 'sum.a.recod') }
     $allA = @()
     if ($null -ne $Info) { $allA = @(Get-AudioStreams -Info $Info) }
     if ($allA.Count -gt 0) {
-        $L.Add(("AUDIO   : {0} pista(s) en el archivo, se conservan {1} ({2})" -f $allA.Count, $tracks.Count, $modo))
+        $L.Add((Get-CvText -Key 'sum.audio' -Values @($allA.Count, $tracks.Count, $modo)))
         foreach ($a in $allA) {
             $i = [int]$a.index
             $t = $keepA[$i]
@@ -758,14 +758,14 @@ function Get-CvJobSummaryLines {
             $abr = & $fmtKbps (Get-CvAudioBitrate -Stream $a)
             if ($abr) { $bits += $abr }
             $sr = 0
-            if ([int]::TryParse("$($a.sample_rate)".Trim(), [ref]$sr) -and $sr -gt 0) { $bits += ("{0} kHz" -f (Format-CvNumber ([math]::Round($sr / 1000.0, 1)))) }
+            if ([int]::TryParse("$($a.sample_rate)".Trim(), [ref]$sr) -and $sr -gt 0) { $bits += (Get-CvText -Key 'sum.khz' -Values @((Format-CvNumber ([math]::Round($sr / 1000.0, 1))))) }
             $lay = "$($a.channel_layout)"
             if ($lay) { $bits += $lay }
             $ttl  = "$(Get-Tag $a 'title')"
             if ($ttl) { $bits += ("'{0}'" -f $ttl) }
             if ($null -ne $t) {
-                if ("$($t.Lang)" -ne $lang) { $bits += ("se etiqueta como {0}" -f $t.Lang) }
-                if ([double]$t.Sync -ne 0)  { $bits += ("sync {0}s" -f (Format-CvNumber $t.Sync)) }
+                if ("$($t.Lang)" -ne $lang) { $bits += (Get-CvText -Key 'sum.etiqueta' -Values @($t.Lang)) }
+                if ([double]$t.Sync -ne 0)  { $bits += (Get-CvText -Key 'sum.sync' -Values @((Format-CvNumber $t.Sync))) }
             }
             $L.Add(("   {0} [{1}] {2}" -f (& $mark ($null -ne $t) ($null -ne $t -and [bool]$t.Default)), $i, ($bits -join '  ')))
             # Y que va a ser de ella: canales de salida (la MISMA decision que toma el codificador,
@@ -777,23 +777,23 @@ function Get-CvJobSummaryLines {
             $ac = "$($prof.AudioCodec)".ToLower(); if (-not $ac) { $ac = 'aac' }
             $qa = @($ac, ("{0}ch" -f $plan.Channels))
             $abit = "$($prof.AudioBitrate)".Trim()
-            if ($abit -match '^(\d+)\s*[kK]$') { $qa += ("{0} kbps" -f $Matches[1]) } elseif ($abit) { $qa += $abit }
+            if ($abit -match '^(\d+)\s*[kK]$') { $qa += (Get-CvText -Key 'sum.kbps' -Values @($Matches[1])) } elseif ($abit) { $qa += $abit }
             $ahz = 0
             if ([int]::TryParse("$($prof.AudioHz)".Trim(), [ref]$ahz) -and $ahz -le 0) { $ahz = [int]$Context.DefaultAudioHz }
             if ($ac -eq 'libopus') { $ahz = 48000 }   # opus solo admite 48 kHz (lo fuerza el render)
-            if ($ahz -gt 0) { $qa += ("{0} kHz" -f (Format-CvNumber ([math]::Round($ahz / 1000.0, 1)))) }
-            if ([int]$plan.Channels -lt $ch) { $qa += ("downmix desde {0}ch" -f $ch) }
-            if ([bool]$plan.Downmix) { $qa += 'voz reforzada' }
-            $L.Add(("        QUEDA    {0}" -f ($qa -join '  ')))
+            if ($ahz -gt 0) { $qa += (Get-CvText -Key 'sum.khz' -Values @((Format-CvNumber ([math]::Round($ahz / 1000.0, 1))))) }
+            if ([int]$plan.Channels -lt $ch) { $qa += (Get-CvText -Key 'sum.downmix' -Values @($ch)) }
+            if ([bool]$plan.Downmix) { $qa += (Get-CvText -Key 'sum.vozreforzada') }
+            $L.Add((Get-CvText -Key 'sum.queda' -Values @(($qa -join '  '))))
         }
     } elseif ($tracks.Count -eq 0) {
-        $L.Add('AUDIO   : ninguna pista (la salida quedara muda)')
+        $L.Add((Get-CvText -Key 'sum.audio.muda'))
     } else {
-        $L.Add(("AUDIO   : {0} pista(s) elegida(s), {1}" -f $tracks.Count, $modo))
+        $L.Add((Get-CvText -Key 'sum.audio.elegidas' -Values @($tracks.Count, $modo)))
         foreach ($t in $tracks) {
             $bits = @(("{0,-4}" -f $t.Lang))
             if ([bool]$t.Is51)         { $bits += '5.1' }
-            if ([double]$t.Sync -ne 0) { $bits += ("sync {0}s" -f (Format-CvNumber $t.Sync)) }
+            if ([double]$t.Sync -ne 0) { $bits += (Get-CvText -Key 'sum.sync' -Values @((Format-CvNumber $t.Sync))) }
             $L.Add(("   {0} [{1}] {2}" -f (& $mark $true ([bool]$t.Default)), $t.Index, ($bits -join '  ')))
         }
     }
@@ -805,7 +805,7 @@ function Get-CvJobSummaryLines {
     $allS = @()
     if ($null -ne $Info) { $allS = @(Get-SubtitleStreams -Info $Info) }
     if ($allS.Count -gt 0) {
-        $L.Add(("SUBS    : {0} pista(s) en el archivo, se conservan {1}" -f $allS.Count, $subs.Count))
+        $L.Add((Get-CvText -Key 'sum.subs' -Values @($allS.Count, $subs.Count)))
         foreach ($sub in $allS) {
             $i = [int]$sub.index
             $s = $keepS[$i]
@@ -819,28 +819,28 @@ function Get-CvJobSummaryLines {
             if ($cues -lt 0 -and $cueJob.ContainsKey("$i")) { $cues = [int]$cueJob["$i"] }
             if ($cues -lt 0 -and $null -ne $s -and $s.PSObject.Properties['Cues']) { $cues = [int]$s.Cues }
             if ($cues -lt 0) { $cues = Get-CvSubtitleCueTag -Stream $sub }
-            if ($cues -ge 0) { $bits += ("{0} lineas" -f $cues) }
-            if ($cues -eq 0) { $bits += 'VACIO' }
+            if ($cues -ge 0) { $bits += (Get-CvText -Key 'sum.lineas' -Values @($cues)) }
+            if ($cues -eq 0) { $bits += (Get-CvText -Key 'sum.vacio') }
             # Lo que se ESCRIBIRA si se conserva (lo dice el job); si no, como viene en el origen.
             if ($null -ne $s) {
-                $bits += $(if ([bool]$s.Forced) { 'forzado' } else { 'completo' })
-                if ([bool]$s.Rescue)    { $bits += 'rescatado -> srt' }
-                elseif ([bool]$s.ToSrt) { $bits += '-> srt' }
-                if ("$($s.Lang)" -ne $lang) { $bits += ("se etiqueta como {0}" -f $s.Lang) }
+                $bits += $(if ([bool]$s.Forced) { (Get-CvText -Key 'sum.forzado') } else { (Get-CvText -Key 'sum.completo') })
+                if ([bool]$s.Rescue)    { $bits += (Get-CvText -Key 'sum.rescatado') }
+                elseif ([bool]$s.ToSrt) { $bits += (Get-CvText -Key 'sum.asrt') }
+                if ("$($s.Lang)" -ne $lang) { $bits += (Get-CvText -Key 'sum.etiqueta' -Values @($s.Lang)) }
             } else {
-                if (Test-SubForced $sub)  { $bits += 'forzado en origen' }
-                if (Test-SubDefault $sub) { $bits += 'predeterminado en origen' }
+                if (Test-SubForced $sub)  { $bits += (Get-CvText -Key 'sum.forzadoorig') }
+                if (Test-SubDefault $sub) { $bits += (Get-CvText -Key 'sum.defectoorig') }
             }
             $ttl = "$(Get-Tag $sub 'title')"
             if ($ttl) { $bits += ("'{0}'" -f $ttl) }
             $L.Add(("   {0} [{1}] {2}" -f (& $mark ($null -ne $s) ($null -ne $s -and [bool]$s.Default)), $i, ($bits -join '  ')))
         }
     } elseif ($subs.Count -eq 0) {
-        $L.Add('SUBS    : ninguno')
+        $L.Add((Get-CvText -Key 'sum.subs.ninguno'))
     } else {
-        $L.Add(("SUBS    : {0} elegido(s)" -f $subs.Count))
+        $L.Add((Get-CvText -Key 'sum.subs.elegidos' -Values @($subs.Count)))
         foreach ($s in $subs) {
-            $bits = @(("{0,-4}" -f $s.Lang), "$($s.Codec)", $(if ([bool]$s.Forced) { 'forzado' } else { 'completo' }))
+            $bits = @(("{0,-4}" -f $s.Lang), "$($s.Codec)", $(if ([bool]$s.Forced) { (Get-CvText -Key 'sum.forzado') } else { (Get-CvText -Key 'sum.completo') }))
             $L.Add(("   {0} [{1}] {2}" -f (& $mark $true ([bool]$s.Default)), $s.Index, ($bits -join '  ')))
         }
     }
@@ -876,7 +876,7 @@ function Set-CvJobDraftAudioSync {
     $tracks = @($Draft.Audio)
     if ($tracks.Count -eq 0) { return $notas }
     try {
-        if ($OnStep) { & $OnStep 'Comprobando la sincronia del audio...' }
+        if ($OnStep) { & $OnStep (Get-CvText -Key 'plan.sync') }
         $dur = Get-MediaDuration $Info
         $file = "$($Draft.File)"
         $vEnd = Get-CvStreamEndPts -Context $Context -File $file -Stream 'v:0' -Duration $dur -What 'video'
@@ -976,7 +976,7 @@ function Test-CvJobBulkChanges {
     if ($c.Count -eq 0) { $err += 'no se ha marcado ningun ajuste' }
     if ($c.ContainsKey('crop')) {
         $crop = "$($c['crop'])"
-        if ($crop -and $crop -notmatch '^\d+:\d+:\d+:\d+$') { $err += ("recorte mal escrito ('{0}'): tiene que ser W:H:X:Y" -f $crop) }
+        if ($crop -and $crop -notmatch '^\d+:\d+:\d+:\d+$') { $err += (Get-CvText -Key 'job.val.recorte' -Values @($crop)) }
     }
     if ($c.ContainsKey('resize')) {
         $rs = "$($c['resize'])"
@@ -1037,13 +1037,13 @@ function Get-CvJobBulkSummary {
         foreach ($k in @($Changes.Keys)) { $c["$k"] = $Changes[$k] }
     }
     $p = @()
-    if ($c.ContainsKey('prof') -and $null -ne $c['prof']) { $p += ("perfil -> {0}" -f (Format-CvProfileLabel -Prof $c['prof'])) }
-    if ($c.ContainsKey('videoCopy')) { $p += ("video -> {0}" -f $(if ([bool]$c['videoCopy']) { 'copiar' } else { 'recodificar' })) }
-    if ($c.ContainsKey('audioCopy')) { $p += ("audio -> {0}" -f $(if ([bool]$c['audioCopy']) { 'copiar' } else { 'recodificar' })) }
-    if ($c.ContainsKey('anim'))      { $p += ("animacion -> {0}" -f $(if ([bool]$c['anim']) { 'si' } else { 'no' })) }
-    if ($c.ContainsKey('keepOriginal')) { $p += ("si engorda -> {0}" -f $(if ([bool]$c['keepOriginal']) { 'quedarse con el original' } else { 'dejar el recodificado' })) }
-    if ($c.ContainsKey('resize'))    { $p += ("escalado -> {0}" -f $(if ("$($c['resize'])") { "$($c['resize'])" } else { 'sin escalar' })) }
-    if ($c.ContainsKey('crop'))      { $p += ("recorte -> {0}" -f $(if ("$($c['crop'])") { "$($c['crop'])" } else { 'sin recorte' })) }
+    if ($c.ContainsKey('prof') -and $null -ne $c['prof']) { $p += (Get-CvText -Key 'bulk.sum.perfil' -Values @((Format-CvProfileLabel -Prof $c['prof']))) }
+    if ($c.ContainsKey('videoCopy')) { $p += (Get-CvText -Key 'bulk.sum.video' -Values @($(if ([bool]$c['videoCopy']) { Get-CvText -Key 'bulk.sum.copiar' } else { Get-CvText -Key 'bulk.sum.recod' }))) }
+    if ($c.ContainsKey('audioCopy')) { $p += (Get-CvText -Key 'bulk.sum.audio' -Values @($(if ([bool]$c['audioCopy']) { Get-CvText -Key 'bulk.sum.copiar' } else { Get-CvText -Key 'bulk.sum.recod' }))) }
+    if ($c.ContainsKey('anim'))      { $p += (Get-CvText -Key 'bulk.sum.anim'  -Values @($(if ([bool]$c['anim']) { Get-CvText -Key 'bulk.sum.si' } else { Get-CvText -Key 'bulk.sum.no' }))) }
+    if ($c.ContainsKey('keepOriginal')) { $p += (Get-CvText -Key 'bulk.sum.keep' -Values @($(if ([bool]$c['keepOriginal']) { Get-CvText -Key 'bulk.sum.keepsi' } else { Get-CvText -Key 'bulk.sum.keepno' }))) }
+    if ($c.ContainsKey('resize'))    { $p += (Get-CvText -Key 'bulk.sum.resize' -Values @($(if ("$($c['resize'])") { "$($c['resize'])" } else { Get-CvText -Key 'bulk.sum.sinesc' }))) }
+    if ($c.ContainsKey('crop'))      { $p += (Get-CvText -Key 'bulk.sum.crop'   -Values @($(if ("$($c['crop'])") { "$($c['crop'])" } else { Get-CvText -Key 'bulk.sum.sincrop' }))) }
     return ($p -join ', ')
 }
 
@@ -1128,7 +1128,7 @@ function Get-CvJobAutoPlan {
     }
 
     $f = if ($File) { $File } else { "$($Info.format.filename)" }
-    & $step 'Analizando pistas...'
+    & $step (Get-CvText -Key 'plan.pistas')
     $draft   = New-CvJobDraft -Context $Context -Prof $Prof -Info $Info -File $f
     $reasons = @()
 
@@ -1138,16 +1138,16 @@ function Get-CvJobAutoPlan {
         $reasons += ("Hay {0} pistas de video: elige cual usar." -f $vids.Count)
     }
     if ($vids.Count -gt 0 -and $vids[0].Anamorphic -and -not $draft.VideoSkip) {
-        $reasons += 'Video anamorfico (el tamano almacenado no es el que se ve): revisa el escalado.'
+        $reasons += (Get-CvText -Key 'plan.anamorfico')
     }
 
     # ---- Audio: sin pista del idioma preferido, o varias (elegir cual/cuales) ----
     $auds = @(Get-CvJobAudioOptions -Context $Context -Info $Info)
     $pref = @($auds | Where-Object { $_.Preferred })
     if ($auds.Count -eq 0) {
-        $reasons += 'El archivo no tiene pista de audio.'
+        $reasons += (Get-CvText -Key 'plan.sinaudio')
     } elseif ($pref.Count -eq 0) {
-        $reasons += ("Ninguna pista de audio en el idioma preferido ({0}): elige una." -f ($Context.AudioLangs -join '/'))
+        $reasons += (Get-CvText -Key 'plan.audio.idioma' -Values @((($Context.AudioLangs -join '/'))))
     } elseif ($pref.Count -gt 1) {
         $reasons += ("{0} pistas de audio en el idioma preferido: elige cuales conservar y la predeterminada." -f $pref.Count)
     }
@@ -1170,7 +1170,7 @@ function Get-CvJobAutoPlan {
     if (-not $draft.VideoSkip -and $vids.Count -gt 0 -and ($on -or $auto)) {
         $v = $vids[0]
         if ($auto) {
-            & $step 'Comprobando si hay barras negras (pre-escaneo)...'
+            & $step (Get-CvText -Key 'plan.prescan')
             $c = Get-CvJobCropCandidates -Context $Context -Info $Info -Index ([int]$draft.VideoIndex) `
                 -Duration ([int]$Context.BorderAutoDuration) -Samples ([int]$Context.BorderAutoSamples)
             $cands = @($c.Groups)
@@ -1186,14 +1186,14 @@ function Get-CvJobAutoPlan {
                 $draft.Crop = ''
             }
         } else {
-            & $step 'Detectando bordes negros...'
+            & $step (Get-CvText -Key 'plan.bordes')
             $c = Get-CvJobCropCandidates -Context $Context -Info $Info -Index ([int]$draft.VideoIndex)
             $cands = @($c.Groups)
             if ($cands.Count -gt 0) {
                 $draft.Crop = "$($c.Top)"
                 # Con detectBorder=true la consola SIEMPRE confirma el recorte con preview: aqui se
                 # propone y se marca como intervencion, para no recortar por nuestra cuenta.
-                $reasons += ('Recorte propuesto {0} ({1}% de los puntos): confirmalo o cambialo.' -f $c.Top, $c.TopPct)
+                $reasons += (Get-CvText -Key 'plan.recorte' -Values @($c.Top, $c.TopPct))
             }
         }
     }

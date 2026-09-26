@@ -142,18 +142,18 @@ function Format-CvCropCut {
     )
     # Barras simetricas (el caso normal): se dice una vez y se nombra lo que son.
     if ($Top -gt 0 -and $Top -eq $Bottom -and $Left -eq 0 -and $Right -eq 0) {
-        return ("quita {0}px arriba y abajo (barras horizontales)" -f $Top)
+        return (Get-CvText -Key 'crop.horiz' -Values @($Top))
     }
     if ($Left -gt 0 -and $Left -eq $Right -and $Top -eq 0 -and $Bottom -eq 0) {
-        return ("quita {0}px a cada lado (barras verticales)" -f $Left)
+        return (Get-CvText -Key 'crop.vert' -Values @($Left))
     }
     $bits = @()
-    if ($Top    -gt 0) { $bits += ("{0}px arriba" -f $Top) }
-    if ($Bottom -gt 0) { $bits += ("{0}px abajo" -f $Bottom) }
-    if ($Left   -gt 0) { $bits += ("{0}px a la izquierda" -f $Left) }
-    if ($Right  -gt 0) { $bits += ("{0}px a la derecha" -f $Right) }
+    if ($Top    -gt 0) { $bits += (Get-CvText -Key 'crop.arriba' -Values @($Top)) }
+    if ($Bottom -gt 0) { $bits += (Get-CvText -Key 'crop.abajo'  -Values @($Bottom)) }
+    if ($Left   -gt 0) { $bits += (Get-CvText -Key 'crop.izq'    -Values @($Left)) }
+    if ($Right  -gt 0) { $bits += (Get-CvText -Key 'crop.der'    -Values @($Right)) }
     if ($bits.Count -eq 0) { return '' }
-    return ("quita {0}" -f ($bits -join ' y '))
+    return (Get-CvText -Key 'crop.quita' -Values @(($bits -join (Get-CvText -Key 'crop.y'))))
 }
 
 function Merge-CvCropBoxes {
