@@ -12,6 +12,29 @@
     lib\WorkerCore.psm1; la ventana que pinta todo esto es form\GuiConvertWindow.psm1.
 #>
 
+function Get-CvQueueColumns {
+    <#
+        Las columnas de la cola, como DATOS. La de PROGRESO se estira con la ventana (se busca por
+        su Key con Get-CvGuiCatalogIndex, no por el numero: anadir una columna delante no puede
+        romperlo) y las demas tienen ancho fijo.
+
+        'Bordes' y 'Audio' salen del job (sin ffprobe): de un vistazo se ve a cuales les ha entrado
+        el recorte y cuales llevan algo de audio que conviene revisar DESPUES de codificar (una
+        sincronia aplicada, varias pistas, una 5.1 mezclada a estereo).
+    #>
+    $cols = @(
+        @{ Key = 'file';    Text = 'Archivo';  Width = 300 }
+        @{ Key = 'size';    Text = 'Tamano';   Width = 85  }
+        @{ Key = 'state';   Text = 'Estado';   Width = 120 }
+        @{ Key = 'borders'; Text = 'Bordes';   Width = 55  }
+        @{ Key = 'audio';   Text = 'Audio';    Width = 150 }
+        @{ Key = 'worker';  Text = 'Worker';   Width = 70  }
+        @{ Key = 'prog';    Text = 'Progreso'; Width = 300 }
+        @{ Key = 'eta';     Text = 'ETA';      Width = 80  }
+    )
+    return ,$cols
+}
+
 function Format-CvQueueRow {
     <#
         PURO. Las celdas de una fila de la cola, en orden: archivo, tamano, estado, worker, progreso

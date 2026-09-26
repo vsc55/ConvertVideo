@@ -188,22 +188,12 @@ function Show-CvConvertWindow {
     $lv.MultiSelect   = $true    # acciones en bloque: quitar varios jobs, liberar varios bloqueos...
     $lv.Font          = (New-CvGuiFont 9)   # monoespaciada: la barra de progreso se pinta con bloques
     $lv.Name          = 'cvQueue'
-    # La de PROGRESO se estira con la ventana (ver $fitCols); las demas tienen ancho fijo.
-    # 'Bordes' y 'Audio' salen del job (sin ffprobe): de un vistazo se ve a cuales les ha entrado el
-    # recorte y cuales llevan algo de audio que conviene revisar DESPUES de codificar (una sincronia
-    # aplicada, varias pistas, una 5.1 mezclada a estereo).
-    $cols = @(
-        @{ Text = 'Archivo';  Width = 300 }
-        @{ Text = 'Tamano';   Width = 85  }
-        @{ Text = 'Estado';   Width = 120 }
-        @{ Text = 'Bordes';   Width = 55  }
-        @{ Text = 'Audio';    Width = 150 }
-        @{ Text = 'Worker';   Width = 70  }
-        @{ Text = 'Progreso'; Width = 300 }
-        @{ Text = 'ETA';      Width = 80  }
-    )
-    $iProg = 6
-    foreach ($c in $cols) { [void]$lv.Columns.Add($c.Text, $c.Width) }
+    # Las columnas salen del CATALOGO (Get-CvQueueColumns) y la de PROGRESO -la que se estira con la
+    # ventana, ver $fitCols- se busca por su Key: anadir una columna delante ya no puede descuadrar
+    # a quien la maneja por su numero.
+    $cols  = Get-CvQueueColumns
+    $iProg = Get-CvGuiCatalogIndex -Items $cols -Key 'prog'
+    [void](Add-CvGuiListColumns -List $lv -Columns $cols)
     [void](Set-CvGuiDoubleBuffered -Control $lv)   # sin esto, el refresco de cada segundo parpadea
     $topGrid.Controls.Add($lv, 0, 0)
 

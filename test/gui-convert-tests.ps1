@@ -549,6 +549,60 @@ Assert-Eq   'Logs: solo los de Convert' 1 $choices.Count
 Assert-Eq   'Logs: el del worker vivo'  1234 $choices[0].WorkerPid
 Assert-True 'Logs: lo marca en el texto' ($choices[0].Text -match 'en curso')
 
+
+# ================================================================================================
+# CATALOGOS DE LAYOUT: las filas y las columnas de las ventanas son DATOS, asi que se revisan aqui
+# sin abrir ninguna. Lo que se mira es lo que rompe una ventana de verdad: un tipo de control que
+# el constructor no sabe montar, dos controles con el mismo nombre (Controls.Find devolveria dos y
+# la ventana engancharia el manejador al que no es) o una columna sin ancho.
+Write-Host "`nCatalogos de layout (filas y columnas)" -ForegroundColor Cyan
+
+$kinds = @('label', 'text', 'check', 'button', 'combo')
+
+$vRows = Get-CvJobVideoRows
+Assert-Eq   'Video: cuatro filas'            4 $vRows.Count
+$vCells = @()
+foreach ($r in $vRows) { foreach ($c in @($r.Cells)) { $vCells += $c } }
+Assert-True 'Video: todas las celdas son de un tipo conocido' (@($vCells | Where-Object { $kinds -notcontains "$($_.Kind)" }).Count -eq 0)
+$vNames = @($vCells | ForEach-Object { "$($_.Name)" } | Where-Object { $_ -ne '' })
+Assert-Eq   'Video: nueve controles con nombre' 9 $vNames.Count
+Assert-Eq   'Video: ningun nombre repetido'  $vNames.Count @($vNames | Sort-Object -Unique).Count
+Assert-True 'Video: todos se llaman cvJob*'  (@($vNames | Where-Object { -not $_.StartsWith('cvJob') }).Count -eq 0)
+# La fila de 'quedarse con el original' ocupa el ancho entero: si no, el texto sale cortado.
+$keep = @($vCells | Where-Object { "$($_.Name)" -eq 'cvJobKeepOriginal' })[0]
+Assert-Eq   'Video: la de quedarse con el original ocupa tres columnas' 3 ([int]$keep.Span)
+
+foreach ($par in @(
+    @{ N = 'audio'; C = (Get-CvJobAudioColumns); T = 6 }
+    @{ N = 'subs';  C = (Get-CvJobSubColumns);   T = 5 }
+    @{ N = 'cola';  C = (Get-CvQueueColumns);    T = 8 }
+)) {
+    $cols = @($par.C)
+    Assert-Eq   ("Columnas {0}: cuantas hay" -f $par.N)       ([int]$par.T) $cols.Count
+    Assert-True ("Columnas {0}: todas con texto y ancho" -f $par.N) (@($cols | Where-Object { "$($_.Text)" -eq '' -or [int]$_.Width -le 0 }).Count -eq 0)
+    $keys = @($cols | ForEach-Object { "$($_.Key)" })
+    Assert-Eq   ("Columnas {0}: ninguna clave repetida" -f $par.N) $keys.Count @($keys | Sort-Object -Unique).Count
+}
+
+# El numero magico que ya no hay que recordar: la de progreso se busca por su clave.
+$qCols = Get-CvQueueColumns
+$iPr   = Get-CvGuiCatalogIndex -Items $qCols -Key 'prog'
+Assert-Eq   'Cola: la columna de progreso se encuentra por su clave' 'Progreso' "$($qCols[$iPr].Text)"
+Assert-Eq   'Catalogo: una clave que no esta da -1' -1 (Get-CvGuiCatalogIndex -Items $qCols -Key 'noexiste')
+
+foreach ($par in @(
+    @{ N = 'audio'; I = (Get-CvJobAudioBarItems) }
+    @{ N = 'subs';  I = (Get-CvJobSubBarItems) }
+)) {
+    $items = @($par.I)
+    Assert-True ("Barra {0}: todos los controles son de un tipo conocido" -f $par.N) (@($items | Where-Object { $kinds -notcontains "$($_.Kind)" }).Count -eq 0)
+    $nm = @($items | ForEach-Object { "$($_.Name)" } | Where-Object { $_ -ne '' })
+    Assert-Eq   ("Barra {0}: ningun nombre repetido" -f $par.N) $nm.Count @($nm | Sort-Object -Unique).Count
+    # Lo que no es etiqueta tiene que poder engancharse a un manejador, asi que necesita nombre.
+    Assert-True ("Barra {0}: todo lo que no es etiqueta tiene nombre" -f $par.N) (@($items | Where-Object { "$($_.Kind)" -ne 'label' -and "$($_.Name)" -eq '' }).Count -eq 0)
+}
+
+
 # ================================================================================================
 Write-Host "`nGuiConvert - ventana de la cola (leida sin raton)" -ForegroundColor Cyan
 $sta = ([System.Threading.Thread]::CurrentThread.GetApartmentState() -eq [System.Threading.ApartmentState]::STA)
@@ -722,7 +776,7 @@ if (-not $sta) {
     Assert-Eq   'Ventana sin excepciones'   '' $script:guiErr
     Assert-True 'Ventana: se abrio'         $opened
     Assert-Eq   'Ventana: una fila por video' 5 $script:rowCount
-    Assert-Eq   'Ventana: ocho columnas'      8 $script:colCount
+    Assert-Eq   'Ventana: una columna por entrada del catalogo' (Get-CvQueueColumns).Count $script:colCount
     Assert-Eq   'Ventana: bordes y audio a la vista' 'Archivo|Tamano|Estado|Bordes|Audio|Worker|Progreso|ETA' $script:colNames
     Assert-Eq   'Ventana: primer archivo'   'Serie_1x01' $script:firstName
     Assert-Eq   'Ventana: estados en orden' 'Hecho,Codificando,En cola,Sin preparar,Bloqueo huerfano' $script:states
@@ -1204,6 +1258,17 @@ if ($null -eq $jobInfo) {
                 $lvAu = $f.Controls.Find('cvJobAudio',   $true)[0]
                 $lvSu = $f.Controls.Find('cvJobSubs',    $true)[0]
                 $script:jobHasSubPlay = ($f.Controls.Find('cvJobSubPlay', $true).Count -eq 1)
+                # El formulario se dibuja desde los CATALOGOS: si uno nombra un control, la ventana
+                # tiene que tenerlo, y uno solo. Es lo que sujeta el layout por catalogo -un nombre
+                # mal escrito en el catalogo no da error, deja un $null que revienta al pulsar-.
+                $script:jobFaltan = @()
+                $catNames = @()
+                foreach ($r in (Get-CvJobVideoRows)) { foreach ($c in @($r.Cells)) { $catNames += "$($c.Name)" } }
+                foreach ($i in (Get-CvJobAudioBarItems)) { $catNames += "$($i.Name)" }
+                foreach ($i in (Get-CvJobSubBarItems))   { $catNames += "$($i.Name)" }
+                foreach ($n in @($catNames | Where-Object { $_ -ne '' })) {
+                    if ($f.Controls.Find($n, $true).Count -ne 1) { $script:jobFaltan += $n }
+                }
                 $cmbP = $f.Controls.Find('cvJobProfile', $true)[0]
                 $txL  = $f.Controls.Find('cvJobAudioLang', $true)[0]
                 $bDf  = $f.Controls.Find('cvJobAudioDefault', $true)[0]
@@ -1237,6 +1302,7 @@ if ($null -eq $jobInfo) {
         Assert-Eq   'Editor: arranca con la spa marcada'  1 $script:jobChecked
         Assert-True 'Editor: ofrece perfiles'    ($script:jobProfs -ge 2)
         Assert-True 'Editor: se puede reproducir un subtitulo' $script:jobHasSubPlay
+    Assert-Eq   'Editor: estan todos los controles del catalogo' '' (@($script:jobFaltan) -join ', ')
         $saved = Read-CvJobDraft -Context $ctxJob -Name 'Serie_2x01'
         Assert-Eq   'Editor: dos pistas de audio' 2 @($saved.Audio).Count
         Assert-Eq   'Editor: la predeterminada primero' 'eng' $saved.Audio[0].Lang

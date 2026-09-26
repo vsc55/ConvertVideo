@@ -11,6 +11,108 @@
     varios a la vez) y form\GuiPrepareWindow.psm1 (preparar los pendientes).
 #>
 
+function Get-CvJobVideoRows {
+    <#
+        Las filas del bloque VIDEO del editor de un job, como DATOS: la ventana solo las dibuja (con
+        Add-CvGuiFormRows). La columna 0 es la etiqueta y las celdas se colocan de la 1 en adelante.
+
+        Anadir un ajuste de video a la ventana es anadir una fila aqui.
+    #>
+    $rows = @(
+        @{
+            Label = 'Pista:'
+            Cells = @(
+                @{ Kind = 'combo'; Name = 'cvJobVideo';     Fill = $true }
+                @{ Kind = 'check'; Name = 'cvJobVideoCopy'; Text = 'Copiar (sin recodificar)'; Gap = 6; Top = 6 }
+                @{ Kind = 'check'; Name = 'cvJobAnim';      Text = 'Animacion';                Gap = 6; Top = 6 }
+            )
+        }
+        @{
+            Label = 'Recorte:'
+            Cells = @(
+                @{ Kind = 'text';   Name = 'cvJobCrop';        Fill = $true }
+                @{ Kind = 'button'; Name = 'cvJobCropDetect';  Text = 'Detectar bordes'; Fill = $true }
+                @{ Kind = 'button'; Name = 'cvJobCropPreview'; Text = 'Ver recorte';     Fill = $true }
+            )
+        }
+        @{
+            Label = 'Escalado:'
+            Cells = @(
+                @{ Kind = 'text';  Name = 'cvJobResize';    Fill = $true }
+                @{ Kind = 'label'; Name = 'cvJobVideoInfo'; Text = ''; Span = 2 }
+            )
+        }
+        @{
+            # Recodificar no siempre compensa: si la pista recodificada sale MAS GRANDE que la
+            # original y la imagen no se toca, se puede dejar la original. Viene marcado segun
+            # encode.video, y aqui se decide para ESTE archivo (se congela en su job).
+            Label = ''
+            Cells = @(
+                @{ Kind = 'check'; Name = 'cvJobKeepOriginal'; Text = 'Si el video recodificado engorda, quedarse con el original'; Gap = 6; Top = 6; Span = 3 }
+            )
+        }
+    )
+    return ,$rows
+}
+
+function Get-CvJobAudioColumns {
+    <# Columnas de la lista de PISTAS DE AUDIO del editor de un job. #>
+    $cols = @(
+        @{ Key = 'track'; Text = 'Pista';    Width = 330 }
+        @{ Key = 'lang';  Text = 'Idioma';   Width = 70  }
+        @{ Key = 'ch';    Text = 'Canales';  Width = 70  }
+        @{ Key = 'codec'; Text = 'Codec';    Width = 90  }
+        @{ Key = 'def';   Text = 'Predet.';  Width = 70  }
+        @{ Key = 'sync';  Text = 'Sync (s)'; Width = 80  }
+    )
+    return ,$cols
+}
+
+function Get-CvJobSubColumns {
+    <# Columnas de la lista de SUBTITULOS del editor de un job. #>
+    $cols = @(
+        @{ Key = 'track';  Text = 'Pista';   Width = 380 }
+        @{ Key = 'lang';   Text = 'Idioma';  Width = 70  }
+        @{ Key = 'cues';   Text = 'Cues';    Width = 70  }
+        @{ Key = 'forced'; Text = 'Forzado'; Width = 80  }
+        @{ Key = 'def';    Text = 'Predet.'; Width = 80  }
+    )
+    return ,$cols
+}
+
+function Get-CvJobAudioBarItems {
+    <# La barra de debajo de la lista de audio: lo que se le puede hacer a la pista marcada. #>
+    $items = @(
+        @{ Kind = 'label';  Text = 'Idioma:' }
+        @{ Kind = 'text';   Name = 'cvJobAudioLang';    Width = 60 }
+        @{ Kind = 'label';  Text = 'Sync (s):' }
+        @{ Kind = 'text';   Name = 'cvJobAudioSync';    Width = 70 }
+        @{ Kind = 'button'; Name = 'cvJobAudioDefault'; Text = 'Marcar como predeterminada'; Width = 210; Gap = 12 }
+        @{ Kind = 'button'; Name = 'cvJobAudioPlay';    Text = 'Escuchar';                   Width = 100; Gap = 8  }
+    )
+    return ,$items
+}
+
+function Get-CvJobSubBarItems {
+    <#
+        La barra de debajo de la lista de subtitulos.
+
+        'Reproducir con este' esta porque los subtitulos de IMAGEN (PGS, VobSub) no tienen texto que
+        ensenar -son mapas de bits-, pero SI se pueden ver reproduciendo el video con ellos encima
+        (ffplay -sst), que es como se distingue un 'normal' de un SDH o de unos forzados. Vale para
+        cualquier pista, de texto o de imagen.
+    #>
+    $items = @(
+        @{ Kind = 'check';  Name = 'cvJobSubForced';  Text = 'Forzado' }
+        @{ Kind = 'check';  Name = 'cvJobSubDefault'; Text = 'Predeterminado'; Gap = 12 }
+        @{ Kind = 'label';  Text = 'Idioma:' }
+        @{ Kind = 'text';   Name = 'cvJobSubLang';    Width = 60 }
+        @{ Kind = 'button'; Name = 'cvJobSubView';    Text = 'Ver texto';           Width = 110; Gap = 12 }
+        @{ Kind = 'button'; Name = 'cvJobSubPlay';    Text = 'Reproducir con este'; Width = 150; Gap = 8  }
+    )
+    return ,$items
+}
+
 function Get-CvJobAudioRows {
     <#
         PURO. Filas de la tabla de audio: cruza las pistas del archivo (Get-CvJobAudioOptions) con lo

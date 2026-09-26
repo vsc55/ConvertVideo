@@ -2019,6 +2019,156 @@ function Open-CvGuiPath {
     }
 }
 
+function Add-CvGuiListColumns {
+    <#
+        Columnas de un ListView a partir de un CATALOGO (@{ Key; Text; Width }): la ventana dice
+        DONDE va la lista y el catalogo dice QUE columnas lleva. Asi el orden y los anchos se miran
+        -y se prueban- sin abrir ninguna ventana, y quien necesite una columna concreta la busca por
+        su Key con Get-CvGuiCatalogIndex en vez de escribir el numero a mano.
+    #>
+    param(
+        [Parameter(Mandatory = $true)]$List,
+        $Columns = @()
+    )
+    foreach ($c in @($Columns)) { [void]$List.Columns.Add("$($c.Text)", [int]$c.Width) }
+}
+
+function Get-CvGuiCatalogIndex {
+    <#
+        PURO. En que posicion esta la entrada con esa Key (-1 si no esta). Es lo que evita el numero
+        magico: "la columna de progreso es la 6" deja de ser algo que hay que recordar cada vez que
+        se anade una columna delante.
+    #>
+    param(
+        $Items = @(),
+        [string]$Key = ''
+    )
+    $i = 0
+    foreach ($it in @($Items)) {
+        if ("$($it.Key)" -eq $Key) { return $i }
+        $i++
+    }
+    return -1
+}
+
+function New-CvGuiCatalogControl {
+    <#
+        UN control a partir de su entrada de catalogo. Los tipos que se usan en una barra o en una
+        rejilla de formulario: 'label', 'text', 'check', 'button' y 'combo'.
+
+        Campos que entiende: Kind, Name, Text, Width, Height, Gap (margen por la izquierda) y Fill
+        ($true = Dock Fill, lo normal dentro de una rejilla). Un Kind que no conozca es un error y
+        no un control en blanco: un hueco silencioso en una ventana no se ve hasta que falta algo.
+    #>
+    param(
+        [Parameter(Mandatory = $true)]$Item,
+        [int]$FontSize = 9
+    )
+    $gap = 3
+    if ($null -ne $Item.Gap) { $gap = [int]$Item.Gap }
+    $fill = [bool]$Item.Fill
+
+    switch ("$($Item.Kind)") {
+        'label' {
+            $c = New-Object System.Windows.Forms.Label
+            $c.Text     = "$($Item.Text)"
+            $c.AutoSize = $true
+            $c.Anchor   = 'Left'
+            $c.Margin   = New-Object System.Windows.Forms.Padding($gap, 7, 3, 3)
+        }
+        'check' {
+            $c = New-Object System.Windows.Forms.CheckBox
+            $c.Text     = "$($Item.Text)"
+            $c.AutoSize = $true
+            $top = 7
+            if ($null -ne $Item.Top) { $top = [int]$Item.Top }
+            $c.Margin   = New-Object System.Windows.Forms.Padding($gap, $top, 3, 3)
+        }
+        'text' {
+            $c = New-Object System.Windows.Forms.TextBox
+            $c.Font = (New-CvGuiFont $FontSize)
+            if ($fill) { $c.Dock = 'Fill' } else { $c.Width = [int]$Item.Width }
+        }
+        'button' {
+            $c = New-Object System.Windows.Forms.Button
+            $c.Text = "$($Item.Text)"
+            if ($fill) {
+                $c.Dock = 'Fill'
+            } else {
+                $c.Width  = [int]$Item.Width
+                $c.Height = 26
+                if ($null -ne $Item.Height) { $c.Height = [int]$Item.Height }
+                $c.Margin = New-Object System.Windows.Forms.Padding($gap, 3, 3, 3)
+            }
+        }
+        'combo' {
+            $c = New-Object System.Windows.Forms.ComboBox
+            $c.DropDownStyle = 'DropDownList'
+            $c.Font          = (New-CvGuiFont $FontSize)
+            if ($fill) { $c.Dock = 'Fill' } else { $c.Width = [int]$Item.Width }
+        }
+        default { throw ("New-CvGuiCatalogControl: no se que es un control de tipo '{0}'" -f $Item.Kind) }
+    }
+    if ("$($Item.Name)" -ne '') { $c.Name = "$($Item.Name)" }
+    return $c
+}
+
+function Add-CvGuiBarItems {
+    <#
+        Una barra de abajo (FlowLayoutPanel) montada desde un CATALOGO, de izquierda a derecha.
+        Devuelve una tabla Nombre -> control para que la ventana se quede con los que va a usar en
+        sus manejadores (los que no llevan Name son etiquetas, y no hacen falta despues).
+    #>
+    param(
+        [Parameter(Mandatory = $true)]$Bar,
+        $Items = @(),
+        [int]$FontSize = 9
+    )
+    $out = @{}
+    foreach ($it in @($Items)) {
+        $c = New-CvGuiCatalogControl -Item $it -FontSize $FontSize
+        $Bar.Controls.Add($c)
+        if ("$($it.Name)" -ne '') { $out["$($it.Name)"] = $c }
+    }
+    return $out
+}
+
+function Add-CvGuiFormRows {
+    <#
+        Las filas de un formulario (TableLayoutPanel) desde un CATALOGO: la columna 0 es la etiqueta
+        y las demas, los controles de esa fila.
+
+        Cada fila: @{ Label = 'Recorte:'; Cells = @(...) }, y cada celda una entrada de catalogo
+        (ver New-CvGuiCatalogControl) con Span opcional. Las celdas se van colocando a partir de la
+        columna 1, cada una detras de la anterior. Devuelve la tabla Nombre -> control.
+    #>
+    param(
+        [Parameter(Mandatory = $true)]$Grid,
+        $Rows = @(),
+        [int]$FontSize = 9
+    )
+    $out = @{}
+    $y = 0
+    foreach ($row in @($Rows)) {
+        if ("$($row.Label)" -ne '') {
+            $lb = New-CvGuiCatalogControl -Item @{ Kind = 'label'; Text = "$($row.Label)" } -FontSize $FontSize
+            $Grid.Controls.Add($lb, 0, $y)
+        }
+        $x = 1
+        foreach ($cell in @($row.Cells)) {
+            $c = New-CvGuiCatalogControl -Item $cell -FontSize $FontSize
+            $Grid.Controls.Add($c, $x, $y)
+            $span = 1
+            if ($null -ne $cell.Span) { $span = [int]$cell.Span }
+            if ($span -gt 1) { $Grid.SetColumnSpan($c, $span) }
+            if ("$($cell.Name)" -ne '') { $out["$($cell.Name)"] = $c }
+            $x += $span
+        }
+        $y++
+    }
+    return $out
+}
+
 function Show-CvTextWindow {
     <#
         Abre una ventana con un RichTextBox de SOLO LECTURA, monoespaciado y con scroll, mostrando el

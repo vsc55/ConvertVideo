@@ -799,6 +799,58 @@ if (-not $sta) {
     Assert-Eq   'Combo: sin catalogo no revienta'     '' "$(Get-CvGuiComboValue -Combo (New-CvGuiCatalogCombo -Items @()))"
     foreach ($c in @($cbT, $cbRaro, $cbVacio)) { $c.Dispose() }
 
+    # --- Montar controles desde un CATALOGO: es como se dibujan las filas del editor del job ---
+    $barra = New-Object System.Windows.Forms.FlowLayoutPanel
+    $hechos = Add-CvGuiBarItems -Bar $barra -Items @(
+        @{ Kind = 'label';  Text = 'Idioma:' }
+        @{ Kind = 'text';   Name = 'cvTestLang';  Width = 60 }
+        @{ Kind = 'button'; Name = 'cvTestGo';    Text = 'Vamos'; Width = 90; Gap = 12 }
+    )
+    Assert-Eq   'Barra: un control por entrada'        3 $barra.Controls.Count
+    Assert-Eq   'Barra: devuelve los que tienen nombre' 2 $hechos.Keys.Count
+    Assert-Eq   'Barra: el ancho pedido'               60 $hechos['cvTestLang'].Width
+    Assert-Eq   'Barra: el hueco de la izquierda'      12 $hechos['cvTestGo'].Margin.Left
+    Assert-True 'Barra: el boton se llama como el catalogo' ($barra.Controls.Find('cvTestGo', $true).Count -eq 1)
+
+    # Una rejilla: etiqueta a la izquierda y las celdas de la columna 1 en adelante, con Span.
+    $rej = New-Object System.Windows.Forms.TableLayoutPanel
+    $rej.ColumnCount = 4
+    $rej.RowCount    = 2
+    $celdas = Add-CvGuiFormRows -Grid $rej -Rows @(
+        @{ Label = 'Pista:'; Cells = @(
+            @{ Kind = 'combo'; Name = 'cvTestCmb'; Fill = $true }
+            @{ Kind = 'check'; Name = 'cvTestChk'; Text = 'Copiar' }
+        ) }
+        @{ Label = ''; Cells = @(
+            @{ Kind = 'check'; Name = 'cvTestWide'; Text = 'Ancho'; Span = 3 }
+        ) }
+    )
+    Assert-Eq   'Rejilla: etiqueta + dos celdas + una celda' 4 $rej.Controls.Count
+    Assert-Eq   'Rejilla: la combo va en la columna 1'  1 $rej.GetColumn($celdas['cvTestCmb'])
+    Assert-Eq   'Rejilla: la casilla, detras'           2 $rej.GetColumn($celdas['cvTestChk'])
+    Assert-Eq   'Rejilla: la fila sin etiqueta empieza en la 1' 1 $rej.GetColumn($celdas['cvTestWide'])
+    Assert-Eq   'Rejilla: y ocupa tres columnas'        3 $rej.GetColumnSpan($celdas['cvTestWide'])
+
+    # Un tipo que el constructor no conoce es un ERROR, no un hueco en blanco: un control que falta
+    # no se ve hasta que alguien pulsa donde no hay nada.
+    $fallo = $false
+    try { [void](New-CvGuiCatalogControl -Item @{ Kind = 'chisme'; Name = 'cvTestNo' }) } catch { $fallo = $true }
+    Assert-True 'Catalogo: un tipo desconocido avisa' $fallo
+
+    # Columnas de una lista desde el catalogo.
+    $lst = New-Object System.Windows.Forms.ListView
+    $lst.View = 'Details'
+    [void](Add-CvGuiListColumns -List $lst -Columns @(
+        @{ Key = 'a'; Text = 'Uno'; Width = 40 }
+        @{ Key = 'b'; Text = 'Dos'; Width = 80 }
+    ))
+    Assert-Eq   'Columnas: una por entrada'   2 $lst.Columns.Count
+    Assert-Eq   'Columnas: con su ancho'     80 $lst.Columns[1].Width
+    Assert-Eq   'Columnas: se busca por clave' 1 (Get-CvGuiCatalogIndex -Items @(@{ Key = 'a' }, @{ Key = 'b' }) -Key 'b')
+
+    foreach ($c in @($barra, $rej, $lst)) { $c.Dispose() }
+
+
     # --- Panel de log: solo relee si el fichero cambio, solo repinta si el texto es otro ---
     $lgFile = Join-Path $ctx.Logs 'Convert_20260919_praba_1234.log'
     [void](Save-CvTextFile -Path $lgFile -Text "[GLOBAL] - primera linea`r`n[WORKER] - segunda")

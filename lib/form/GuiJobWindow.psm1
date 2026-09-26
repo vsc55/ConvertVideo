@@ -169,69 +169,18 @@ function Show-CvJobWindow {
     [void]$vGrid.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Absolute, 120)))
     $gbV.Controls.Add($vGrid)
 
-    $vGrid.Controls.Add((& $mkLabel 'Pista:'), 0, 0)
-    $cmbVid = New-Object System.Windows.Forms.ComboBox
-    $cmbVid.DropDownStyle = 'DropDownList'
-    $cmbVid.Dock          = 'Fill'
-    $cmbVid.Font          = (New-CvGuiFont 9)
-    $cmbVid.Name          = 'cvJobVideo'
-    $vGrid.Controls.Add($cmbVid, 1, 0)
-
-    $chkCopy = New-Object System.Windows.Forms.CheckBox
-    $chkCopy.Text     = 'Copiar (sin recodificar)'
-    $chkCopy.AutoSize = $true
-    $chkCopy.Margin   = New-Object System.Windows.Forms.Padding(6, 6, 3, 3)
-    $chkCopy.Name     = 'cvJobVideoCopy'
-    $vGrid.Controls.Add($chkCopy, 2, 0)
-
-    $chkAnim = New-Object System.Windows.Forms.CheckBox
-    $chkAnim.Text     = 'Animacion'
-    $chkAnim.AutoSize = $true
-    $chkAnim.Margin   = New-Object System.Windows.Forms.Padding(6, 6, 3, 3)
-    $chkAnim.Name     = 'cvJobAnim'
-    $vGrid.Controls.Add($chkAnim, 3, 0)
-
-    $vGrid.Controls.Add((& $mkLabel 'Recorte:'), 0, 1)
-    $txtCrop = New-Object System.Windows.Forms.TextBox
-    $txtCrop.Dock = 'Fill'
-    $txtCrop.Font = (New-CvGuiFont 9)
-    $txtCrop.Name = 'cvJobCrop'
-    $vGrid.Controls.Add($txtCrop, 1, 1)
-
-    $btnCrop = New-Object System.Windows.Forms.Button
-    $btnCrop.Text = 'Detectar bordes'
-    $btnCrop.Dock = 'Fill'
-    $btnCrop.Name = 'cvJobCropDetect'
-    $vGrid.Controls.Add($btnCrop, 2, 1)
-
-    $btnPrev = New-Object System.Windows.Forms.Button
-    $btnPrev.Text = 'Ver recorte'
-    $btnPrev.Dock = 'Fill'
-    $btnPrev.Name = 'cvJobCropPreview'
-    $vGrid.Controls.Add($btnPrev, 3, 1)
-
-    $vGrid.Controls.Add((& $mkLabel 'Escalado:'), 0, 2)
-    $txtResize = New-Object System.Windows.Forms.TextBox
-    $txtResize.Dock = 'Fill'
-    $txtResize.Font = (New-CvGuiFont 9)
-    $txtResize.Name = 'cvJobResize'
-    $vGrid.Controls.Add($txtResize, 1, 2)
-
-    $lblVInfo = & $mkLabel ''
-    $lblVInfo.Name = 'cvJobVideoInfo'
-    $vGrid.Controls.Add($lblVInfo, 2, 2)
-    $vGrid.SetColumnSpan($lblVInfo, 2)
-
-    # Recodificar no siempre compensa: si la pista recodificada sale MAS GRANDE que la original y la
-    # imagen no se toca, se puede dejar la original. Viene marcado segun encode.video, y aqui se
-    # decide para ESTE archivo (se congela en su job).
-    $chkKeep = New-Object System.Windows.Forms.CheckBox
-    $chkKeep.Text     = 'Si el video recodificado engorda, quedarse con el original'
-    $chkKeep.AutoSize = $true
-    $chkKeep.Margin   = New-Object System.Windows.Forms.Padding(6, 6, 3, 3)
-    $chkKeep.Name     = 'cvJobKeepOriginal'
-    $vGrid.Controls.Add($chkKeep, 1, 3)
-    $vGrid.SetColumnSpan($chkKeep, 3)
+    # Las filas no se escriben aqui: salen del CATALOGO (Get-CvJobVideoRows) y las dibuja
+    # Add-CvGuiFormRows. Anadir un ajuste de video es anadir una fila alli.
+    $vc        = Add-CvGuiFormRows -Grid $vGrid -Rows (Get-CvJobVideoRows)
+    $cmbVid    = $vc['cvJobVideo']
+    $chkCopy   = $vc['cvJobVideoCopy']
+    $chkAnim   = $vc['cvJobAnim']
+    $txtCrop   = $vc['cvJobCrop']
+    $btnCrop   = $vc['cvJobCropDetect']
+    $btnPrev   = $vc['cvJobCropPreview']
+    $txtResize = $vc['cvJobResize']
+    $lblVInfo  = $vc['cvJobVideoInfo']
+    $chkKeep   = $vc['cvJobKeepOriginal']
 
     # ---------- Audio ----------
     $gbA = New-Object System.Windows.Forms.GroupBox
@@ -259,14 +208,7 @@ function Show-CvJobWindow {
     $lvA.MultiSelect   = $false
     $lvA.Font          = (New-CvGuiFont 9)
     $lvA.Name          = 'cvJobAudio'
-    foreach ($c in @(
-        @{ T = 'Pista';    W = 330 }
-        @{ T = 'Idioma';   W = 70  }
-        @{ T = 'Canales';  W = 70  }
-        @{ T = 'Codec';    W = 90  }
-        @{ T = 'Predet.';  W = 70  }
-        @{ T = 'Sync (s)'; W = 80  }
-    )) { [void]$lvA.Columns.Add($c.T, $c.W) }
+    [void](Add-CvGuiListColumns -List $lvA -Columns (Get-CvJobAudioColumns))
     # 'Pista' se queda con lo que sobre: es la que lleva el texto largo, y asi no queda un trozo de
     # cabecera sin columna (que el sistema pinta claro y no hay forma de oscurecer).
     [void](Set-CvGuiListFillColumn -List $lvA -Index 0 -Min 240)
@@ -279,35 +221,11 @@ function Show-CvJobWindow {
     $aBar.WrapContents  = $false
     $aGrid.Controls.Add($aBar, 0, 1)
 
-    $aBar.Controls.Add((& $mkLabel 'Idioma:'))
-    $txtLang = New-Object System.Windows.Forms.TextBox
-    $txtLang.Width = 60
-    $txtLang.Font  = (New-CvGuiFont 9)
-    $txtLang.Name  = 'cvJobAudioLang'
-    $aBar.Controls.Add($txtLang)
-
-    $aBar.Controls.Add((& $mkLabel 'Sync (s):'))
-    $txtSync = New-Object System.Windows.Forms.TextBox
-    $txtSync.Width = 70
-    $txtSync.Font  = (New-CvGuiFont 9)
-    $txtSync.Name  = 'cvJobAudioSync'
-    $aBar.Controls.Add($txtSync)
-
-    $btnDef = New-Object System.Windows.Forms.Button
-    $btnDef.Text   = 'Marcar como predeterminada'
-    $btnDef.Width  = 210
-    $btnDef.Height = 26
-    $btnDef.Margin = New-Object System.Windows.Forms.Padding(12, 3, 3, 3)
-    $btnDef.Name   = 'cvJobAudioDefault'
-    $aBar.Controls.Add($btnDef)
-
-    $btnPlay = New-Object System.Windows.Forms.Button
-    $btnPlay.Text   = 'Escuchar'
-    $btnPlay.Width  = 100
-    $btnPlay.Height = 26
-    $btnPlay.Margin = New-Object System.Windows.Forms.Padding(8, 3, 3, 3)
-    $btnPlay.Name   = 'cvJobAudioPlay'
-    $aBar.Controls.Add($btnPlay)
+    $ac      = Add-CvGuiBarItems -Bar $aBar -Items (Get-CvJobAudioBarItems)
+    $txtLang = $ac['cvJobAudioLang']
+    $txtSync = $ac['cvJobAudioSync']
+    $btnDef  = $ac['cvJobAudioDefault']
+    $btnPlay = $ac['cvJobAudioPlay']
 
     # ---------- Subtitulos ----------
     $gbS = New-Object System.Windows.Forms.GroupBox
@@ -335,13 +253,7 @@ function Show-CvJobWindow {
     $lvS.MultiSelect   = $false
     $lvS.Font          = (New-CvGuiFont 9)
     $lvS.Name          = 'cvJobSubs'
-    foreach ($c in @(
-        @{ T = 'Pista';   W = 380 }
-        @{ T = 'Idioma';  W = 70  }
-        @{ T = 'Cues';    W = 70  }
-        @{ T = 'Forzado'; W = 80  }
-        @{ T = 'Predet.'; W = 80  }
-    )) { [void]$lvS.Columns.Add($c.T, $c.W) }
+    [void](Add-CvGuiListColumns -List $lvS -Columns (Get-CvJobSubColumns))
     [void](Set-CvGuiListFillColumn -List $lvS -Index 0 -Min 240)
     [void](Set-CvGuiDoubleBuffered -Control $lvS)
     $sGrid.Controls.Add($lvS, 0, 0)
@@ -352,45 +264,12 @@ function Show-CvJobWindow {
     $sBar.WrapContents  = $false
     $sGrid.Controls.Add($sBar, 0, 1)
 
-    $chkForced = New-Object System.Windows.Forms.CheckBox
-    $chkForced.Text     = 'Forzado'
-    $chkForced.AutoSize = $true
-    $chkForced.Margin   = New-Object System.Windows.Forms.Padding(3, 7, 3, 3)
-    $chkForced.Name     = 'cvJobSubForced'
-    $sBar.Controls.Add($chkForced)
-
-    $chkSubDef = New-Object System.Windows.Forms.CheckBox
-    $chkSubDef.Text     = 'Predeterminado'
-    $chkSubDef.AutoSize = $true
-    $chkSubDef.Margin   = New-Object System.Windows.Forms.Padding(12, 7, 3, 3)
-    $chkSubDef.Name     = 'cvJobSubDefault'
-    $sBar.Controls.Add($chkSubDef)
-
-    $sBar.Controls.Add((& $mkLabel 'Idioma:'))
-    $txtSubLang = New-Object System.Windows.Forms.TextBox
-    $txtSubLang.Width = 60
-    $txtSubLang.Font  = (New-CvGuiFont 9)
-    $txtSubLang.Name  = 'cvJobSubLang'
-    $sBar.Controls.Add($txtSubLang)
-
-    $btnSubView = New-Object System.Windows.Forms.Button
-    $btnSubView.Text   = 'Ver texto'
-    $btnSubView.Width  = 110
-    $btnSubView.Height = 26
-    $btnSubView.Margin = New-Object System.Windows.Forms.Padding(12, 3, 3, 3)
-    $btnSubView.Name   = 'cvJobSubView'
-    $sBar.Controls.Add($btnSubView)
-
-    # Los subtitulos de IMAGEN (PGS, VobSub) no tienen texto que ensenar -son mapas de bits-, pero SI
-    # se pueden ver reproduciendo el video con ellos encima (ffplay -sst), que es como se distingue
-    # un 'normal' de un SDH o de unos forzados. Vale para cualquier pista, de texto o de imagen.
-    $btnSubPlay = New-Object System.Windows.Forms.Button
-    $btnSubPlay.Text   = 'Reproducir con este'
-    $btnSubPlay.Width  = 150
-    $btnSubPlay.Height = 26
-    $btnSubPlay.Margin = New-Object System.Windows.Forms.Padding(8, 3, 3, 3)
-    $btnSubPlay.Name   = 'cvJobSubPlay'
-    $sBar.Controls.Add($btnSubPlay)
+    $sc         = Add-CvGuiBarItems -Bar $sBar -Items (Get-CvJobSubBarItems)
+    $chkForced  = $sc['cvJobSubForced']
+    $chkSubDef  = $sc['cvJobSubDefault']
+    $txtSubLang = $sc['cvJobSubLang']
+    $btnSubView = $sc['cvJobSubView']
+    $btnSubPlay = $sc['cvJobSubPlay']
 
     # ---------- Pie ----------
     $lblMsg = New-Object System.Windows.Forms.Label
