@@ -22,6 +22,7 @@ $Lib  = Join-Path $Root 'lib'
 $modules = @(
     'Log'
     'Io'
+    'I18n'
     'Config'
     'Context'
     'Console'
@@ -2394,6 +2395,107 @@ $badLang.Audio = @([pscustomobject]@{ Index = 1; Lang = 'castellano'; Sync = 0; 
 $v2 = Test-CvJobDraft -Draft $badLang
 Assert-True 'Borrador: idioma raro solo avisa' ($v2.Ok -and @($v2.Warnings).Count -eq 1)
 Assert-Eq   'Borrador vacio no es valido' $false (Test-CvJobDraft -Draft $null).Ok
+
+# ================================================================================================
+# I18N: el texto, fuera del codigo. Lo que se prueba aqui es lo que de verdad rompe una traduccion:
+# que idioma sale elegido, que pasa con una clave que falta, y que los huecos ({0}, {1}) cuadren.
+Write-Host "`nI18n - idioma de la interfaz y textos" -ForegroundColor Cyan
+
+# --- Que idioma toca (puro; sin tocar disco) ---
+$disp = @('es', 'en')
+Assert-Eq 'Idioma: auto con Windows en ingles'      'en' (Resolve-CvLanguage -Lang 'auto' -SystemLang 'en'    -Available $disp)
+Assert-Eq 'Idioma: auto con Windows en castellano'  'es' (Resolve-CvLanguage -Lang 'auto' -SystemLang 'es-ES' -Available $disp)
+# Un Windows en aleman NO obliga a traducir el aleman: se cae al castellano y se sigue trabajando.
+Assert-Eq 'Idioma: auto sin traduccion cae al base' 'es' (Resolve-CvLanguage -Lang 'auto' -SystemLang 'de'    -Available $disp)
+Assert-Eq 'Idioma: se pide uno concreto'            'en' (Resolve-CvLanguage -Lang 'en'   -SystemLang 'es'    -Available $disp)
+Assert-Eq 'Idioma: es-ES vale como es'              'es' (Resolve-CvLanguage -Lang 'es-ES' -SystemLang 'en'   -Available $disp)
+# Un config con un idioma que no existe no puede dejar la interfaz en blanco.
+Assert-Eq 'Idioma: uno que no hay cae al base'      'es' (Resolve-CvLanguage -Lang 'fr'   -SystemLang 'en'    -Available $disp)
+Assert-Eq 'Idioma: sin nada, el base'               'es' (Resolve-CvLanguage -Lang ''     -SystemLang ''      -Available $disp)
+
+# --- Huecos de una frase ---
+Assert-Eq 'Huecos: los cuenta ordenados y sin repetir' '0,1' ((Get-CvTextPlaceholders -Text 'de {1} a {0}, {0} otra vez') -join ',')
+Assert-Eq 'Huecos: una frase sin datos no tiene'       ''    ((Get-CvTextPlaceholders -Text 'Iniciar') -join ',')
+
+# --- Textos de verdad, sobre una carpeta de idiomas de mentira ---
+$ldir = Join-Path ([IO.Path]::GetTempPath()) ("cvlang-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+New-Item -ItemType Directory -Path $ldir -Force | Out-Null
+Set-Content -LiteralPath (Join-Path $ldir 'es.json') -Encoding UTF8 -Value @'
+{
+  "boton.iniciar": "Iniciar",
+  "solo.en.base":  "Solo en castellano",
+  "con.dato":      "Quedan {0} archivos"
+}
+'@
+Set-Content -LiteralPath (Join-Path $ldir 'en.json') -Encoding UTF8 -Value @'
+{
+  "boton.iniciar": "Start",
+  "con.dato":      "{0} files left"
+}
+'@
+
+Assert-Eq 'Textos: se ve que idiomas hay' 'en,es' ((Get-CvLangAvailable -Dir $ldir | Sort-Object) -join ',')
+Assert-Eq 'Textos: se fija el pedido'     'en'    (Set-CvLanguage -Lang 'en' -Dir $ldir)
+Assert-Eq 'Textos: en el idioma elegido'  'Start' (Get-CvText -Key 'boton.iniciar')
+# Lo que no este traducido sale en castellano, no en blanco: se puede traducir a medias y usarlo.
+Assert-Eq 'Textos: lo que falta cae al castellano' 'Solo en castellano' (Get-CvText -Key 'solo.en.base')
+# Y una clave que no existe en ningun sitio se VE (es la propia clave), que es como se detecta.
+Assert-Eq 'Textos: una clave que no existe se ve'  'no.existe.esta' (Get-CvText -Key 'no.existe.esta')
+Assert-Eq 'Textos: el dato va dentro de la frase'  '3 files left'   (Get-CvText -Key 'con.dato' -Values @(3))
+Assert-Eq 'Textos: en castellano, otra frase'      'es'             (Set-CvLanguage -Lang 'es' -Dir $ldir)
+Assert-Eq 'Textos: y el dato en su sitio'          'Quedan 3 archivos' (Get-CvText -Key 'con.dato' -Values @(3))
+
+# --- Comparar una traduccion con el base ---
+$cmp = Test-CvLangResources -Base (Get-CvLangResources -Lang 'es' -Dir $ldir) -Other (Get-CvLangResources -Lang 'en' -Dir $ldir)
+Assert-Eq 'Comparar: dice lo que falta'  'solo.en.base' (@($cmp.Faltan) -join ',')
+Assert-Eq 'Comparar: nada sobra'         ''             (@($cmp.Sobran) -join ',')
+Assert-Eq 'Comparar: los huecos cuadran' ''             (@($cmp.Huecos) -join ',')
+
+# Una traduccion con un hueco de mas es lo que revienta al formatear, y por eso se caza aqui.
+$cmpMal = Test-CvLangResources -Base @{ 'x' = 'Van {0}' } -Other @{ 'x' = 'Van {0} de {1}' }
+Assert-Eq 'Comparar: caza un hueco de mas' 'x' (@($cmpMal.Huecos) -join ',')
+Assert-Eq 'Comparar: y lo que sobra'       'y' (@((Test-CvLangResources -Base @{} -Other @{ 'y' = 'z' }).Sobran) -join ',')
+Remove-Item -LiteralPath $ldir -Recurse -Force -ErrorAction SilentlyContinue
+
+# --- Los ficheros DE VERDAD del programa: ninguna clave suelta y los huecos cuadrando ---
+# TODOS los idiomas contra el castellano, no solo el ingles: asi el dia que se anada un .json
+# nuevo entra solo en la comprobacion, sin tocar la bateria.
+$faltanReal = @()
+$sobranReal = @()
+$huecosReal = @()
+$baseReal = Get-CvLangResources -Lang 'es'
+foreach ($cod in (Get-CvLangAvailable)) {
+    if ($cod -eq 'es') { continue }
+    $r = Test-CvLangResources -Base $baseReal -Other (Get-CvLangResources -Lang $cod)
+    foreach ($k in @($r.Faltan)) { $faltanReal += ("{0}:{1}" -f $cod, $k) }
+    foreach ($k in @($r.Sobran)) { $sobranReal += ("{0}:{1}" -f $cod, $k) }
+    foreach ($k in @($r.Huecos)) { $huecosReal += ("{0}:{1}" -f $cod, $k) }
+}
+Assert-Eq 'lang\: ninguna traduccion se deja claves' '' ($faltanReal -join ', ')
+Assert-Eq 'lang\: ni arrastra claves muertas'        '' ($sobranReal -join ', ')
+Assert-Eq 'lang\: los huecos cuadran en todas'       '' ($huecosReal -join ', ')
+# Y el idioma de la sesion se deja como estaba para el resto de la bateria.
+[void](Set-CvLanguage -Lang 'es')
+
+Assert-Eq   'Config: el idioma de partida es auto' 'auto' "$((Get-CvConfigDefaults).ui.language)"
+# El catalogo de idiomas NO esta escrito a mano: sale de los ficheros de lang\, y el nombre de
+# cada uno lo da SU PROPIO fichero. Asi anadir un idioma es soltar un .json; si el nombre lo diera
+# otro, cada idioma nuevo obligaria a tocar todos los demas para traducir como se llama.
+$cat = Get-CvUiLanguages
+$disp = Get-CvLangAvailable
+Assert-Eq   'Idiomas: auto va el primero' 'auto' "$(@($cat)[0].Value)"
+# Y detras, exactamente los ficheros que haya: anadir un idioma no obliga a tocar esta bateria.
+Assert-Eq   'Idiomas: detras, los que hay en lang' (($disp | Sort-Object) -join ',') ((@($cat) | Select-Object -Skip 1 | ForEach-Object { "$($_.Value)" }) -join ',')
+Assert-Eq   'Idiomas: el ingles se llama a si mismo en ingles' 'English' "$(@($cat | Where-Object { $_.Value -eq 'en' })[0].Text)"
+Assert-Eq   'Idiomas: y el castellano, en castellano'  'castellano' "$(@($cat | Where-Object { $_.Value -eq 'es' })[0].Text)"
+# Todo fichero de idioma tiene que decir como se llama, o no habria como ofrecerlo en la lista.
+# (Get-CvLangAvailable devuelve ,$array: por tuberia llegaria el array entero como UN elemento.)
+$sinNombre = @()
+foreach ($cod in (Get-CvLangAvailable)) {
+    if ("$((Get-CvLangResources -Lang $cod)['lang.name'])" -eq '') { $sinNombre += $cod }
+}
+Assert-Eq   'Idiomas: todos dicen su nombre' '' ($sinNombre -join ', ')
+
 
 # ================================================================================================
 $total = $script:pass + $script:fail

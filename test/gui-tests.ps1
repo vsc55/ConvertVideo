@@ -36,6 +36,7 @@ $Lib  = Join-Path $Root 'lib'
 $modules = @(
     'Log'
     'Io'
+    'I18n'
     'Config'
     'Context'
     'Console'
@@ -444,6 +445,10 @@ Assert-True 'GPU: avisa sin ffmpeg'      ($gtxt -match 'ffmpeg no instalado')
 
 # ================================================================================================
 Write-Host "`nGuiSetup - editor de configuracion (ventana dirigida sin raton)" -ForegroundColor Cyan
+# Los casos comprueban TEXTO, asi que el idioma se fija: con 'auto', en un Windows en
+# otro idioma la bateria fallaria por traduccion y no por un fallo de verdad.
+[void](Set-CvLanguage -Lang 'es')
+
 $sta = ([System.Threading.Thread]::CurrentThread.GetApartmentState() -eq [System.Threading.ApartmentState]::STA)
 if (-not $sta) {
     Write-Skip 'Editor de configuracion' 'el host no es STA (usa -Sta)'

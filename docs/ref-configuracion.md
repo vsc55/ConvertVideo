@@ -51,6 +51,7 @@ Esquema completo (tras la fusión con los defaults):
   "debug":       { "enabled": false, "pausePerCommand": true },
   "test":        { "enabled": false, "minutes": 5, "betaDownmix": false, "betaOnePass": false },
   "console":     { "background": "DarkBlue", "foreground": "Yellow", "font": "Cascadia Code", "fontSize": 18, "windowWidth": 150, "windowHeight": 40, "sepWidth": 64, "progressBarWidth": 20, "asciiMarks": false },
+  "ui":          { "language": "auto" },
   "gui":         { "theme": "system", "rememberLayout": true, "confirmCloseWithWorkers": true, "queueWidth": 1320, "queueHeight": 760, "queueSplitPercent": 52, "setupWidth": 1040, "setupHeight": 800 },
   "paths":       { "original": "", "proceso": "", "convertido": "", "logs": "" },
   "profiles":    [ { "label": "...", "videoEncoder": "...", "crf": 18, ... } ],
@@ -85,6 +86,18 @@ Una entrada por app. Ver el sistema completo en [ref-herramientas.md](ref-herram
 | `subtitle` | `["spa","es","castellano",...]` | Idiomas preferidos de subtítulos. |
 
 Se **canonicalizan** las variantes (`Get-CvLangCanon`): `es`, `es-ES`, `es_es`, `spa`, `esp`, `castellano`, `spanish` cuentan como el mismo idioma, así que **basta un código** en la lista para reconocer cualquier variante (p. ej. `["es"]` ya reconoce una pista etiquetada `spa`). Lo mismo para `en`/`fr`/`de`/`it`/`pt`/`ja`/`zh`/`ko`/`ru`/`ca`/`gl`/`eu`. La comparación la hace `Test-CvLanguage`.
+
+## `ui` — idioma de la interfaz
+
+| Clave | Ejemplo | Uso |
+|---|---|---|
+| `language` | `"auto"` | En qué idioma te habla el programa: `auto` (el de Windows, y si no hay traducción, castellano), `es` o `en`. **No** es el idioma de las pistas —eso es [`languages`](#languages), que es otra cosa—. |
+
+Los textos no están en el código: están en `lang\<idioma>.json`, una clave por mensaje. Lo que falte traducir sale en **castellano**, y una clave que no exista en ningún idioma se enseña tal cual (nunca un hueco en blanco), que es como se detecta.
+
+**Añadir un idioma es soltar un `.json` en `lang\`** y nada más: la lista de idiomas no está escrita en ningún sitio, sale de los ficheros que haya, y **cada idioma dice su propio nombre** en su fichero (`"lang.name": "English"`). Si el nombre lo tuviera que dar otro fichero, cada idioma nuevo obligaría a tocar **todos** los demás para traducir cómo se llama.
+
+De momento está montada la infraestructura y el texto se irá sacando por fases; ver [ref-arquitectura.md](ref-arquitectura.md).
 
 ## `encode`
 

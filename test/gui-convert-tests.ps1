@@ -34,6 +34,7 @@ $Lib  = Join-Path $Root 'lib'
 $modules = @(
     'Log'
     'Io'
+    'I18n'
     'Config'
     'Context'
     'Console'
@@ -605,6 +606,10 @@ foreach ($par in @(
 
 # ================================================================================================
 Write-Host "`nGuiConvert - ventana de la cola (leida sin raton)" -ForegroundColor Cyan
+# Los casos comprueban TEXTO, asi que el idioma se fija: con 'auto', en un Windows en
+# otro idioma la bateria fallaria por traduccion y no por un fallo de verdad.
+[void](Set-CvLanguage -Lang 'es')
+
 $sta = ([System.Threading.Thread]::CurrentThread.GetApartmentState() -eq [System.Threading.ApartmentState]::STA)
 if (-not $sta) {
     Write-Skip 'Ventana de la cola' 'el host no es STA (usa -Sta)'

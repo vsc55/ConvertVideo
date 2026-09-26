@@ -678,6 +678,12 @@ function Get-CvConfigDefaults {
             # tiene esos glifos). Es apariencia de consola, por eso vive aqui (no en behavior).
             asciiMarks       = $false
         }
+        # IDIOMA de la interfaz. OJO, no confundir con 'languages', que son los idiomas de las
+        # PISTAS (que audio o que subtitulo se elige): esto es en que idioma te habla el programa.
+        # 'auto' = el de Windows si hay traduccion; si no, castellano. Los textos estan en lang\.
+        ui        = [ordered]@{
+            language = 'auto'
+        }
         # Apariencia de las VENTANAS (lo que 'console' es para el modo consola).
         #   rememberLayout: al cerrar la ventana de la COLA se apunta como quedo -tamano, maximizada, reparto
         #   del divisor y anchos de columna- en '<config>.gui.json' (junto al config en uso) y la
@@ -984,6 +990,9 @@ function Get-CvConfigHelp {
         'console/progressBarWidth' = 'Ancho (caracteres) de la barra visual de progreso del worker; 0 = sin barra'
 
         'gui'                   = 'Apariencia de las ventanas (Convert-gui / setup-gui)'
+        'ui'                    = 'Interfaz: en que idioma te habla el programa'
+        'ui/language'           = "Idioma de la interfaz: 'auto' (el de Windows) / 'es' / 'en'; NO es el idioma de las pistas (eso es 'languages')"
+
         'gui/theme'             = "Aspecto de las ventanas: 'system' (sigue a Windows) / 'light' / 'dark'"
         'gui/rememberLayout'    = 'Recordar como queda la ventana de la cola al cerrarla (en <config>.gui.json, donde tambien se cachea lo deducido de los bordes)'
         'gui/confirmCloseWithWorkers' = 'Al cerrar la cola con workers codificando, preguntar que hacer (siguen vivos si no)'

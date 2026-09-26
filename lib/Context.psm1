@@ -33,6 +33,9 @@ function Start-CvSession {
         Write-Host ("AVISO: no existe el config indicado ({0}); se usan los valores por defecto." -f $cfgPath) -ForegroundColor Yellow
     }
     $ctx = New-CvContext -Root $Root -ConfigPath $cfgPath
+    # El idioma, lo PRIMERO: de aqui en adelante ya se escribe texto (la cabecera, los avisos), y
+    # va en la SESION y no en $ctx por lo mismo que el tema (ver I18n.psm1).
+    [void](Set-CvLanguage -Lang "$($ctx.Language)")
     Set-CvMarkStyle -Ascii $ctx.AsciiMarks     # [OK]/[ERROR] en vez de simbolos si console.asciiMarks
     Set-CvSepWidth -Width $ctx.SepWidth         # ancho de los separadores de seccion (config console.sepWidth)
     Set-CvProgressBarWidth -Width $ctx.ProgressBarWidth   # ancho de la barra de progreso (config console.progressBarWidth)
@@ -298,6 +301,7 @@ function New-CvContext {
         SubtitleTextCodecs = @(@($cfg.encode.subtitles.textCodecs) | ForEach-Object { "$_".Trim().ToLower() } | Where-Object { $_ -ne '' })
         SubtitleFileExts  = (ConvertTo-CvSubtitleExtMap -Source $cfg.encode.subtitles.imageExtensions)
         # Aspecto de las ventanas: 'system' (lo que tenga Windows) / 'light' / 'dark'.
+        Language          = (Resolve-CvOneOf "$($cfg.ui.language)" @(@(Get-CvUiLanguages) | ForEach-Object { "$($_.Value)" }) "$($def.ui.language)")
         GuiTheme          = (Resolve-CvOneOf "$($cfg.gui.theme)" @(@(Get-CvGuiThemes) | ForEach-Object { "$($_.Value)" }) "$($def.gui.theme)")
         GuiRemember       = [bool]$cfg.gui.rememberLayout
         GuiConfirmClose   = [bool]$cfg.gui.confirmCloseWithWorkers

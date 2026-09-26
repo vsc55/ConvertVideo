@@ -40,6 +40,7 @@ $Lib  = Join-Path $Root 'lib'
 $modules = @(
     'Log'
     'Io'
+    'I18n'
     'Config'
     'Context'
     'Console'
@@ -392,6 +393,7 @@ function New-ShotRoot {
     }
     $ctx = New-CvContext -Root $tmp -ConfigPath $cfg
     [void](Set-CvGuiThemeDefault -Theme "$($ctx.GuiTheme)")   # el tema de ESTA tanda, no el de la maquina
+    [void](Set-CvLanguage -Lang 'es')                        # y en castellano, sea cual sea el Windows
     $script:shotCfg = $cfg
     return $ctx
 }

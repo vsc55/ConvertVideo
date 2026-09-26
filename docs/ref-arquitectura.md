@@ -21,6 +21,7 @@ ConvertVideo/
 │   ├── ConfigEditor.psm1   Editor interactivo de config.json (solo lo usa setup.ps1)
 │   ├── Context.psm1        Contexto de ejecución ($ctx) + helpers (idiomas, números, tiempo, listado de ficheros)
 │   ├── Console.psm1        Apariencia de consola, ventana nativa, menús y prompts
+│   ├── I18n.psm1           El texto que se enseña, fuera del código (clave → frase, por idioma)
 │   ├── Gui.psm1            Común a TODAS las ventanas (WinForms): arranque, fuente, doble búfer, avisos, diálogo de N salidas, tamaños recordados, visor de texto, desplegable de catálogo, panel que sigue un log y abrir con Windows
 │   ├── GuiSetup.psm1       Textos de los paneles de setup y lanzador de las acciones largas (setup.ps1 -Task …)
 │   ├── GuiConfig.psm1      Árbol del editor de config.json: nodos, resumen por clave y marcas de «cambiado»
@@ -58,6 +59,7 @@ ConvertVideo/
 │   ├── Multiplex.psm1      Unión final de pistas a MKV
 │   ├── Render.psm1         Spec de render (job → decisiones: vídeo/audio/subs/adjuntos/códecs)
 │   └── OnePass.psm1        🧪 BETA: ejecución en una sola pasada de ffmpeg
+├── lang/                   Los textos de la interfaz, un .json por idioma (es, en)
 ├── Original/               Entrada: vídeos a convertir
 ├── Proceso/                Trabajo: .job.json, .lock, estado de los workers (<pid>.worker.json) y temporales (.mkv/.m4a/.wav)
 ├── Convertido/             Salida: <nombre>_fix.mkv
@@ -72,6 +74,8 @@ Las carpetas de trabajo (`Original`, `Proceso`, `Convertido`, `logs`) se pueden 
 Las carpetas de trabajo (`Original`, `Proceso`, `Convertido`, `tools`) se crean automáticamente si faltan.
 
 **Una ventana, un fichero.** Cada formulario vive en `lib\form\` con el nombre de la función que exporta (`form\GuiConvertWindow.psm1` → `Show-CvConvertWindow`), y en `lib\` se queda lo que se puede probar **sin abrir ninguna**: las filas, los planes de refresco y de seguimiento, los estados de los botones, el árbol de la configuración. No se puede partir UNA ventana en varios ficheros —sus manejadores son *closures* sobre las variables locales del formulario y PowerShell no tiene clases parciales—, así que lo que encoge una ventana es sacarle la lógica pura o describir sus controles como un **catálogo**.
+
+**El texto, fuera del código.** Los mensajes no se escriben en el sitio donde se usan: se piden por clave con `Get-CvText` (`I18n.psm1`) y viven en `lang\<idioma>.json`. Añadir un idioma es **soltar un `.json`**: la lista sale de los ficheros que haya y cada idioma trae **su propio nombre** (`lang.name`), porque si el nombre lo diera otro fichero, cada idioma nuevo obligaría a tocar todos los demás. El idioma es de la **sesión** —`Set-CvLanguage`, que llaman los lanzadores con lo que diga `ui.language`— y no del contexto, por lo mismo que el tema: `$ctx` es una foto del arranque. Lo que no esté traducido cae al **castellano**, y una clave que no exista se enseña tal cual, nunca vacía. Los datos que van dentro de una frase se pasan **aparte** (`-Values`), porque el orden de las palabras cambia de un idioma a otro: `Test-CvLangResources` compara cada traducción con el castellano y caza lo que falta, lo que sobra y —lo importante— los `{0}`/`{1}` que no cuadran, que es lo único de esto que revienta en marcha. Efecto colateral que vale por sí solo: el JSON se lee con UTF-8 explícito, así que el castellano por fin se escribe **con tildes** (en un `.psm1` sin BOM, PS 5.1 las lee como ANSI y por eso el código dice «codificacion»). Se está sacando por fases: primero la infraestructura, luego ventanas, ayudas, cola, consola y log.
 
 **Layout por catálogo.** Los bloques de controles que se repiten no se escriben uno a uno en la ventana: se declaran como datos y los monta `lib\Gui.psm1` —`Add-CvGuiFormRows` (filas de etiqueta + controles, con `Span`), `Add-CvGuiBarItems` (la barra de debajo de una lista) y `Add-CvGuiListColumns` (las columnas), todas sobre `New-CvGuiCatalogControl`, que es quien sabe montar un `label`, un `text`, un `check`, un `button` o un `combo`—. Los catálogos viven con la lógica, no con la ventana: `Get-CvJobVideoRows`, `Get-CvJobAudioColumns`, `Get-CvJobSubColumns`, `Get-CvJobAudioBarItems` y `Get-CvJobSubBarItems` en `GuiJob.psm1`, `Get-CvQueueColumns` en `GuiConvert.psm1` y `Get-CvJobBulkFields` en `JobCore.psm1`. Así añadir un ajuste es añadir una fila, el orden y los anchos se prueban **sin abrir ninguna ventana**, y quien necesita una columna concreta la busca por su `Key` (`Get-CvGuiCatalogIndex`) en vez de escribir el número a mano. Un `Kind` que el constructor no conozca **lanza**: un control que falta no se ve hasta que alguien pulsa donde no hay nada. En las listas `$modules` las ventanas se escriben con su carpeta: `'form\GuiJobWindow'`.
 

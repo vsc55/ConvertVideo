@@ -34,6 +34,7 @@ $Lib  = Join-Path $Root 'lib'
 $modules = @(
     'Log'
     'Io'
+    'I18n'
     'Config'
     'Context'
     'Console'
