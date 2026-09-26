@@ -169,11 +169,11 @@ function Show-CvToolError {
     if ($null -eq $Job -and $Context.PSObject.Properties['CurrentJob']) { $Job = $Context.CurrentJob }
     $tail = @($err -split "`r?`n" | Where-Object { $_.Trim() -ne '' } | Select-Object -Last 8)
     if ($tail.Count -gt 0) {
-        Write-CvLog $Category '[ERR] - Ultimas lineas de ffmpeg:'
+        Write-CvLog $Category (Get-CvText -Key 'lg.ffmpeg.ult')
         foreach ($l in $tail) { Write-Host ('     ' + $l) -ForegroundColor DarkGray }
     }
     $path = Save-CvToolError -Context $Context -Name $Name -Tool $Tool -StdErr $err -Job $Job
-    if ($path) { Write-CvLog $Category ("[ERR] - Detalle (ajustes del job + error) guardado en: {0}" -f $path) }
+    if ($path) { Write-CvLog $Category (Get-CvText -Key 'lg.detalle' -Values @($path)) }
 }
 
 function Start-CvLog {

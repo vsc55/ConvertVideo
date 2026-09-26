@@ -30,7 +30,7 @@ function Start-CvSession {
     )
     $cfgPath = Resolve-CvConfigPathArg -Root $Root -Config $Config
     if (-not [string]::IsNullOrWhiteSpace($Config) -and -not (Test-Path -LiteralPath $cfgPath)) {
-        Write-Host ("AVISO: no existe el config indicado ({0}); se usan los valores por defecto." -f $cfgPath) -ForegroundColor Yellow
+        Write-Host (Get-CvText -Key 'ctx.cfg.noexiste' -Values @($cfgPath)) -ForegroundColor Yellow
     }
     $ctx = New-CvContext -Root $Root -ConfigPath $cfgPath
     # El idioma, lo PRIMERO: de aqui en adelante ya se escribe texto (la cabecera, los avisos), y
@@ -301,7 +301,10 @@ function New-CvContext {
         SubtitleTextCodecs = @(@($cfg.encode.subtitles.textCodecs) | ForEach-Object { "$_".Trim().ToLower() } | Where-Object { $_ -ne '' })
         SubtitleFileExts  = (ConvertTo-CvSubtitleExtMap -Source $cfg.encode.subtitles.imageExtensions)
         # Aspecto de las ventanas: 'system' (lo que tenga Windows) / 'light' / 'dark'.
-        Language          = (Resolve-CvOneOf "$($cfg.ui.language)" @(@(Get-CvUiLanguages) | ForEach-Object { "$($_.Value)" }) "$($def.ui.language)")
+        # OJO con el @() de dentro: Get-CvUiLanguages devuelve ,$array, asi que envolverlo lo deja
+        # en UN elemento (el array entero) y entonces 'en' nunca esta en la lista de validos: el
+        # idioma caia siempre en 'auto'. Paso de verdad, y solo se vio corriendo el worker.
+        Language          = (Resolve-CvOneOf "$($cfg.ui.language)" @((Get-CvUiLanguages) | ForEach-Object { "$($_.Value)" }) "$($def.ui.language)")
         GuiTheme          = (Resolve-CvOneOf "$($cfg.gui.theme)" @(@(Get-CvGuiThemes) | ForEach-Object { "$($_.Value)" }) "$($def.gui.theme)")
         GuiRemember       = [bool]$cfg.gui.rememberLayout
         GuiConfirmClose   = [bool]$cfg.gui.confirmCloseWithWorkers

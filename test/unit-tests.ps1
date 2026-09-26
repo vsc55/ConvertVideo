@@ -341,7 +341,7 @@ Assert-True 'editor method desc peak LEGACY' (((Get-CvEditorOptions -Key 'method
 # maxCodec incluye el valor '' (sin tope) con label '(vacio)'.
 $mc = (Get-CvEditorOptions -Key 'maxCodec').Items
 Assert-Eq 'editor maxCodec 1o vacio' '' $mc[0].Value
-Assert-Eq 'editor maxCodec 1o label' '(vacio)' $mc[0].Label
+Assert-Eq 'editor maxCodec 1o label' (Get-CvText -Key 'ced.vacio') $mc[0].Label
 # channels: Value ENTERO (no string), para conservar el tipo al guardar.
 $ch2 = (Get-CvEditorOptions -Key 'channels').Items[0]
 Assert-Eq 'editor channels tipo int' 'Int32' $ch2.Value.GetType().Name
@@ -2521,6 +2521,14 @@ Assert-Eq   'Textos: ninguna ventana lleva el texto pegado' '' (($pegados | Sele
 
 # Y el idioma de la sesion se deja como estaba para el resto de la bateria.
 [void](Set-CvLanguage -Lang 'es')
+
+# Y que el idioma del CONFIG llega de verdad al contexto: 'en' en el fichero tiene que salir 'en'
+# en $ctx.Language. Sin esto no se nota que ui.language no hace nada -paso: la lista de idiomas
+# validos se colapsaba a un elemento y cualquier valor caia en 'auto'-.
+$cfgLang = Join-Path ([IO.Path]::GetTempPath()) ("cvlangcfg-" + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.json')
+Set-Content -LiteralPath $cfgLang -Encoding UTF8 -Value '{ "ui": { "language": "en" } }'
+Assert-Eq 'Config: el idioma del fichero llega al contexto' 'en' "$((New-CvContext -Root $raizRepo -ConfigPath $cfgLang).Language)"
+Remove-Item -LiteralPath $cfgLang -Force -ErrorAction SilentlyContinue
 
 Assert-Eq   'Config: el idioma de partida es auto' 'auto' "$((Get-CvConfigDefaults).ui.language)"
 # El catalogo de idiomas NO esta escrito a mano: sale de los ficheros de lang\, y el nombre de

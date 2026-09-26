@@ -230,9 +230,9 @@ function Show-CvJobBulkWindow {
             $form.Cursor = [System.Windows.Forms.Cursors]::Default
         }
         $st.Changed = [int]$res.Done
-        Write-CvLog 'JOB' ("[BLOQUE] - {0} job(s) cambiados de {1}: {2}" -f $res.Done, $names.Count, $resumen)
+        Write-CvLog 'JOB' (Get-CvText -Key 'bw.cambiados' -Values @($res.Done, $names.Count, $resumen))
         if ([int]$res.Failed -gt 0) {
-            Write-CvLog 'JOB' ("[ERROR] - {0} job(s) no se pudieron cambiar: {1}" -f $res.Failed, ((@($res.Errors) | Select-Object -First 5) -join ' | '))
+            Write-CvLog 'JOB' (Get-CvText -Key 'bw.nocambiados' -Values @($res.Failed, ((@($res.Errors) | Select-Object -First 5) -join ' | ')))
             Show-CvGuiInfo -Title (Get-CvText -Key 'bulk.error.tit') -Message (Get-CvText -Key 'bulk.error.msg' -Values @(
                 $res.Done, $names.Count, $res.Failed, [Environment]::NewLine, ((@($res.Errors) | Select-Object -First 5) -join [Environment]::NewLine)))
         }

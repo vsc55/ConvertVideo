@@ -116,7 +116,7 @@ function Invoke-CvSubtitleExtract {
     foreach ($s in @($Subtitles | Where-Object { $_ })) {
         if (-not ($s.PSObject.Properties['Rescue'] -and [bool]$s.Rescue)) { $out += $s; continue }
         if ([string]::IsNullOrWhiteSpace($mkx) -or -not (Test-Path -LiteralPath $mkx)) {
-            Write-CvLog 'SUB' ("[AVISO] - mkvextract no disponible; se omite el subtitulo rescatado (pista {0})." -f $s.Index) -Indent 3
+            Write-CvLog 'SUB' (Get-CvText -Key 'sb.mkvx.no' -Values @($s.Index)) -Indent 3
             continue
         }
         $tmp = Join-Path $tmpDir ("cv-sub-{0}.vtt" -f ([guid]::NewGuid().ToString('N').Substring(0, 8)))
@@ -126,7 +126,7 @@ function Invoke-CvSubtitleExtract {
             $out += $s2
             $temps += $tmp
         } else {
-            Write-CvLog 'SUB' ("[AVISO] - No se pudo rescatar el subtitulo (pista {0}, codigo {1}); se omite." -f $s.Index, $r.ExitCode) -Indent 3
+            Write-CvLog 'SUB' (Get-CvText -Key 'sb.rescate.no' -Values @($s.Index, $r.ExitCode)) -Indent 3
             if (Test-Path -LiteralPath $tmp) { Remove-Item -Force -LiteralPath $tmp -ErrorAction SilentlyContinue }
         }
     }
@@ -251,7 +251,7 @@ function Show-SubtitlePreview {
         [Parameter(Mandatory)]$Context, [Parameter(Mandatory)][string]$File,
         [int]$SubPos, [string]$Label = 'SUBTITULO', [int]$Start = -1, [int]$Seconds = -1, [double]$Duration = 0
     )
-    Write-CvLog 'SUB' ("[TEST] - Reproduciendo con {0}; se cierra solo o pulsa ESC/Q" -f $Label) -Indent 3
+    Write-CvLog 'SUB' (Get-CvText -Key 'sb.repro' -Values @($Label)) -Indent 3
     Invoke-CvPreview -Context $Context -File $File -ExtraArgs @('-sst', ("s:{0}" -f $SubPos)) -Label $Label -Start $Start -Seconds $Seconds -Duration $Duration
 }
 
@@ -359,10 +359,10 @@ function Show-SubtitleContent {
         # Imagen: no hay texto que ensenar, pero si se puede sacar el fichero y abrirlo con quien lo lea.
         $img = Export-CvSubtitleFile -Context $Context -File $File -Stream $Stream
         if ($img -eq '') {
-            Write-CvLog 'SUB' ("[AVISO] - La pista {0} es de imagen ({1}) y no se ha podido extraer a un fichero." -f $idx, $codec) -Indent 3
+            Write-CvLog 'SUB' (Get-CvText -Key 'sb.imagen.no' -Values @($idx, $codec)) -Indent 3
             return
         }
-        Write-CvLog 'SUB' ("[TEST] - Pista {0} ({1}): no es texto; se abre {2} con el programa asociado de Windows." -f $idx, $codec, [System.IO.Path]::GetFileName($img)) -Indent 3
+        Write-CvLog 'SUB' (Get-CvText -Key 'sb.imagen.ab' -Values @($idx, $codec, [System.IO.Path]::GetFileName($img))) -Indent 3
         if (-not (Open-CvFileDefault -Path $img)) {
             Write-CvLog 'SUB' ("[AVISO] - Windows no tiene programa asociado para '{0}'. El fichero esta en: {1}" -f [System.IO.Path]::GetExtension($img), $img) -Indent 3
         }
@@ -381,18 +381,18 @@ function Show-SubtitleContent {
         switch ($open.Mode) {
             'win' {
                 # Ventana propia (WinForms + RichTextBox), modal. Si no hay GUI/STA, cae al asociado de Windows.
-                Write-CvLog 'SUB' ("[TEST] - Mostrando subtitulo {0} en una ventana..." -f $idx) -Indent 3
+                Write-CvLog 'SUB' (Get-CvText -Key 'sb.ventana' -Values @($idx)) -Indent 3
                 $txt = [System.IO.File]::ReadAllText($tmp)
-                $ok = Show-CvTextWindow -Title ("Subtitulo {0} - {1}" -f $idx, [System.IO.Path]::GetFileName($File)) -Text $txt
+                $ok = Show-CvTextWindow -Title (Get-CvText -Key 'sb.tit' -Values @($idx, [System.IO.Path]::GetFileName($File))) -Text $txt
                 if (-not $ok) {
-                    Write-Host '   No se pudo abrir la ventana (sin GUI/STA); se usa el programa por defecto.' -ForegroundColor Yellow
+                    Write-Host (Get-CvText -Key 'sb.sinventana') -ForegroundColor Yellow
                     Open-CvSrtDefault $tmp
                 }
             }
             'external' {
                 # Programa externo (preview.subtitleEditorExe o el pasado en 'V N'). Si falta o falla, asociado de Windows.
                 if ([string]::IsNullOrWhiteSpace($open.Exe)) {
-                    Write-Host '   No hay programa externo definido (preview.subtitleEditorExe); se usa el asociado de Windows.' -ForegroundColor Yellow
+                    Write-Host (Get-CvText -Key 'sb.sinexe') -ForegroundColor Yellow
                     Open-CvSrtDefault $tmp
                 } else {
                     Write-CvLog 'SUB' ("[TEST] - Abriendo subtitulo {0} con '{1}'..." -f $idx, (Split-Path $open.Exe -Leaf)) -Indent 3
@@ -405,12 +405,12 @@ function Show-SubtitleContent {
             }
             default {
                 # 'start': el programa asociado de Windows (fallback a Notepad).
-                Write-CvLog 'SUB' ("[TEST] - Abriendo subtitulo {0} en el editor de texto..." -f $idx) -Indent 3
+                Write-CvLog 'SUB' (Get-CvText -Key 'sb.editor' -Values @($idx)) -Indent 3
                 Open-CvSrtDefault $tmp
             }
         }
     } else {
-        Write-Host ("   No se pudo extraer la pista {0}." -f $idx) -ForegroundColor Yellow
+        Write-Host (Get-CvText -Key 'sb.extraer.no' -Values @($idx)) -ForegroundColor Yellow
     }
 }
 
@@ -439,7 +439,7 @@ function Select-SubtitlesKeep {
             $cod = if ($act -eq 'rescue') { 'webvtt (rescate->srt)' } elseif ($act -eq 'srt') { "$($s.codec_name) (->srt)" } else { "$($s.codec_name)" }
             $lines += ("[{0}] idioma={1} codec={2} ({3}) {4}" -f $s.index, (Get-Tag $s 'language'), $cod, $ctxt, $tt)
         }
-        Show-Menu -Title 'SUBTITULOS (ninguno del idioma preferido) - elige cuales CONSERVAR:' -Lines ($lines + @(
+        Show-Menu -Title (Get-CvText -Key 'sb.keep.tit') -Lines ($lines + @(
             '',
             "Escribe el/los numeros a conservar. Pon * DELANTE del que sea el FORZADO.",
             "   ej:  1       -> conservar solo el 1",
@@ -458,14 +458,14 @@ function Select-SubtitlesKeep {
             $vexe  = $mView.Groups[3].Value.Trim().Trim('"')   # quitar comillas si envolvio la ruta
             $m = $streams | Where-Object { [int]$_.index -eq $vi } | Select-Object -First 1
             if ($m) { Show-SubtitleContent -Context $Context -File $file -Stream $m -Mode $vmode -Exe $vexe }
-            else { Write-Host '   Indice no valido.' -ForegroundColor Yellow }
+            else { Write-Host (Get-CvText -Key 'con.indice.mal') -ForegroundColor Yellow }
             continue
         }
         $play = ConvertFrom-CvPlayCommand $a
         if ($play) {
             $m = $streams | Where-Object { [int]$_.index -eq $play.Index } | Select-Object -First 1
-            if ($m) { Show-SubtitlePreview -Context $Context -File $file -SubPos (Get-SubtitleStreamPos -Info $Info -Index $play.Index) -Label ("SUBTITULO {0}" -f $play.Index) -Start $play.Start -Duration $dur }
-            else { Write-Host '   Indice no valido.' -ForegroundColor Yellow }
+            if ($m) { Show-SubtitlePreview -Context $Context -File $file -SubPos (Get-SubtitleStreamPos -Info $Info -Index $play.Index) -Label (Get-CvText -Key 'sb.pista.n' -Values @($play.Index)) -Start $play.Start -Duration $dur }
+            else { Write-Host (Get-CvText -Key 'con.indice.mal') -ForegroundColor Yellow }
             continue
         }
         # Tokens: 'N' conserva; '*N' ademas marca ese subtitulo como FORZADO (override). 'T' = todos.
@@ -481,7 +481,7 @@ function Select-SubtitlesKeep {
                 if ($m.Groups[1].Value -eq '*') { $forcedSet[$n] = $true }
             }
             $chosen = @($streams | Where-Object { $idx -contains [int]$_.index })
-            if ($bad -or $chosen.Count -eq 0) { Write-Host '   Indices no validos.' -ForegroundColor Yellow; continue }
+            if ($bad -or $chosen.Count -eq 0) { Write-Host (Get-CvText -Key 'sb.indices.mal') -ForegroundColor Yellow; continue }
         }
         Write-Host ''
         # Idioma: muchas fuentes traen el subtitulo MAL etiquetado (p. ej. 'eng' que en realidad es 'spa'),
@@ -549,13 +549,13 @@ function Select-Subtitles {
         Write-CvLog 'SUB' ("[AVISO] - {0} subtitulo(s) con codec ilegible se ignoran (no se pueden copiar; p.ej. WEBVTT sin 'webvtt' en encode.subtitles.toSrt, o contenedor no-MKV)." -f $discard) -Indent 3
     }
     if ($empty -gt 0) {
-        Write-CvLog 'SUB' ("[AVISO] - {0} subtitulo(s) VACIOS (sin cues) se ignoran; desactivable con encode.subtitles.dropEmpty." -f $empty) -Indent 3
+        Write-CvLog 'SUB' (Get-CvText -Key 'sb.vacios' -Values @($empty)) -Indent 3
     }
-    if ($subs.Count -eq 0) { if ($Context.Debug) { Write-CvLog 'SUB' '[INFO] - El archivo no tiene subtitulos utilizables' }; return @() }
+    if ($subs.Count -eq 0) { if ($Context.Debug) { Write-CvLog 'SUB' (Get-CvText -Key 'sb.ninguno') }; return @() }
 
     $pref = @($subs | Where-Object { Test-CvLanguage (Get-Tag $_ 'language') $Context.SubLangs })
     if ($pref.Count -eq 0) {
-        Write-CvLog 'SUB' ("[AVISO] - Ningun subtitulo en el idioma preferido ({0}); elige cuales conservar." -f ($Context.SubLangs | Select-Object -First 1)) -Indent 3
+        Write-CvLog 'SUB' (Get-CvText -Key 'sb.sinidioma' -Values @(($Context.SubLangs | Select-Object -First 1))) -Indent 3
         if ($null -ne $Manual) { $Manual.Value = $true }
         return (Select-SubtitlesKeep -Context $Context -Info $Info -Subs $subs)
     }
@@ -564,7 +564,7 @@ function Select-Subtitles {
     $forced   = @($roles.Forced)
     $complete = @($roles.Complete)
     if ($complete.Count -gt 1) {
-        Write-CvLog 'SUB' ("[AVISO] - {0} subtitulos completos en el idioma preferido; se conservan todos (ninguno marcado como principal)." -f $complete.Count) -Indent 3
+        Write-CvLog 'SUB' (Get-CvText -Key 'sb.todos' -Values @($complete.Count)) -Indent 3
     }
 
     # Forzados primero (default+forced); luego completos (sin default ni forced). Cada uno lleva su accion.
@@ -576,7 +576,7 @@ function Select-Subtitles {
         foreach ($r in $result) {
             $rol = if ($r.Forced) { 'forzado' } else { 'completo' }
             $cv  = if ($r.Rescue) { ' -> rescatar+srt' } elseif ($r.ToSrt) { ' -> srt' } else { '' }
-            Write-CvLog 'SUB' ("[INFO] - Pista {0} ({1}, {2}) - {3}{4}" -f $r.Index, $r.Lang, $r.Codec, $rol, $cv)
+            Write-CvLog 'SUB' (Get-CvText -Key 'sb.info.pista' -Values @($r.Index, $r.Lang, $r.Codec, $rol, $cv))
         }
     }
     return $result

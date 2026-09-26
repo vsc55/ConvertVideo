@@ -45,9 +45,9 @@ function Select-Attachments {
         $fn = Get-Tag $a 'filename'
         if ($ok) {
             $kept += $a
-            Write-CvLog 'ATTACH' ("[INFO] - Conservar: {0} ({1})" -f $fn, $kind)
+            Write-CvLog 'ATTACH' (Get-CvText -Key 'at.conservar' -Values @($fn, $kind))
         } else {
-            Write-CvLog 'ATTACH' ("[INFO] - Descartar: {0} ({1})" -f $fn, $kind)
+            Write-CvLog 'ATTACH' (Get-CvText -Key 'at.descartar' -Values @($fn, $kind))
         }
     }
     return $kept

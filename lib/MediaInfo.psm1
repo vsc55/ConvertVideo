@@ -491,26 +491,26 @@ function Write-SourceSummary {
     $name = [System.IO.Path]::GetFileName($File)
 
     $lines = @(
-        ("Archivo : {0}" -f $name),
-        ("Duracion: {0}" -f (Get-DurationText $Info)),
+        (Get-CvText -Key 'mi.archivo' -Values @($name)),
+        (Get-CvText -Key 'mi.duracion' -Values @((Get-DurationText $Info))),
         ''
     )
 
     # --- Video (pistas reales, excluye caratulas) ---
-    $lines += 'Video:'
+    $lines += (Get-CvText -Key 'mi.video')
     $vids = @(Get-VideoStreams -Info $Info)
-    if ($vids.Count -eq 0) { $lines += '  (ninguna)' }
+    if ($vids.Count -eq 0) { $lines += (Get-CvText -Key 'mi.ninguna') }
     foreach ($v in $vids) {
         $fps = ''
         $rate = Get-CvFrameRate $v   # fuente unica del fps de una pista (0 = desconocido)
-        if ($rate -gt 0) { $fps = "  {0:0.##} fps" -f $rate }
+        if ($rate -gt 0) { $fps = (Get-CvText -Key 'mi.fps') -f $rate }
         $lines += ("  [{0}] {1}  {2}x{3}{4}" -f [int]$v.index, $v.codec_name, [int]$v.width, [int]$v.height, $fps)
     }
 
     # --- Audio (todas) ---
-    $lines += 'Audio:'
+    $lines += (Get-CvText -Key 'mi.audio')
     $auds = @(Get-AudioStreams -Info $Info)
-    if ($auds.Count -eq 0) { $lines += '  (ninguna)' }
+    if ($auds.Count -eq 0) { $lines += (Get-CvText -Key 'mi.ninguna') }
     foreach ($a in $auds) {
         $lang  = "$(Get-Tag $a 'language')"; if ($lang -eq '') { $lang = 'und' }
         $title = "$(Get-Tag $a 'title')"
@@ -519,9 +519,9 @@ function Write-SourceSummary {
     }
 
     # --- Subtitulos (todos): idioma, tipo (codec), forzado, default, nº de cues (tamaño) ---
-    $lines += 'Subtitulos:'
+    $lines += (Get-CvText -Key 'mi.subs')
     $subs = @($Info.streams | Where-Object { $_.codec_type -eq 'subtitle' })
-    if ($subs.Count -eq 0) { $lines += '  (ninguno)' }
+    if ($subs.Count -eq 0) { $lines += (Get-CvText -Key 'mi.ninguno') }
     foreach ($s in $subs) {
         $lang  = "$(Get-Tag $s 'language')"; if ($lang -eq '') { $lang = 'und' }
         $title = "$(Get-Tag $s 'title')"
@@ -530,18 +530,18 @@ function Write-SourceSummary {
         if ($s.disposition -and $s.disposition.default -eq 1) { $flags += 'default' }
         $fstr  = if ($flags.Count -gt 0) { '  ' + ($flags -join ' ') } else { '' }
         $cues  = Get-CvSubtitleCueCount -Context $Context -File $File -Index ([int]$s.index) -Stream $s
-        $csz   = if ($cues -ge 0) { "  cues={0}" -f $cues } else { '' }
+        $csz   = if ($cues -ge 0) { (Get-CvText -Key 'mi.cues') -f $cues } else { '' }
         $ttl   = if ($title -ne '') { ('  "{0}"' -f $title) } else { '' }
         $lines += ("  [{0}] {1}  {2}{3}{4}{5}" -f [int]$s.index, $s.codec_name, $lang, $fstr, $csz, $ttl)
     }
 
     # --- Capitulos ---
-    $lines += ("Capitulos: {0}" -f (Get-CvChapterCount -Context $Context -File $File))
+    $lines += (Get-CvText -Key 'mi.capitulos' -Values @((Get-CvChapterCount -Context $Context -File $File)))
 
     $dash = Get-CvDashLine
     Write-Host ''
     Write-Host $dash
-    Write-Host 'RESUMEN DEL ORIGEN'
+    Write-Host (Get-CvText -Key 'mi.tit.origen')
     Write-Host $dash
     $lines | ForEach-Object { Write-Host $_ }
     Write-Host $dash
@@ -596,7 +596,7 @@ function Write-ConversionSummary {
     if ($oa -and $oa.PSObject.Properties['bit_rate'] -and $oa.bit_rate) {
         $outAbr = " {0}k" -f [math]::Round(([double]$oa.bit_rate) / 1000)
     } elseif ($Prof -and "$($Prof.AudioEncoder)" -ne 'copy' -and $Prof.AudioBitrate) {
-        $outAbr = " {0} (config)" -f $Prof.AudioBitrate
+        $outAbr = (Get-CvText -Key 'mi.config') -f $Prof.AudioBitrate
     }
 
     # Subtitulos de la salida: nº + idioma (+ 'forzado' si lo es). OJO: asignacion DIRECTA con
@@ -615,24 +615,24 @@ function Write-ConversionSummary {
     # Duracion: la del fichero GENERADO (de lo que trata este resumen), no la del original. En
     # modo pruebas ambas difieren (la salida es un recorte), asi que se indica tambien el origen.
     $outDur = if ($oInfo) { Get-DurationText $oInfo } else { Get-DurationText $Info }
-    $durTxt = if ($Context.TestLimit -gt 0) { "{0} (origen {1})" -f $outDur, (Get-DurationText $Info) } else { $outDur }
+    $durTxt = if ($Context.TestLimit -gt 0) { (Get-CvText -Key 'mi.origen') -f $outDur, (Get-DurationText $Info) } else { $outDur }
 
     # Audio de la salida: con UNA pista, origen -> destino (como siempre); con VARIAS (multipista),
     # una linea por pista (idioma, codec, canales, bitrate, titulo y * = predeterminada).
     $audioSection = @()
     if ($oaAll.Count -le 1) {
-        $audioSection = @(("Audio   : {0}" -f $(if ("$($Prof.AudioEncoder)" -eq 'copy') {
+        $audioSection = @((Get-CvText -Key 'mi.audio.l' -Values @($(if ("$($Prof.AudioEncoder)" -eq 'copy') {
             "{0} {1}{2}" -f $outAc, $outAch, $outAbr
         } else {
             "{0} {1}{2}  ->  {3} {4}{5}" -f $origAc, $origAch, $origAbr, $outAc, $outAch, $outAbr
-        })))
+        }))))
     } else {
-        $audioSection = @("Audio   : {0} pistas" -f $oaAll.Count)
+        $audioSection = @(Get-CvText -Key 'mi.audio.n' -Values @($oaAll.Count))
         foreach ($s in $oaAll) {
             $l = "$(Get-Tag $s 'language')"; if ($l -eq '') { $l = 'und' }
             $br = Get-CvAudioBitrate -Stream $s; $brTxt = if ($br) { ' {0}k' -f [math]::Round(([double]$br) / 1000) } else { '' }
             $t = "$(Get-Tag $s 'title')"; $tt = if ($t) { " '$t'" } else { '' }
-            $def = if ($s.disposition -and $s.disposition.default -eq 1) { '  * (predeterminada)' } else { '' }
+            $def = if ($s.disposition -and $s.disposition.default -eq 1) { (Get-CvText -Key 'mi.predet') } else { '' }
             $audioSection += ("          - [{0}] {1} {2}ch{3}{4}{5}" -f $l, $s.codec_name, $s.channels, $brTxt, $tt, $def)
         }
     }
@@ -640,32 +640,32 @@ function Write-ConversionSummary {
     # Nota: se usa '+=' para incorporar $audioSection (un array de 1..N lineas); dentro de un literal
     # @(...) una variable-array NO se aplana (quedaria anidada y se imprimiria en una sola linea).
     $lines = @(
-        ("Archivo : {0}" -f $name),
-        ("Duracion: {0}     Tiempo de proceso: {1:hh\:mm\:ss}" -f $durTxt, $Elapsed),
+        (Get-CvText -Key 'mi.archivo2' -Values @($name)),
+        (Get-CvText -Key 'mi.duracion2' -Values @($durTxt, $Elapsed)),
         '',
-        ("Tamano  : {0} MB  ->  {1} MB   (ahorro {2}%)" -f $origMB, $outMB, $ahorro),
+        (Get-CvText -Key 'mi.tamano' -Values @($origMB, $outMB, $ahorro)),
         # Video: codec origen -> destino; la resolucion se muestra a ambos lados SOLO si cambia
         # (resize); si es la misma, se pone una sola vez para no repetir '1920x1080 -> 1920x1080'.
-        ("Video   : {0}" -f $(if ($origRes -eq $outRes) {
+        (Get-CvText -Key 'mi.video.l' -Values @($(if ($origRes -eq $outRes) {
             "{0} -> {1}  {2}" -f $origVc, $outVc, $outRes
         } else {
             "{0} {1}  ->  {2} {3}" -f $origVc, $origRes, $outVc, $outRes
-        }))
+        })))
     )
     $lines += $audioSection
-    $lines += ("Subs    : {0}" -f $subTxt)
-    $lines += ("Caps    : {0}" -f $nChap)
+    $lines += (Get-CvText -Key 'mi.subs.l' -Values @($subTxt))
+    $lines += (Get-CvText -Key 'mi.caps.l' -Values @($nChap))
     # En modo pruebas la salida es un RECORTE (la 'Duracion' de arriba ya lo refleja: salida +
     # origen): se avisa explicitamente para que no se confunda con una conversion completa.
     if ($Context.TestLimit -gt 0) {
-        $lines += ('', ("*** MODO PRUEBAS: salida recortada a los primeros {0} min ***" -f [int]($Context.TestLimit / 60)))
+        $lines += ('', (Get-CvText -Key 'mi.pruebas' -Values @([int]($Context.TestLimit / 60))))
     }
     # Sin encuadrar: los cuadros recortan las lineas largas (p.ej. el nombre del archivo).
     $dash = Get-CvDashLine
     $eq   = Get-CvSepLine
     Write-Host ''
     Write-Host $dash
-    Write-Host 'RESUMEN DE LA CONVERSION'
+    Write-Host (Get-CvText -Key 'mi.tit.conv')
     Write-Host $dash
     $lines | ForEach-Object { Write-Host $_ }
     Write-Host $eq

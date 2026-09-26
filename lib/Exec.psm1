@@ -128,7 +128,7 @@ function Invoke-ToolCapture {
     )
     if ($null -ne $Context) {
         Write-CvDebug -Context $Context -Message ("RUN (analisis) => `"{0}`" {1}" -f $Exe, (ConvertTo-ArgString $Arguments))
-        if ($Context.Debug -and $Context.DebugPausePerCommand) { Read-Host '  ...ENTER para ejecutar...' | Out-Null }
+        if ($Context.Debug -and $Context.DebugPausePerCommand) { Read-Host (Get-CvText -Key 'ex.enter') | Out-Null }
     }
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName               = $Exe
@@ -168,7 +168,7 @@ function Invoke-ToolShow {
         [switch]$Preview
     )
     Write-CvDebug -Context $Context -Message ("RUN => `"{0}`" {1}" -f $Exe, (ConvertTo-ArgString $Arguments))
-    if ($Context.Debug -and $Context.DebugPausePerCommand) { Read-Host '  ...ENTER para ejecutar...' | Out-Null }
+    if ($Context.Debug -and $Context.DebugPausePerCommand) { Read-Host (Get-CvText -Key 'ex.enter') | Out-Null }
 
     # La previsualizacion se queda en la consola principal; solo las codificaciones
     # se mueven a una ventana aparte minimizada.

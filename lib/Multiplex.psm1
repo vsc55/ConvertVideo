@@ -254,7 +254,7 @@ function Invoke-Multiplex {
     }
     $ffArgs = Get-CvMultiplexArgs -Context $Context -Info $Info -Plan $plan
 
-    Start-CvStep $Context 'MULTIPLEX' 'Uniendo pistas...'
+    Start-CvStep $Context 'MULTIPLEX' (Get-CvText -Key 'mx.uniendo')
     $code = Invoke-ToolShow -Exe $Context.FFmpeg -Arguments $ffArgs -Context $Context
     # Borrar los temporales de subtitulos rescatados (se hayan usado o no).
     foreach ($t in @($sx.Temps)) { if (Test-Path -LiteralPath $t) { Remove-Item -Force -LiteralPath $t -ErrorAction SilentlyContinue } }
@@ -319,7 +319,7 @@ function Invoke-CvVideoSwap {
     $tmp  = Join-Path $Context.Proceso ("{0}.swap.mkv" -f $name)
     if (Test-Path -LiteralPath $tmp) { Remove-Item -Force -LiteralPath $tmp -ErrorAction SilentlyContinue }
     $ffArgs = Get-CvVideoSwapArgs -Context $Context -OutFile $OutFile -SrcFile $File -TmpFile $tmp -VideoIndex $VideoIndex
-    Start-CvStep $Context 'MULTIPLEX' 'Cambiando el video por el original...'
+    Start-CvStep $Context 'MULTIPLEX' (Get-CvText -Key 'mx.cambiando')
     $code = Invoke-ToolShow -Exe $Context.FFmpeg -Arguments $ffArgs -Context $Context
     $ok = (($code -eq 0) -and (Test-Path -LiteralPath $tmp) -and ((Get-Item -LiteralPath $tmp).Length -gt 0))
     if (-not $ok) {
@@ -374,9 +374,9 @@ function Set-CvMkvVideoMark {
         ) -join [Environment]::NewLine
         [void](Save-CvTextFile -Path $xml -Text $texto)
         $r = Invoke-ToolCapture -Exe $mpe -Arguments @($File, '--tags', ("global:{0}" -f $xml)) -Context $Context
-        if ($r.ExitCode -ne 0) { Write-CvLog 'MULTIPLEX' ("[AVISO] - no se pudo marcar la salida como video original (mkvpropedit {0})" -f $r.ExitCode) }
+        if ($r.ExitCode -ne 0) { Write-CvLog 'MULTIPLEX' (Get-CvText -Key 'mx.marca.no' -Values @($r.ExitCode)) }
     } catch {
-        Write-CvLog 'MULTIPLEX' ("[AVISO] - no se pudo marcar la salida como video original: {0}" -f $_.Exception.Message)
+        Write-CvLog 'MULTIPLEX' (Get-CvText -Key 'mx.marca.no2' -Values @($_.Exception.Message))
     } finally {
         if (Test-Path -LiteralPath $xml) { Remove-Item -Force -LiteralPath $xml -ErrorAction SilentlyContinue }
     }
@@ -398,10 +398,10 @@ function Remove-CvMkvTags {
         if ($app) { [void](Confirm-CvTool -Context $Context -Name 'mkvtoolnix' -Version "$($app.selected)") }
     }
     if ([string]::IsNullOrWhiteSpace($mpe) -or -not (Test-Path -LiteralPath $mpe)) {
-        Write-CvLog 'MULTIPLEX' '[AVISO] - mkvpropedit no disponible: quedan las etiquetas DURATION'
+        Write-CvLog 'MULTIPLEX' (Get-CvText -Key 'mx.mkvprop.no')
         return
     }
-    Start-CvStep $Context 'MULTIPLEX' 'Limpiando etiquetas con mkvpropedit...'
+    Start-CvStep $Context 'MULTIPLEX' (Get-CvText -Key 'mx.limpiando')
     $r = Invoke-ToolCapture -Exe $mpe -Arguments @($File, '--tags', 'all:') -Context $Context
     Stop-CvStep $Context 'MULTIPLEX' ($r.ExitCode -eq 0) -OkMsg '[TAGS] - [OK] - Etiquetas eliminadas' -FailMsg ("[AVISO] - mkvpropedit devolvio codigo {0}; las etiquetas pueden seguir" -f $r.ExitCode)
 }

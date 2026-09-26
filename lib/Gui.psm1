@@ -2013,7 +2013,7 @@ function Open-CvGuiPath {
         return $true
     } catch {
         if (-not $Quiet) {
-            Show-CvGuiInfo -Title $Title -Message ("No se pudo abrir {0}:`n`n{1}" -f $Path, $_.Exception.Message)
+            Show-CvGuiInfo -Title $Title -Message (Get-CvText -Key 'gu.noabre' -Values @($Path, $_.Exception.Message))
         }
         return $false
     }

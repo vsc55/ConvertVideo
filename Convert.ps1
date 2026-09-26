@@ -139,7 +139,7 @@ if ("$($ctx.VolumeMethod)".ToLower() -eq 'aacgain' -and -not (Test-CvToolInstall
             $ctx = New-CvToolContext -Context $ctx -AacGainVersion $agVer
         }
     } elseif ($Unattended) {
-        Write-CvLog 'GLOBAL' '[AACGAIN] - [AVISO] - Modo desatendido: no se descarga; el ajuste de volumen se omitira.'
+        Write-CvLog 'GLOBAL' (Get-CvText -Key 'cv.ag.desat')
     } else {
         Write-CvLog 'GLOBAL' (Get-CvText -Key 'cv.ag.cancel')
     }
@@ -151,9 +151,9 @@ if ($ctx.StripTags -and [string]::IsNullOrWhiteSpace("$($ctx.MkvPropEditOverride
     $mkvApp = Get-CvAppDescriptor -Context $ctx -Name 'mkvtoolnix'
     $mkvSel = if ($mkvApp) { "$($mkvApp.selected)" } else { '' }
     if ($mkvSel -and (Test-CvToolSupported -Context $ctx -Name 'mkvtoolnix') -and -not (Test-CvToolInstalled -Context $ctx -Name 'mkvtoolnix' -Version $mkvSel)) {
-        Write-CvLog 'GLOBAL' ("[MKVTOOLNIX] - Falta la version {0}; se descarga para limpiar las etiquetas del MKV." -f $mkvSel)
+        Write-CvLog 'GLOBAL' (Get-CvText -Key 'cv.mkv.falta' -Values @($mkvSel))
         if (Confirm-CvTool -Context $ctx -Name 'mkvtoolnix' -Version $mkvSel) { $didInstall = $true }
-        else { Write-CvLog 'GLOBAL' '[MKVTOOLNIX] - [AVISO] - No disponible; el MKV final conservara las etiquetas DURATION.' }
+        else { Write-CvLog 'GLOBAL' (Get-CvText -Key 'cv.mkv.no') }
     }
 }
 
@@ -177,7 +177,7 @@ if ("$($ctx.VolumeMethod)".ToLower() -eq 'aacgain') {
 }
 # Modo pruebas activo: avisar bien visible de que la salida sera un RECORTE, no el archivo entero.
 if ($ctx.TestLimit -gt 0) {
-    Write-CvLog 'GLOBAL' ("[AVISO] - MODO PRUEBAS: se codifican solo los primeros {0} min de cada archivo (behavior.testMode)" -f [int]($ctx.TestLimit / 60))
+    Write-CvLog 'GLOBAL' (Get-CvText -Key 'cv.pruebas' -Values @([int]($ctx.TestLimit / 60)))
 }
 
 # Detectar (con cache en config.json por version de ffmpeg + GPU) que encoders por GPU soporta este
@@ -269,7 +269,7 @@ if (-not $WorkerOnly) {
         $tn = $f.BaseName
         if ($tn.StartsWith('TEST_', [System.StringComparison]::OrdinalIgnoreCase) -and (Test-CvJob -Context $ctx -Name $tn)) {
             Remove-CvJob -Context $ctx -Name $tn
-            Write-CvLog 'GLOBAL' ("[PREPARAR] - Archivo de prueba: job eliminado para reinicio limpio -> {0}.job.json" -f $tn)
+            Write-CvLog 'GLOBAL' (Get-CvText -Key 'cv.test.job' -Values @($tn))
         }
     }
 }
@@ -383,7 +383,7 @@ if ($needPrepare) {
     # directas a codificar sin preguntar y se reparten los archivos por el lock.
     Write-Host ''
     $defW = [int]$ctx.Workers; if ($defW -lt 0) { $defW = 0 }
-    $ans = (Read-Host ("[GLOBAL] - Workers en paralelo, contando esta ventana (ENTER = {0}, 0 = solo preparar y salir)" -f $defW)).Trim()
+    $ans = (Read-Host (Get-CvText -Key 'cv.workers.q' -Values @($defW))).Trim()
     $nw = $defW
     if ($ans -ne '') { $n = 0; if ([int]::TryParse($ans, [ref]$n) -and $n -ge 0) { $nw = $n } }
 
@@ -730,7 +730,7 @@ while ($didAny) {
                     # y se guardo en logs\error_*.log via Show-CvToolError).
                     Show-CvBox -Title (Get-CvText -Key 'cv.err.tit') -Lines @($name, (Get-CvText -Key 'cv.err.motivo' -Values @($failReason)), (Get-CvText -Key 'cv.err.detalle')) -Color Red
                 } else {
-                    Write-CvLog 'WORKER' ("[ERR] - No se genero la salida (intento {0}/{1}), se reintentara: {2}" -f $n, $maxRetries, $name)
+                    Write-CvLog 'WORKER' (Get-CvText -Key 'cv.nosalida.r' -Values @($n, $maxRetries, $name))
                 }
             }
         }
@@ -744,7 +744,7 @@ while ($didAny) {
                 Attempts = $n
                 Elapsed  = $null
             }
-            Write-CvLog 'WORKER' ("[ERR] - Error inesperado en {0}: {1}" -f $name, $emsg)
+            Write-CvLog 'WORKER' (Get-CvText -Key 'cv.inesperado' -Values @($name, $emsg))
             if ($n -ge $maxRetries) {
                 [void]$skip.Add($name)
                 Show-CvBox -Title (Get-CvText -Key 'cv.err.tit') -Lines @($name, (Get-CvText -Key 'cv.err.inesp' -Values @($emsg))) -Color Red

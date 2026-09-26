@@ -156,7 +156,7 @@ function Read-CvSrtTime {
         if ($s -eq '' -and $AllowEmpty) { return $null }
         $v = ConvertTo-CvSrtSeconds $s
         if ($null -ne $v) { return $v }
-        Write-CvLog 'SUB' '[AVISO] - tiempo no valido (usa h:mm:ss.mmm o segundos)' -Indent 5
+        Write-CvLog 'SUB' (Get-CvText -Key 'srt.tiempo.mal') -Indent 5
     }
 }
 
@@ -167,17 +167,17 @@ function Read-CvSrtCueNum {
         $n = Read-CvInt -Prompt $Prompt -AllowEmpty:$AllowEmpty
         if ($null -eq $n) { return $null }
         if ($null -ne (Get-CvSrtCueStart -Blocks $Blocks -Num $n)) { return $n }
-        Write-CvLog 'SUB' ("[AVISO] - no existe la cue {0} en el subtitulo" -f $n) -Indent 5
+        Write-CvLog 'SUB' (Get-CvText -Key 'srt.cue.no' -Values @($n)) -Indent 5
     }
 }
 
 function Read-CvSrtAnchor {
     <# Lee un ANCLA de sincronizacion (nº de cue + tiempo real) y la escribe en las refs $Srt/$Real. #>
     param([string[]]$Blocks, [string]$Label, [ref]$Srt, [ref]$Real)
-    $n = Read-CvSrtCueNum -Blocks $Blocks -Prompt ("    {0}: numero de cue" -f $Label)
+    $n = Read-CvSrtCueNum -Blocks $Blocks -Prompt (Get-CvText -Key 'srt.cue.q' -Values @($Label))
     $cur = Get-CvSrtCueStart -Blocks $Blocks -Num $n
-    Write-CvLog 'SUB' ("cue {0} esta ahora en {1}" -f $n, (ConvertTo-CvSrtStamp $cur)) -Indent 5
-    $rt = Read-CvSrtTime -Prompt '      tiempo REAL en el video (h:mm:ss.mmm)'
+    Write-CvLog 'SUB' (Get-CvText -Key 'srt.cue.esta' -Values @($n, (ConvertTo-CvSrtStamp $cur))) -Indent 5
+    $rt = Read-CvSrtTime -Prompt (Get-CvText -Key 'srt.cue.real')
     $Srt.Value = $cur; $Real.Value = $rt
 }
 
@@ -195,15 +195,15 @@ function Find-CvSrtVideo {
 function Select-CvSrtFile {
     <# Elige un .srt: lista los de $Dir (recursivo) con Select-FromList; si no hay, pide una ruta a mano. #>
     param([Parameter(Mandatory)][string]$Dir)
-    if (-not (Test-Path -LiteralPath $Dir)) { return (Read-CvLine -Prompt '  Ruta del .srt').Trim('"') }
+    if (-not (Test-Path -LiteralPath $Dir)) { return (Read-CvLine -Prompt (Get-CvText -Key 'srt.ruta.q')).Trim('"') }
     $subs = @(Get-CvFiles -Dir $Dir -Filters '*.srt' -Recurse -Exact)
     if ($subs.Count -eq 0) {
-        Write-CvLog 'SUB' ("[AVISO] - No hay .srt en {0}" -f $Dir) -Indent 3
-        return (Read-CvLine -Prompt '  Ruta del .srt').Trim('"')
+        Write-CvLog 'SUB' (Get-CvText -Key 'srt.nohay' -Values @($Dir)) -Indent 3
+        return (Read-CvLine -Prompt (Get-CvText -Key 'srt.ruta.q')).Trim('"')
     }
     $rels = $subs | ForEach-Object { $_.FullName.Substring($Dir.Length).TrimStart('\') }
-    $sel = Select-FromList -Title ("Subtitulos (.srt) en {0}" -f $Dir) -Options $rels -NoneLabel 'otra ruta (escribir)'
-    if ([string]::IsNullOrEmpty($sel)) { return (Read-CvLine -Prompt '  Ruta del .srt').Trim('"') }
+    $sel = Select-FromList -Title (Get-CvText -Key 'srt.lista' -Values @($Dir)) -Options $rels -NoneLabel (Get-CvText -Key 'srt.otra')
+    if ([string]::IsNullOrEmpty($sel)) { return (Read-CvLine -Prompt (Get-CvText -Key 'srt.ruta.q')).Trim('"') }
     Join-Path $Dir $sel
 }
 

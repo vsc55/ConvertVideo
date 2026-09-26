@@ -597,7 +597,7 @@ function Show-CvJobWindow {
         $r = & $curA
         if ($null -eq $r) { return }
         $form.Enabled = $false
-        try { Show-AudioPreview -Context $Context -File $File -AudioPos ([int]$r.Pos) -Label ("AUDIO [{0}] {1}" -f $r.Index, $r.Lang) -Duration (Get-MediaDuration $st.Info) }
+        try { Show-AudioPreview -Context $Context -File $File -AudioPos ([int]$r.Pos) -Label (Get-CvText -Key 'jw.lbl.audio' -Values @($r.Index, $r.Lang)) -Duration (Get-MediaDuration $st.Info) }
         catch { $lblMsg.Text = ("No se pudo reproducir: {0}" -f $_.Exception.Message) }
         finally { $form.Enabled = $true }
     })
@@ -670,7 +670,7 @@ function Show-CvJobWindow {
         $r = & $curS
         if ($null -eq $r) { return }
         $form.Enabled = $false
-        try { Show-SubtitlePreview -Context $Context -File $File -SubPos ([int]$r.Pos) -Label ("SUB [{0}] {1}" -f $r.Index, $r.Lang) -Duration (Get-MediaDuration $st.Info) }
+        try { Show-SubtitlePreview -Context $Context -File $File -SubPos ([int]$r.Pos) -Label (Get-CvText -Key 'jw.lbl.sub' -Values @($r.Index, $r.Lang)) -Duration (Get-MediaDuration $st.Info) }
         catch { $lblMsg.Text = ("No se pudo reproducir: {0}" -f $_.Exception.Message) }
         finally { $form.Enabled = $true }
     })

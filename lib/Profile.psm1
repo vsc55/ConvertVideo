@@ -1076,7 +1076,7 @@ function Save-CvProfileInteractive {
         $hint = $(if ("$Current" -ne '') { " [ENTER = {0}]" -f $Current } else { '' })
         $name = ''
         try {
-            $name = (Read-CvLine -Prompt ("   Nombre del perfil{0} [C/ESC = no guardar]" -f $hint) -AllowCancel).Trim()
+            $name = (Read-CvLine -Prompt (Get-CvText -Key 'pr.nombre.q' -Values @($hint)) -AllowCancel).Trim()
         } catch {
             if ("$($_.Exception.Message)" -eq 'CV_CANCEL') { return '' }
             throw
@@ -1090,10 +1090,10 @@ function Save-CvProfileInteractive {
         }
         $r = Save-CvConfigProfile -Path $Path -Prof $Prof -Label $name -Replace $Current
         if (-not $r.Ok) {
-            Write-Host ("   No se pudo guardar: {0}" -f $r.Error) -ForegroundColor Red
+            Write-Host (Get-CvText -Key 'pr.noguarda' -Values @($r.Error)) -ForegroundColor Red
             return ''
         }
-        Write-CvLog 'GLOBAL' ("[OK] - Perfil guardado en {0}: {1}" -f (Split-Path -Leaf $Path), $r.Label)
+        Write-CvLog 'GLOBAL' (Get-CvText -Key 'pr.guardado' -Values @((Split-Path -Leaf $Path), $r.Label))
         return "$($r.Label)"
     }
 }
@@ -1520,36 +1520,36 @@ function Select-Profile {
             }
             return $chosen
         }
-        Write-Host '   Opcion no valida.' -ForegroundColor Yellow
+        Write-Host (Get-CvText -Key 'con.opcion.mala3') -ForegroundColor Yellow
     }
 }
 
 function Write-ProfileInfo {
     param([Parameter(Mandatory)]$Prof)
     Write-Host ''
-    Write-CvLog 'GLOBAL' ("[INFO] - [VIDEO] - ENCODER: {0}" -f $Prof.VideoEncoder.ToUpper())
+    Write-CvLog 'GLOBAL' (Get-CvText -Key 'pr.inf.encoder' -Values @($Prof.VideoEncoder.ToUpper()))
     if ($Prof.VideoEncoder -ne 'copy') {
-        if ($Prof.VideoProfile) { Write-CvLog 'GLOBAL' ("[INFO] - [VIDEO] - PROFILE: {0}" -f $Prof.VideoProfile) }
-        if ($Prof.VideoLevel)   { Write-CvLog 'GLOBAL' ("[INFO] - [VIDEO] - LEVEL:   {0}" -f $Prof.VideoLevel) }
-        if ($null -ne $Prof.Qmin) { Write-CvLog 'GLOBAL' ("[INFO] - [VIDEO] - QMIN:    {0}" -f $Prof.Qmin) }
-        if ($null -ne $Prof.Qmax) { Write-CvLog 'GLOBAL' ("[INFO] - [VIDEO] - QMAX:    {0}" -f $Prof.Qmax) }
-        if ($null -ne $Prof.Crf)  { Write-CvLog 'GLOBAL' ("[INFO] - [VIDEO] - CRF:     {0}" -f $Prof.Crf) }
+        if ($Prof.VideoProfile) { Write-CvLog 'GLOBAL' (Get-CvText -Key 'pr.inf.profile' -Values @($Prof.VideoProfile)) }
+        if ($Prof.VideoLevel)   { Write-CvLog 'GLOBAL' (Get-CvText -Key 'pr.inf.level' -Values @($Prof.VideoLevel)) }
+        if ($null -ne $Prof.Qmin) { Write-CvLog 'GLOBAL' (Get-CvText -Key 'pr.inf.qmin' -Values @($Prof.Qmin)) }
+        if ($null -ne $Prof.Qmax) { Write-CvLog 'GLOBAL' (Get-CvText -Key 'pr.inf.qmax' -Values @($Prof.Qmax)) }
+        if ($null -ne $Prof.Crf)  { Write-CvLog 'GLOBAL' (Get-CvText -Key 'pr.inf.crf' -Values @($Prof.Crf)) }
         $dbTxt = if ("$($Prof.DetectBorder)".ToLower() -eq 'auto') { 'auto' } elseif ([bool]$Prof.DetectBorder) { 'si' } else { 'no' }
-        Write-CvLog 'GLOBAL' ("[INFO] - [VIDEO] - DETECTAR BORDE: {0}" -f $dbTxt)
-        if ($Prof.ChangeSize) { Write-CvLog 'GLOBAL' ("[INFO] - [VIDEO] - RESIZE: {0}" -f $Prof.ChangeSize) }
-        if ($null -ne $Prof.MaxWidth -and [int]$Prof.MaxWidth -gt 0) { Write-CvLog 'GLOBAL' ("[INFO] - [VIDEO] - RESIZE: <= {0}px de ancho (solo si es mayor)" -f [int]$Prof.MaxWidth) }
+        Write-CvLog 'GLOBAL' (Get-CvText -Key 'pr.inf.borde' -Values @($dbTxt))
+        if ($Prof.ChangeSize) { Write-CvLog 'GLOBAL' (Get-CvText -Key 'pr.inf.resize' -Values @($Prof.ChangeSize)) }
+        if ($null -ne $Prof.MaxWidth -and [int]$Prof.MaxWidth -gt 0) { Write-CvLog 'GLOBAL' (Get-CvText -Key 'pr.inf.resize2' -Values @([int]$Prof.MaxWidth)) }
     }
     if ($Prof.AudioEncoder -eq 'copy') {
-        Write-CvLog 'GLOBAL' '[INFO] - [AUDIO] - ENCODER: copy (sin recodificar)'
+        Write-CvLog 'GLOBAL' (Get-CvText -Key 'pr.inf.acopy')
     } else {
         $codec = "$($Prof.AudioCodec)"; if (-not $codec) { $codec = 'aac' }
-        Write-CvLog 'GLOBAL' ("[INFO] - [AUDIO] - CODEC: {0} / {1}" -f $codec, $Prof.AudioBitrate)
+        Write-CvLog 'GLOBAL' (Get-CvText -Key 'pr.inf.acodec' -Values @($codec, $Prof.AudioBitrate))
         # Overrides de salida del perfil (si no, se usa el global encode.*).
         if ($null -ne $Prof.AudioChannels -and [int]$Prof.AudioChannels -ge 1) {
-            Write-CvLog 'GLOBAL' ("[INFO] - [AUDIO] - CANALES: {0}" -f [int]$Prof.AudioChannels)
+            Write-CvLog 'GLOBAL' (Get-CvText -Key 'pr.inf.ach' -Values @([int]$Prof.AudioChannels))
         }
         if ($Prof.DownmixMode) {
-            Write-CvLog 'GLOBAL' ("[INFO] - [AUDIO] - DOWNMIX 5.1->estereo: {0}" -f "$($Prof.DownmixMode)".ToLower())
+            Write-CvLog 'GLOBAL' (Get-CvText -Key 'pr.inf.admx' -Values @("$($Prof.DownmixMode)".ToLower()))
         }
     }
     Write-Host ''

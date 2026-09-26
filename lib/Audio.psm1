@@ -162,7 +162,7 @@ function Get-CvStreamEndPts {
     #>
     param([Parameter(Mandatory)]$Context, [Parameter(Mandatory)][string]$File, [Parameter(Mandatory)][string]$Stream, [double]$Duration = 0, [string]$What = 'pista')
     $from = [int][Math]::Max(0, $Duration - 40)
-    Write-CvLog 'AUDIO' ("[SYNC] - Analizando fin de {0} (leyendo la cola del archivo)..." -f $What) -Indent 3
+    Write-CvLog 'AUDIO' (Get-CvText -Key 'au.fin.an' -Values @($What)) -Indent 3
     $r = Invoke-ToolCapture -Exe $Context.FFprobe -Arguments @(
         '-v', 'error'
         '-select_streams', $Stream
@@ -174,10 +174,10 @@ function Get-CvStreamEndPts {
     $vals = @("$($r.StdOut)" -split "`r?`n" | ForEach-Object { ConvertTo-InvDouble ($_.Trim()) } | Where-Object { $null -ne $_ })
     if ($vals.Count) {
         $max = ($vals | Measure-Object -Maximum).Maximum
-        Write-CvLog 'AUDIO' ("[SYNC] - Fin de {0}: {1}s [OK]" -f $What, (Format-CvNumber $max)) -Indent 3
+        Write-CvLog 'AUDIO' (Get-CvText -Key 'au.fin.ok' -Values @($What, (Format-CvNumber $max))) -Indent 3
         return $max
     }
-    Write-CvLog 'AUDIO' ("[SYNC] - Fin de {0}: sin datos (no se pudo leer la cola)" -f $What) -Indent 3
+    Write-CvLog 'AUDIO' (Get-CvText -Key 'au.fin.no' -Values @($What)) -Indent 3
     return 0.0
 }
 
@@ -209,21 +209,21 @@ function Show-CvSyncPreview {
     #>
     param([Parameter(Mandatory)]$Context, [Parameter(Mandatory)][string]$File, [int]$Index, [double]$Delay, [double]$At = 0, [int]$Seconds = 0)
     $fp = "$($Context.FFplay)"
-    if ([string]::IsNullOrWhiteSpace($fp) -or -not (Test-Path -LiteralPath $fp)) { Write-CvLog 'AUDIO' '[SYNC] - No se puede previsualizar (ffplay no disponible).' -Indent 3; return }
+    if ([string]::IsNullOrWhiteSpace($fp) -or -not (Test-Path -LiteralPath $fp)) { Write-CvLog 'AUDIO' (Get-CvText -Key 'au.prev.no') -Indent 3; return }
     # Tope de duracion: por defecto SIN limite (preview.syncSeconds = 0); -Seconds (>0) o la config lo
     # pueden acotar puntualmente. 0 => Invoke-CvPreview no pone -t (reproduce hasta el final o hasta q/ESC).
     $secs   = if ($Seconds -gt 0) { $Seconds } else { [int]$Context.PreviewSyncSeconds }
     $start  = [int][Math]::Floor([Math]::Max(0.0, $At))
     $astSel = @('-ast', "$Index")   # selecciona la pista de audio por su indice absoluto
     if ($Delay -gt 0) {
-        Write-CvLog 'AUDIO' ("[SYNC] - Preview 1/2: ORIGINAL (desde {0}s; el audio va adelantado). Cierra con q/ESC." -f $start) -Indent 3
-        Invoke-CvPreview -Context $Context -File $File -ExtraArgs $astSel -Label 'SYNC original' -Start $start -Seconds $secs
+        Write-CvLog 'AUDIO' (Get-CvText -Key 'au.prev.1' -Values @($start)) -Indent 3
+        Invoke-CvPreview -Context $Context -File $File -ExtraArgs $astSel -Label (Get-CvText -Key 'au.prev.t1') -Start $start -Seconds $secs
         $ms = [int][Math]::Round($Delay * 1000)
-        Write-CvLog 'AUDIO' ("[SYNC] - Preview 2/2: CORREGIDO (audio retrasado {0}s; los primeros ~{0}s en silencio). Cierra con q/ESC." -f (Format-CvNumber $Delay)) -Indent 3
-        Invoke-CvPreview -Context $Context -File $File -ExtraArgs ($astSel + @('-af', ("adelay={0}:all=1" -f $ms))) -Label 'SYNC corregido' -Start $start -Seconds $secs
+        Write-CvLog 'AUDIO' (Get-CvText -Key 'au.prev.2' -Values @((Format-CvNumber $Delay))) -Indent 3
+        Invoke-CvPreview -Context $Context -File $File -ExtraArgs ($astSel + @('-af', ("adelay={0}:all=1" -f $ms))) -Label (Get-CvText -Key 'au.prev.t2') -Start $start -Seconds $secs
     } else {
-        Write-CvLog 'AUDIO' ("[SYNC] - Preview: SIN RETARDO (audio tal cual, desde {0}s). Cierra con q/ESC." -f $start) -Indent 3
-        Invoke-CvPreview -Context $Context -File $File -ExtraArgs $astSel -Label 'SYNC sin retardo' -Start $start -Seconds $secs
+        Write-CvLog 'AUDIO' (Get-CvText -Key 'au.prev.0' -Values @($start)) -Indent 3
+        Invoke-CvPreview -Context $Context -File $File -ExtraArgs $astSel -Label (Get-CvText -Key 'au.prev.t0') -Start $start -Seconds $secs
     }
 }
 
@@ -240,8 +240,8 @@ function Show-AudioPreview {
     )
     $extra = @('-ast', ("a:{0}" -f $AudioPos))
     if ($AudioOnly) { $extra += '-nodisp' }
-    $modo = if ($AudioOnly) { 'solo audio' } else { 'video + audio' }
-    Write-CvLog 'AUDIO' ("[TEST] - Reproduciendo {0} ({1}); se cierra solo o pulsa ESC/Q" -f $Label, $modo) -Indent 3
+    $modo = if ($AudioOnly) { (Get-CvText -Key 'au.solo') } else { (Get-CvText -Key 'au.video') }
+    Write-CvLog 'AUDIO' (Get-CvText -Key 'au.repro' -Values @($Label, $modo)) -Indent 3
     Invoke-CvPreview -Context $Context -File $File -ExtraArgs $extra -Label $Label -Start $Start -Seconds $Seconds -Duration $Duration
 }
 
@@ -257,7 +257,7 @@ function Format-CvAudioLine {
     $br    = Get-CvAudioBitrate $Stream
     $brTxt = if ($null -ne $br) { '{0}k' -f [math]::Round($br / 1000) } else { '?' }
     $titleTxt = if ($title) { "'$title'" } else { '' }
-    ("{0} [{1}] idioma={2} codec={3} canales={4} bitrate={5} {6}" -f $Mark, $Stream.index, $lang, $Stream.codec_name, $Stream.channels, $brTxt, $titleTxt)
+    (Get-CvText -Key 'au.fila' -Values @($Mark, $Stream.index, $lang, $Stream.codec_name, $Stream.channels, $brTxt, $titleTxt))
 }
 
 function Select-AudioInteractive {
@@ -281,7 +281,7 @@ function Select-AudioInteractive {
         $mark = ' '; if ([int]$s.index -eq $DefaultIndex) { $mark = '*' }
         $lines += (Format-CvAudioLine -Stream $s -Mark $mark)
     }
-    Show-Menu -Title 'SELECCIONAR PISTA DE AUDIO (mismo idioma) [* = por defecto = mejor calidad]:' -Lines $lines -Indent 3
+    Show-Menu -Title (Get-CvText -Key 'au.sel.tit') -Lines $lines -Indent 3
     while ($true) {
         $a = (Read-CvMenuLine ("   [AUDIO] - Indice / 'P N'=video+audio / 'A N'=solo audio (opc. seg inicio: 'P N 300') [{0}]" -f $DefaultIndex) $to).Trim()
         if ($a -eq '') { $a = "$DefaultIndex" }
@@ -290,8 +290,8 @@ function Select-AudioInteractive {
         $play = ConvertFrom-CvPlayCommand $a -AllowAudioOnly
         if ($play) {
             if ($posByIndex.ContainsKey($play.Index)) {
-                Show-AudioPreview -Context $Context -File $File -AudioPos $posByIndex[$play.Index] -Label ("PISTA {0}" -f $play.Index) -AudioOnly:$play.AudioOnly -Start $play.Start -Duration $Duration
-            } else { Write-Host '   Indice no valido.' -ForegroundColor Yellow }
+                Show-AudioPreview -Context $Context -File $File -AudioPos $posByIndex[$play.Index] -Label (Get-CvText -Key 'au.pista.n' -Values @($play.Index)) -AudioOnly:$play.AudioOnly -Start $play.Start -Duration $Duration
+            } else { Write-Host (Get-CvText -Key 'con.indice.mal') -ForegroundColor Yellow }
             continue
         }
 
@@ -300,7 +300,7 @@ function Select-AudioInteractive {
             $match = $streams | Where-Object { [int]$_.index -eq $n } | Select-Object -First 1
             if ($match) { Write-Host ''; return (ConvertTo-AudioSel $match) }
         }
-        Write-Host '   Indice no valido.' -ForegroundColor Yellow
+        Write-Host (Get-CvText -Key 'con.indice.mal') -ForegroundColor Yellow
     }
 }
 
@@ -338,20 +338,20 @@ function Select-AudioMulti {
         $cw = 47   # ancho de la columna del texto antes de 'ej:' (deja hueco tras el texto mas largo)
         $hint = @(
             '',
-            "Elige QUE pistas conservar y CUAL sera la predeterminada (el resto se descarta):",
-            ("  {0}ej: {1}-> conserva la 1 y la 3"                 -f '- Indices a conservar separados por espacio.'.PadRight($cw), '1 3'.PadRight(6)),
-            ("  {0}ej: {1}-> conserva la 1 y la 3, predeterminada = 3" -f '- Marca la PREDETERMINADA con *.'.PadRight($cw), '*3 1'.PadRight(6)),
+            (Get-CvText -Key 'au.multi.1'),
+            ("  {0}ej: {1}-> conserva la 1 y la 3" -f (Get-CvText -Key 'au.multi.2').PadRight($cw), '1 3'.PadRight(6)),
+            ("  {0}ej: {1}-> conserva la 1 y la 3, predeterminada = 3" -f (Get-CvText -Key 'au.multi.3').PadRight($cw), '*3 1'.PadRight(6)),
             "  - [ENTER] = solo la preseleccionada (*)   -   T = todas   -   'P N'/'A N' = previsualizar (video / solo audio)"
         )
-        Show-Menu -Title "CONSERVAR PISTAS DE AUDIO (idioma preferido)   [* = predeterminada]:" -Lines ($lines + $hint) -Indent 3
-        $a = (Read-CvMenuLine ("   [AUDIO] - Pistas a conservar (* = predeterminada) [{0}]" -f ('*{0}' -f $DefaultIndex)) $to).Trim()
+        Show-Menu -Title (Get-CvText -Key 'au.multi.tit') -Lines ($lines + $hint) -Indent 3
+        $a = (Read-CvMenuLine (Get-CvText -Key 'au.multi.q' -Values @(('*{0}' -f $DefaultIndex))) $to).Trim()
 
         # Reproducir para revisar.
         $play = ConvertFrom-CvPlayCommand $a -AllowAudioOnly
         if ($play) {
             if ($posByIndex.ContainsKey($play.Index)) {
-                Show-AudioPreview -Context $Context -File $File -AudioPos $posByIndex[$play.Index] -Label ("PISTA {0}" -f $play.Index) -AudioOnly:$play.AudioOnly -Start $play.Start -Duration $Duration
-            } else { Write-Host '   Indice no valido.' -ForegroundColor Yellow }
+                Show-AudioPreview -Context $Context -File $File -AudioPos $posByIndex[$play.Index] -Label (Get-CvText -Key 'au.pista.n' -Values @($play.Index)) -AudioOnly:$play.AudioOnly -Start $play.Start -Duration $Duration
+            } else { Write-Host (Get-CvText -Key 'con.indice.mal') -ForegroundColor Yellow }
             continue
         }
 
@@ -374,7 +374,7 @@ function Select-AudioMulti {
                 if ($m.Groups[1].Value -eq '*') { $markDef = $n }
                 if ($keep -notcontains $n) { $keep += $n }
             }
-            if ($bad -or $keep.Count -eq 0) { Write-Host '   Indices no validos (usa solo los del idioma preferido).' -ForegroundColor Yellow; continue }
+            if ($bad -or $keep.Count -eq 0) { Write-Host (Get-CvText -Key 'au.multi.mal') -ForegroundColor Yellow; continue }
             if ($null -ne $markDef) { $defIdx = $markDef }
         }
         # La default debe estar en el set: si no se marco o no esta, cae a la preseleccionada (si se
@@ -425,7 +425,7 @@ function Select-AudioFallback {
             $mark = ' '; if ([int]$s.index -eq $DefaultIndex) { $mark = '*' }
             $lines += (Format-CvAudioLine -Stream $s -Mark $mark)
         }
-        Show-Menu -Title 'SELECCIONAR PISTA DE AUDIO (ningun idioma preferido) [* = descarte]:' -Lines $lines -Indent 3
+        Show-Menu -Title (Get-CvText -Key 'au.fb.tit') -Lines $lines -Indent 3
         $a = (Read-CvMenuLine ("   [AUDIO] - Indice / 'P N'=video+audio / 'A N'=solo audio (opc. seg inicio: 'P N 300') [{0}]" -f $DefaultIndex) $to).Trim()
         if ($a -eq '') { $a = "$DefaultIndex" }
 
@@ -434,19 +434,19 @@ function Select-AudioFallback {
         $play = ConvertFrom-CvPlayCommand $a -AllowAudioOnly
         if ($play) {
             if ($posByIndex.ContainsKey($play.Index)) {
-                Show-AudioPreview -Context $Context -File $File -AudioPos $posByIndex[$play.Index] -Label ("PISTA {0}" -f $play.Index) -AudioOnly:$play.AudioOnly -Start $play.Start -Duration $Duration
-            } else { Write-Host '   Indice no valido.' -ForegroundColor Yellow }
+                Show-AudioPreview -Context $Context -File $File -AudioPos $posByIndex[$play.Index] -Label (Get-CvText -Key 'au.pista.n' -Values @($play.Index)) -AudioOnly:$play.AudioOnly -Start $play.Start -Duration $Duration
+            } else { Write-Host (Get-CvText -Key 'con.indice.mal') -ForegroundColor Yellow }
             continue
         }
 
         $n = 0
         if ([int]::TryParse($a, [ref]$n) -and $posByIndex.ContainsKey($n)) {
-            $ok = (Read-CvMenuLine ("   Usar la pista {0}? (ENTER=si / N=volver a la lista)" -f $n) $to).Trim()
+            $ok = (Read-CvMenuLine (Get-CvText -Key 'au.usar.q' -Values @($n)) $to).Trim()
             if ($ok -match '^[Nn]$') { continue }
             $chosen = $streams | Where-Object { [int]$_.index -eq $n } | Select-Object -First 1
             continue
         }
-        Write-Host '   Indice no valido.' -ForegroundColor Yellow
+        Write-Host (Get-CvText -Key 'con.indice.mal') -ForegroundColor Yellow
     }
 
     $sel = ConvertTo-AudioSel $chosen
@@ -457,18 +457,18 @@ function Select-AudioFallback {
         if ($trackLang) {
             $r = (Read-CvMenuLine ("   [AUDIO] - Idioma a asignar: [ENTER]='{0}' / [O]tro codigo / [U]nd" -f $trackLang) $to).Trim()
         } else {
-            $r = (Read-CvMenuLine '   [AUDIO] - La pista no trae idioma: [O]tro codigo / [ENTER]=und' $to).Trim()
+            $r = (Read-CvMenuLine (Get-CvText -Key 'au.sinidioma') $to).Trim()
         }
         if ($r -eq '')            { $lang = if ($trackLang) { $trackLang } else { 'und' }; break }
         if ($r -match '^[Uu]$')   { $lang = 'und'; break }
         if ($r -match '^[Oo]$') {
-            $c = (Read-Host '   Codigo de idioma ISO 639-2 (ej: spa, eng, fre)').Trim()
+            $c = (Read-Host (Get-CvText -Key 'au.iso.q')).Trim()
             if ($c -ne '') { $lang = $c.ToLower(); break }
             continue
         }
         # Permitir teclear el codigo directamente (2-3 letras).
         if ($r -match '^[A-Za-z]{2,3}$') { $lang = $r.ToLower(); break }
-        Write-Host '   Opcion no valida.' -ForegroundColor Yellow
+        Write-Host (Get-CvText -Key 'con.opcion.mala2') -ForegroundColor Yellow
     }
     Write-Host ''
     # Devolver la seleccion con el idioma ELEGIDO (no el del tag original).
@@ -500,7 +500,7 @@ function Invoke-AudioAsk {
 
     $aud = @(Get-AudioStreams -Info $Info)
     if ($aud.Count -eq 0) {
-        if ($Context.Debug) { Write-CvLog 'AUDIO' '[SKIP] - No se ha detectado pista de audio' }
+        if ($Context.Debug) { Write-CvLog 'AUDIO' (Get-CvText -Key 'au.sinpista') }
         $res.Skip = $true
         return [pscustomobject]$res
     }
@@ -511,7 +511,7 @@ function Invoke-AudioAsk {
 
     # copy SIN multipista -> comportamiento clasico: no se elige nada; el multiplex copia 0:a:0.
     if ($isCopy -and -not $doMulti) {
-        if ($Context.Debug) { Write-CvLog 'AUDIO' '[SKIP] - Se copiara la pista de audio original' }
+        if ($Context.Debug) { Write-CvLog 'AUDIO' (Get-CvText -Key 'au.copy') }
         $res.Skip = $true
         return [pscustomobject]$res
     }
@@ -521,7 +521,7 @@ function Invoke-AudioAsk {
     if ($doMulti) {
         # MULTIPISTA (beta): conservar varias del idioma preferido + elegir la predeterminada.
         $preDef = Select-CvDefaultAudio $prefTracks
-        Write-CvLog 'AUDIO' ("[INFO] - {0} pistas en el idioma preferido; elige cuales conservar y la predeterminada." -f $prefTracks.Count) -Indent 3
+        Write-CvLog 'AUDIO' (Get-CvText -Key 'au.multi.info' -Values @($prefTracks.Count)) -Indent 3
         $sels = @(Select-AudioMulti -Context $Context -File $file -AllStreams $aud -PrefStreams $prefTracks -DefaultIndex ([int]$preDef.index) -Duration $adur)
         $res.Manual = $true
     }
@@ -533,7 +533,7 @@ function Invoke-AudioAsk {
             $res.Manual = $true   # varias del idioma preferido
         }
         elseif ($prefTracks.Count -eq 0) {
-            Write-CvLog 'AUDIO' ("[AVISO] - No hay pista de audio en el idioma preferido ({0}); elige una manualmente." -f ($Context.AudioLangs -join '/')) -Indent 3
+            Write-CvLog 'AUDIO' (Get-CvText -Key 'au.sinidioma.av' -Values @(($Context.AudioLangs -join '/'))) -Indent 3
             $sel = Select-AudioFallback -Context $Context -File $file -AudioStreams $aud -DefaultIndex $sel.Index -Duration $adur
             $res.Manual = $true   # no habia idioma preferido
         }
@@ -550,7 +550,7 @@ function Invoke-AudioAsk {
     # copy CON multipista: se copian las pistas elegidas (no se recodifican).
     if ($isCopy) {
         $res.Skip = $true
-        if ($Context.Debug) { Write-CvLog 'AUDIO' '[SKIP] - Se copiaran las pistas de audio elegidas (perfil copy)' }
+        if ($Context.Debug) { Write-CvLog 'AUDIO' (Get-CvText -Key 'au.copy.varias') }
     }
 
     # ---- Sincronia audio/video POR PISTA (solo si se recodifica; en copy no aplica) ----
@@ -558,7 +558,7 @@ function Invoke-AudioAsk {
     # video con inicios alineados). Solo si esta activa la deteccion (encode.audioSyncThreshold > 0).
     $videoEnd = 0.0
     if (-not $isCopy -and $Context.AudioSyncThreshold -gt 0) {
-        $videoEnd = Get-CvStreamEndPts -Context $Context -File $file -Stream 'v:0' -Duration $adur -What 'video'
+        $videoEnd = Get-CvStreamEndPts -Context $Context -File $file -Stream 'v:0' -Duration $adur -What (Get-CvText -Key 'au.video.pista')
     }
     $tracks = @()
     foreach ($s in $sels) {
@@ -566,7 +566,7 @@ function Invoke-AudioAsk {
         $sync = 0.0
         if (-not $isCopy) {
             $delay = Get-AudioInitDelay -Context $Context -File $file -Index $s.Index
-            $lbl = if ($sels.Count -gt 1) { (" (pista {0}, {1})" -f $s.Index, $lang) } else { '' }
+            $lbl = if ($sels.Count -gt 1) { (Get-CvText -Key 'au.pista.par' -Values @($s.Index, $lang)) } else { '' }
             if ($delay -gt 0) {
                 # CASO 1: el audio EMPIEZA mas tarde (start_time > 0). NO es una desincronia: los timestamps
                 # del origen ya estan alineados (solo no hay sonido en ese primer tramo). Compensarlo con
@@ -577,11 +577,11 @@ function Invoke-AudioAsk {
                 # asi que anadir el silencio lo DUPLICARIA y dejaria el audio $delay s tarde (desincronia real
                 # en la salida, con la fuente correcta). Verificado con ffprobe/silencedetect.
                 if ($Context.SyncAdelay) {
-                    Write-CvLog 'AUDIO' ("[SYNC] - El audio empieza {0}s mas tarde que el video{1}: offset ya conservado por ffmpeg, no se compensa." -f $delay, $lbl) -Indent 3
+                    Write-CvLog 'AUDIO' (Get-CvText -Key 'au.sync.tarde' -Values @($delay, $lbl)) -Indent 3
                 }
                 else {
-                    Write-CvLog 'AUDIO' ("[SYNC] - El audio empieza {0}s mas tarde que el video{1} (modo WAV clasico: hay que compensarlo)" -f $delay, $lbl) -Indent 3
-                    $ans = (Read-CvLine -Prompt ("   [AUDIO] [SYNC] - Silencio a anadir al inicio en seg [{0}] (ENTER=usar / 0=ninguno)" -f $delay) -TimeoutSec (Get-CvPromptTimeout $Context 'sync')).Trim()
+                    Write-CvLog 'AUDIO' (Get-CvText -Key 'au.sync.wav' -Values @($delay, $lbl)) -Indent 3
+                    $ans = (Read-CvLine -Prompt (Get-CvText -Key 'au.sync.sil.q' -Values @($delay)) -TimeoutSec (Get-CvPromptTimeout $Context 'sync')).Trim()
                     $res.Manual = $true   # se pregunto por el silencio de sincronia
                     if ($ans -eq '') { $sync = $delay }
                     else { $v = ConvertTo-InvDouble $ans; if ($null -ne $v) { $sync = $v } }
@@ -591,10 +591,10 @@ function Invoke-AudioAsk {
             else {
                 # CASO 2: el audio ACABA antes que el video (inicios alineados) -> parece ADELANTADO; se
                 # sugiere retrasarlo esa diferencia. Se PREGUNTA (default = detectado, con preview A/B).
-                $audioEnd = if ($videoEnd -gt 0) { Get-CvStreamEndPts -Context $Context -File $file -Stream "$($s.Index)" -Duration $adur -What ("audio pista {0}" -f $s.Index) } else { 0.0 }
+                $audioEnd = if ($videoEnd -gt 0) { Get-CvStreamEndPts -Context $Context -File $file -Stream "$($s.Index)" -Duration $adur -What (Get-CvText -Key 'au.pista.audio' -Values @($s.Index)) } else { 0.0 }
                 $ahead = Resolve-CvAudioAhead -VideoEnd $videoEnd -AudioEnd $audioEnd -Threshold $Context.AudioSyncThreshold
                 if ($ahead -gt 0) {
-                    Write-CvLog 'AUDIO' ("[SYNC] - El audio acaba {0}s antes que el video{1}: parece ADELANTADO ~{0}s." -f $ahead, $lbl) -Indent 3
+                    Write-CvLog 'AUDIO' (Get-CvText -Key 'au.sync.antes' -Values @($ahead, $lbl)) -Indent 3
                     # Flujo: (1) preguntar el retardo -> ENTER/timeout usa el detectado (o el ultimo tecleado);
                     # (2) PREVIEW FORZOSO del valor definido en (1) -> nunca se acepta sin haberlo visto/oido;
                     # (3) confirmar -> aceptar sigue; rechazar (N) vuelve a (1) a definir otro. El punto de
@@ -607,7 +607,7 @@ function Invoke-AudioAsk {
                     while (-not $decided) {
                         # PASO 1: retardo a usar (ENTER/timeout = detectado o ultimo). CUALQUIER valor -incluido
                         # 0 (ninguno)- pasa por preview + confirmacion: no hay atajo que salga del loop sin validar.
-                        $ans = (Read-CvLine -Prompt ("   [AUDIO] [SYNC] - Retardo a anadir al audio en seg [{0}] (ENTER=usar {0} / 0=ninguno / <seg>=otro)" -f (Format-CvNumber $cur)) -TimeoutSec $timeout).Trim()
+                        $ans = (Read-CvLine -Prompt (Get-CvText -Key 'au.sync.ret.q' -Values @((Format-CvNumber $cur))) -TimeoutSec $timeout).Trim()
                         if ($ans -ne '') { $v = ConvertTo-InvDouble $ans; if ($null -eq $v) { continue }; $cur = $v }
                         # PASO 2: preview forzoso del valor definido (con 0 = "sin retardo", tal cual).
                         & $prevOf $cur
@@ -617,7 +617,7 @@ function Invoke-AudioAsk {
                         # P = repetir preview.
                         $confirmed = $false
                         while (-not $confirmed) {
-                            $ok = (Read-CvLine -Prompt ("   [AUDIO] [SYNC] - Suena bien? Aceptar retardo de {0}s? (ENTER/S=aceptar / N=definir otro / P=repetir preview)" -f (Format-CvNumber $cur))).Trim()
+                            $ok = (Read-CvLine -Prompt (Get-CvText -Key 'au.sync.ok.q' -Values @((Format-CvNumber $cur)))).Trim()
                             if ($ok -match '^[Pp]$') { & $prevOf $cur; continue }
                             if ($ok -match '^[Nn]$') { $confirmed = $true }                     # vuelve al paso 2
                             elseif ($ok -eq '' -or $ok -match '^[Ss]$') { $sync = $cur; $decided = $true; $confirmed = $true }   # aceptar
@@ -627,7 +627,7 @@ function Invoke-AudioAsk {
                     Write-Host ''
                 }
                 elseif ($Context.Debug) {
-                    Write-CvLog 'AUDIO' ("[SYNC] - Audio y video alineados [OK] (pista {0})" -f $s.Index)
+                    Write-CvLog 'AUDIO' (Get-CvText -Key 'au.sync.ok' -Values @($s.Index))
                 }
             }
         }
@@ -638,7 +638,7 @@ function Invoke-AudioAsk {
             Lang    = $lang
             Default = [bool]$s.Default
         }
-        if ($Context.Debug) { Write-CvLog 'AUDIO' ("[INFO] - Pista {0} (idioma={1}, canales={2}, default={3})" -f $s.Index, $lang, $s.Channels, $s.Default) }
+        if ($Context.Debug) { Write-CvLog 'AUDIO' (Get-CvText -Key 'au.info.pista' -Values @($s.Index, $lang, $s.Channels, $s.Default)) }
     }
     $res.Tracks = @($tracks)
     return [pscustomobject]$res
@@ -724,7 +724,7 @@ function Invoke-AudioRun {
     # Resolve-CvAudioTrackPlan, compartido con la ejecucion en una pasada. El aviso de canales capados
     # y las lineas de downmix se emiten aqui con los campos del plan.
     $plan   = Resolve-CvAudioTrackPlan -Context $Context -Prof $Prof -SourceChannels $SourceChannels -Is51 $Is51
-    if ($plan.Capped) { Write-CvInfoStep $Context 'AUDIO' ("El origen tiene {0} canales; no se hace upmix a {1} (se conservan {0})" -f $SourceChannels, $plan.Target) }
+    if ($plan.Capped) { Write-CvInfoStep $Context 'AUDIO' (Get-CvText -Key 'au.noupmix' -Values @($SourceChannels, $plan.Target)) }
     $ch     = $plan.Channels
     $layout = Get-CvChannelLayout $ch
     # Downmix con VOZ REFORZADA (BETA): solo al bajar 5.1 -> estereo (ch=2) con downmix 'dialogue'.
@@ -740,9 +740,9 @@ function Invoke-AudioRun {
     # de ffmpeg (aformat, que atenua el central). Si se pidio 'dialogue' pero el beta esta desactivado,
     # avisar de que sigue en estandar hasta activar test.betaDownmix. Asi se ve en el worker que se hizo.
     if ($ch -eq 2 -and $Is51) {
-        if ($downmix)          { Write-CvInfoStep $Context 'AUDIO' 'Downmix 5.1 -> estereo [beta] con voz reforzada (central +, surrounds -)' }
-        elseif ($wantDialogue) { Write-CvInfoStep $Context 'AUDIO' 'Downmix 5.1 -> estereo (estandar; activa test.betaDownmix para la voz reforzada [beta])' }
-        else                   { Write-CvInfoStep $Context 'AUDIO' 'Downmix 5.1 -> estereo (estandar de ffmpeg; downmixMode=dialogue + test.betaDownmix para reforzar la voz)' }
+        if ($downmix)          { Write-CvInfoStep $Context 'AUDIO' (Get-CvText -Key 'au.dmx.voz') }
+        elseif ($wantDialogue) { Write-CvInfoStep $Context 'AUDIO' (Get-CvText -Key 'au.dmx.est') }
+        else                   { Write-CvInfoStep $Context 'AUDIO' (Get-CvText -Key 'au.dmx.est2') }
     }
 
     # Fuente + sincronia (encode.syncAdelay elige el metodo):
@@ -757,7 +757,7 @@ function Invoke-AudioRun {
 
     if ($Sync -gt 0 -and $Context.SyncAdelay) {
         # ADELAY: retardo en una pasada con adelay (ms), sin WAV.
-        Write-CvInfoStep $Context 'AUDIO' ("Sincronia (adelay): retardo de {0}s en una pasada" -f $Sync)
+        Write-CvInfoStep $Context 'AUDIO' (Get-CvText -Key 'au.sync.adelay' -Values @($Sync))
         $sourceInput = @('-i',$File)
         $mapPre      = @('-map',"0:$Index",'-vn','-sn','-map_chapters','-1')
         $aLabel      = "0:$Index"
@@ -776,13 +776,13 @@ function Invoke-AudioRun {
         # "0,5" y ffmpeg parte el filtro por la coma (aevalsrc=0:d=0,5 -> error). Bug real de locale.
         $syncSec = ([double]$Sync).ToString([System.Globalization.CultureInfo]::InvariantCulture)
         $fc = ("[0:{0}]{1}[a2];aevalsrc=0:d={2}:sample_rate={3}:channel_layout={4}[sil];[sil][a2]concat=n=2:v=0:a=1[out]" -f $Index, $a2f, $syncSec, $hz, $layout)
-        Start-CvStep $Context 'AUDIO' ("Generando silencio de {0}s + pista..." -f $Sync)
+        Start-CvStep $Context 'AUDIO' (Get-CvText -Key 'au.sil.gen' -Values @($Sync))
         $wavArgs = @('-hide_banner','-y','-i',$File,'-filter_complex',$fc,'-map','[out]')
         if ($Context.TestLimit -gt 0) { $wavArgs += @('-t',"$($Context.TestLimit)") }  # modo pruebas
         $wavArgs += $wav
         Invoke-ToolShow -Exe $Context.FFmpeg -Arguments $wavArgs -Context $Context | Out-Null
         $syncOk = (Test-Path -LiteralPath $wav)
-        Stop-CvStep $Context 'AUDIO' $syncOk -FailMsg '[ERR] - No se pudo generar el audio sincronizado'
+        Stop-CvStep $Context 'AUDIO' $syncOk -FailMsg (Get-CvText -Key 'au.sil.mal')
         if (-not $syncOk) { return $null }
         $sourceInput = @('-i',$wav)
         $mapPre      = @('-map','0:a')
@@ -798,7 +798,7 @@ function Invoke-AudioRun {
     # Metodo de volumen (invalido->default; aacgain->peak si el codec no es AAC): Resolve-CvVolumeMethod.
     $vm     = Resolve-CvVolumeMethod -Method $Context.VolumeMethod -Codec $codec
     $method = $vm.Method
-    if ($vm.AacgainDowngraded) { Write-CvInfoStep $Context 'AUDIO' ("Volumen: aacgain no aplica a {0}; se usa '{1}'" -f $codec, $vm.Method) }
+    if ($vm.AacgainDowngraded) { Write-CvInfoStep $Context 'AUDIO' (Get-CvText -Key 'au.vol.aacgno' -Values @($codec, $vm.Method)) }
 
     # Filtro principal de VOLUMEN (se encadenara con $syncFilter en una sola cadena de filtros).
     $mainFilter = ''
@@ -813,27 +813,27 @@ function Invoke-AudioRun {
         if ($Context.TestLimit -gt 0 -and -not $fromWav) { $measureArgs += @('-t',"$($Context.TestLimit)") }
         # Medir el pico recorre TODO el audio (volumedetect): puede tardar. Paso con ✓ para que
         # no parezca colgado entre "Resolucion" y "Aplicando ganancia".
-        Start-CvStep $Context 'AUDIO' 'Analizando volumen...'
+        Start-CvStep $Context 'AUDIO' (Get-CvText -Key 'au.vol.an')
         $peak = Get-MaxVolume -Context $Context -InputArgs $measureArgs
-        $peakTxt = if ($null -ne $peak) { '(pico {0} dB)' -f $peak } else { '(pico desconocido)' }
-        Stop-CvStep $Context 'AUDIO' $true -Extra $peakTxt -OkMsg ("[OK] - Volumen analizado {0}" -f $peakTxt)
+        $peakTxt = if ($null -ne $peak) { (Get-CvText -Key 'au.vol.pico') -f $peak } else { (Get-CvText -Key 'au.vol.nopico') }
+        Stop-CvStep $Context 'AUDIO' $true -Extra $peakTxt -OkMsg (Get-CvText -Key 'au.vol.ok' -Values @($peakTxt))
         $gain = 0.0
         if ($null -ne $peak -and $peak -lt $target) { $gain = [math]::Round($target - $peak, 1) }
         if ($gain -gt 0) {
-            Write-CvInfoStep $Context 'AUDIO' ("Aplicando ganancia +{0} dB" -f $gain)
+            Write-CvInfoStep $Context 'AUDIO' (Get-CvText -Key 'au.vol.gan' -Values @($gain))
             $gtxt = $gain.ToString([System.Globalization.CultureInfo]::InvariantCulture)
             $mainFilter = 'volume={0}dB:precision=fixed' -f $gtxt
-        } elseif ($Context.Debug) { Write-CvLog 'AUDIO' '[VOL] - [PEAK] - Sin ajuste de volumen' }
+        } elseif ($Context.Debug) { Write-CvLog 'AUDIO' (Get-CvText -Key 'au.vol.sin') }
     }
     elseif ($method -eq 'loudnorm') {
         # LOUDNORM: normalizacion de sonoridad EBU R128 (una pasada). I/TP/LRA desde config (fuente unica
         # Get-CvLoudnormFilter, compartida con la ejecucion en una pasada).
-        Write-CvInfoStep $Context 'AUDIO' ("Normalizando sonoridad (I={0}, TP={1}, LRA={2})" -f $Context.LoudnormI, $Context.LoudnormTP, $Context.LoudnormLRA)
+        Write-CvInfoStep $Context 'AUDIO' (Get-CvText -Key 'au.vol.norm' -Values @($Context.LoudnormI, $Context.LoudnormTP, $Context.LoudnormLRA))
         $mainFilter = Get-CvLoudnormFilter -I $Context.LoudnormI -TP $Context.LoudnormTP -LRA $Context.LoudnormLRA
     }
     else {
         # AACGAIN: se codifica sin ajuste y despues se aplica la ganancia sin perdida.
-        if ($Context.Debug) { Write-CvLog 'AUDIO' '[VOL] - [AACGAIN] - La ganancia se aplicara al m4a despues de codificar' }
+        if ($Context.Debug) { Write-CvLog 'AUDIO' (Get-CvText -Key 'au.vol.aacg') }
     }
 
     # Cadena de filtros = sincronia (adelay, beta) + downmix voz + volumen; si no hay ninguno, mapeo
@@ -853,13 +853,13 @@ function Invoke-AudioRun {
     if ($Context.TestLimit -gt 0) { $progTotal = [math]::Min($progTotal, [double]$Context.TestLimit) }
     $global:CvLastToolError = $null   # el modo progreso lo rellena; se vuelca al log si ffmpeg falla
     if ($Context.Progress -and -not $Context.Debug -and $progTotal -gt 0) {
-        $code = Invoke-ToolProgress -Exe $Context.FFmpeg -Arguments $ffArgs -Context $Context -Label 'Recodificando audio...' -TotalSeconds $progTotal
+        $code = Invoke-ToolProgress -Exe $Context.FFmpeg -Arguments $ffArgs -Context $Context -Label (Get-CvText -Key 'au.recod') -TotalSeconds $progTotal
     } else {
-        Start-CvStep $Context 'AUDIO' 'Recodificando audio...'
+        Start-CvStep $Context 'AUDIO' (Get-CvText -Key 'au.recod')
         $code = Invoke-ToolShow -Exe $Context.FFmpeg -Arguments $ffArgs -Context $Context
     }
     if ($code -ne 0) {
-        Stop-CvStep $Context 'AUDIO' $false -FailMsg ("[ERR] - ffmpeg devolvio codigo {0}" -f $code)
+        Stop-CvStep $Context 'AUDIO' $false -FailMsg (Get-CvText -Key 'vd.run.codigo' -Values @($code))
         Show-CvToolError -Context $Context -Category 'AUDIO' -Name $name -Tool 'ffmpeg-audio'
         if (Test-Path -LiteralPath $outM4a)       { Remove-Item -Force -LiteralPath $outM4a -ErrorAction SilentlyContinue }
         if (Test-Path -LiteralPath $atmp.SyncWav) { Remove-Item -Force -LiteralPath $atmp.SyncWav -ErrorAction SilentlyContinue }
@@ -870,11 +870,11 @@ function Invoke-AudioRun {
     # AACGAIN: aplicar la ganancia ReplayGain sobre el m4a ya codificado (sin recodificar).
     if ($method -eq 'aacgain' -and (Test-Path -LiteralPath $outM4a)) {
         if (Test-Path $Context.AacGain) {
-            Start-CvStep $Context 'AUDIO' 'Aplicando ganancia sin perdida (aacgain)...'
+            Start-CvStep $Context 'AUDIO' (Get-CvText -Key 'au.aacg.apl')
             [void](Invoke-ToolShow -Exe $Context.AacGain -Arguments @('/r','/c','/q', $outM4a) -Context $Context)
             Stop-CvStep $Context 'AUDIO' $true
         } else {
-            Write-CvLog 'AUDIO' '[VOL] - [AACGAIN] - [AVISO] - No se encuentra aacgain.exe, se omite el ajuste'
+            Write-CvLog 'AUDIO' (Get-CvText -Key 'au.aacg.no')
         }
     }
 

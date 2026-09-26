@@ -879,11 +879,11 @@ function Set-CvJobDraftAudioSync {
         if ($OnStep) { & $OnStep (Get-CvText -Key 'plan.sync') }
         $dur = Get-MediaDuration $Info
         $file = "$($Draft.File)"
-        $vEnd = Get-CvStreamEndPts -Context $Context -File $file -Stream 'v:0' -Duration $dur -What 'video'
+        $vEnd = Get-CvStreamEndPts -Context $Context -File $file -Stream 'v:0' -Duration $dur -What (Get-CvText -Key 'au.video.pista')
         if ($vEnd -le 0) { return $notas }
         foreach ($t in $tracks) {
             if ([double]$t.Sync -ne 0) { continue }   # ya trae un valor puesto a mano: no se pisa
-            $aEnd  = Get-CvStreamEndPts -Context $Context -File $file -Stream ("{0}" -f [int]$t.Index) -Duration $dur -What ("audio pista {0}" -f $t.Index)
+            $aEnd  = Get-CvStreamEndPts -Context $Context -File $file -Stream ("{0}" -f [int]$t.Index) -Duration $dur -What (Get-CvText -Key 'au.pista.audio' -Values @($t.Index))
             $ahead = Resolve-CvAudioAhead -VideoEnd $vEnd -AudioEnd $aEnd -Threshold ([double]$Context.AudioSyncThreshold)
             if ($ahead -gt 0) {
                 $t.Sync = [double]$ahead

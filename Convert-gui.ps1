@@ -81,7 +81,7 @@ foreach ($m in $modules) {
 # equivalente de elegir entre Convert.cmd y Convert-Debug.cmd sin cambiar de lanzador.
 if ([string]::IsNullOrWhiteSpace($Config)) {
     if (-not (Initialize-CvGui)) {
-        Write-Host 'No hay entorno grafico (o el host no es STA). Usa Convert.cmd, que hace lo mismo en consola.'
+        Write-Host (Get-CvText -Key 'cg.singui')
         return
     }
     $Config = Show-CvSetupConfigChooser -Root $Root
@@ -106,28 +106,28 @@ $logFile = $sess.LogFile
 $ready = Test-CvConvertReady -Context $ctx
 if (-not $ready.Ok) {
     Write-CvLog 'COLA' ("[ERR] - {0}" -f $ready.Reason)
-    $abrir = Show-CvGuiConfirm -Title 'Faltan herramientas' -Message (
+    $abrir = Show-CvGuiConfirm -Title (Get-CvText -Key 'cg.faltan') -Message (
         ("No se puede trabajar todavia: {0}`n`nQuieres abrir setup ahora para instalarla o elegir otra version?" -f $ready.Reason))
     if ($abrir) {
         $setup = Join-Path $Root 'setup-gui.cmd'
         try { [void](Start-Process -FilePath $setup -ArgumentList @('-Config', ('"{0}"' -f $cfgPath)) -WorkingDirectory $Root) }
-        catch { Write-CvLog 'COLA' ("[ERR] - No se pudo abrir setup: {0}" -f $_.Exception.Message) }
+        catch { Write-CvLog 'COLA' (Get-CvText -Key 'cg.setup.no' -Values @($_.Exception.Message)) }
         if ($logFile) { Stop-CvLog }
         return
     }
-    Write-CvLog 'COLA' '[AVISO] - Se abre la cola igualmente (solo para mirar): no se podra preparar ni codificar.'
+    Write-CvLog 'COLA' (Get-CvText -Key 'cg.solomirar')
 } elseif (@($ready.Warnings).Count -gt 0) {
     foreach ($w in @($ready.Warnings)) { Write-CvLog 'COLA' ("[AVISO] - {0}" -f $w) }
-    Show-CvGuiInfo -Title 'Aviso' -Message (
+    Show-CvGuiInfo -Title (Get-CvText -Key 'cg.aviso') -Message (
         ("Se puede trabajar, pero:`n`n - {0}`n`nSe arregla en setup (Herramientas)." -f ((@($ready.Warnings) -join "`n - "))))
 }
 
-Write-CvLog 'COLA' ("Abriendo la cola en ventana ({0})..." -f $cfgName)
+Write-CvLog 'COLA' (Get-CvText -Key 'cg.abriendo' -Values @($cfgName))
 $ok = Show-CvConvertWindow -Context $ctx -Root $Root -CfgPath $cfgPath -CfgName $cfgName -CurrentLog "$logFile"
 if (-not $ok) {
-    Write-CvLog 'COLA' '[ERR] - No se pudo abrir la ventana (sin entorno grafico o el host no es STA).'
-    Write-CvLog 'COLA' 'Usa Convert.cmd (la consola de siempre hace lo mismo).'
+    Write-CvLog 'COLA' (Get-CvText -Key 'cg.noventana')
+    Write-CvLog 'COLA' (Get-CvText -Key 'cg.usaconsola')
 }
 
-Write-CvLog 'COLA' 'Hecho.'
+Write-CvLog 'COLA' (Get-CvText -Key 'cli.hecho')
 if ($logFile) { Stop-CvLog }

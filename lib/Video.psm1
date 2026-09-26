@@ -15,7 +15,7 @@ function Find-CropDetect {
     if ($Start -lt 0)    { $Start = [int]$Context.BorderStart }
     if ($Duration -lt 0) { $Duration = [int]$Context.BorderDur }
     $stop = $Start + $Duration
-    Write-CvLog 'VIDEO' ("[BORDE] - [SCAN] - Analizando bordes ({0}s desde el segundo {1})..." -f $Duration, $Start) -Indent 3
+    Write-CvLog 'VIDEO' (Get-CvText -Key 'vd.scan' -Values @($Duration, $Start)) -Indent 3
     # Si se indica -Index, analizar ESA pista (no la primera): importa con varias pistas de video.
     $mapArg = if ($Index -ge 0) { @('-map', ("0:{0}" -f $Index)) } else { @() }
     $r = Invoke-ToolCapture -Exe $Context.FFmpeg -Arguments (@(
@@ -248,19 +248,19 @@ function Resolve-CvCropAutoDecision {
     $redW = [int][math]::Round(100.0 * ($Width  - $cw)  / $Width)
     $redH = [int][math]::Round(100.0 * ($Height - $chh) / $Height)
     $que  = @()
-    if ($redH -gt 0) { $que += ("{0}% de alto" -f $redH) }
-    if ($redW -gt 0) { $que += ("{0}% de ancho" -f $redW) }
+    if ($redH -gt 0) { $que += (Get-CvText -Key 'vd.pct.alto' -Values @($redH)) }
+    if ($redW -gt 0) { $que += (Get-CvText -Key 'vd.pct.ancho' -Values @($redW)) }
     if ($redW -gt $MaxCropPct -or $redH -gt $MaxCropPct) {
         return @{
             Decision = 'manual'
             Crop     = "$crop"
-            Reason   = ("Recorte {0} muy grande ({1}, mas del {2}%): confirmalo antes de aplicarlo" -f $crop, ($que -join ' y '), $MaxCropPct)
+            Reason   = (Get-CvText -Key 'vd.crop.grande' -Values @($crop, ($que -join ' y '), $MaxCropPct))
         }
     }
     return @{
         Decision = 'crop'
         Crop     = "$crop"
-        Reason   = ("Barras detectadas: recorte {0} (quita {1}; {2} punto(s) analizados)" -f $crop, ($que -join ' y '), @($g).Count)
+        Reason   = (Get-CvText -Key 'vd.crop.barras' -Values @($crop, ($que -join ' y '), @($g).Count))
     }
 }
 
@@ -397,7 +397,7 @@ function Start-CvVideoPlayer {
         [Parameter(Mandatory)][string]$File
     )
     if (-not (Test-Path -LiteralPath $File)) {
-        return @{ Ok = $false; Mode = ''; Error = ("No existe el archivo: {0}" -f $File) }
+        return @{ Ok = $false; Mode = ''; Error = (Get-CvText -Key 'vd.noexiste' -Values @($File)) }
     }
     $cmd = Get-CvPlayerCommand -Mode "$($Context.PreviewPlayer)" -Exe "$($Context.PreviewPlayerExe)" `
         -FFplay "$($Context.FFplay)" -File $File
@@ -439,7 +439,7 @@ function Show-Preview {
     # Si se indica -VideoPos, reproducir ESA pista de video (posicion entre las de video).
     if ($VideoPos -ge 0) { $extra += @('-vst', ("v:{0}" -f $VideoPos)) }
     if ($Crop) { $extra += @('-vf', "crop=$Crop"); $title = "RECORTADO $Crop" }
-    Write-CvLog 'VIDEO' ("[BORDE] - [TEST] - Reproduciendo: {0}  (se cierra solo o pulsa ESC)" -f $title)
+    Write-CvLog 'VIDEO' (Get-CvText -Key 'vd.repro' -Values @($title))
     Invoke-CvPreview -Context $Context -File $File -ExtraArgs $extra -Label $title -Seconds $Seconds -Duration $Duration
 }
 
@@ -453,7 +453,7 @@ function Show-VideoPreview {
         [Parameter(Mandatory)]$Context, [Parameter(Mandatory)][string]$File,
         [int]$VideoPos, [string]$Label = 'VIDEO', [int]$Start = -1, [int]$Seconds = -1, [double]$Duration = 0
     )
-    Write-CvLog 'VIDEO' ("[TEST] - Reproduciendo {0}; se cierra solo o pulsa ESC/Q" -f $Label) -Indent 3
+    Write-CvLog 'VIDEO' (Get-CvText -Key 'vd.repro2' -Values @($Label)) -Indent 3
     Invoke-CvPreview -Context $Context -File $File -ExtraArgs @('-vst', ("v:{0}" -f $VideoPos)) -Label $Label -Start $Start -Seconds $Seconds -Duration $Duration
 }
 
@@ -476,17 +476,17 @@ function Select-VideoInteractive {
             $lang  = Get-Tag $s 'language'; $title = Get-Tag $s 'title'
             $mark  = ' '; if ([int]$s.index -eq $DefaultIndex) { $mark = '*' }
             $titleTxt = ''; if ($title) { $titleTxt = "'$title'" }
-            $lines += ("{0} [{1}] {2}x{3} codec={4} idioma={5} {6}" -f $mark, $s.index, $s.width, $s.height, $s.codec_name, $lang, $titleTxt)
+            $lines += (Get-CvText -Key 'vd.pista.fila' -Values @($mark, $s.index, $s.width, $s.height, $s.codec_name, $lang, $titleTxt))
         }
-        Show-Menu -Title 'SELECCIONAR PISTA DE VIDEO [* = por defecto]:' -Lines $lines -Indent 3
+        Show-Menu -Title (Get-CvText -Key 'vd.sel.tit') -Lines $lines -Indent 3
         $a = (Read-CvMenuLine ("   [VIDEO] - Indice / 'P N'=reproducir (opc. seg inicio: 'P N 300') [{0}]" -f $DefaultIndex) $to).Trim()
         if ($a -eq '') { $a = "$DefaultIndex" }
 
         $play = ConvertFrom-CvPlayCommand $a
         if ($play) {
             $match = $streams | Where-Object { [int]$_.index -eq $play.Index } | Select-Object -First 1
-            if ($match) { Show-VideoPreview -Context $Context -File $File -VideoPos (Get-VideoStreamPos -Info $Info -Index $play.Index) -Label ("PISTA {0}" -f $play.Index) -Start $play.Start -Duration $vdur }
-            else { Write-Host '   Indice no valido.' -ForegroundColor Yellow }
+            if ($match) { Show-VideoPreview -Context $Context -File $File -VideoPos (Get-VideoStreamPos -Info $Info -Index $play.Index) -Label (Get-CvText -Key 'vd.pista.n' -Values @($play.Index)) -Start $play.Start -Duration $vdur }
+            else { Write-Host (Get-CvText -Key 'con.indice.mal') -ForegroundColor Yellow }
             continue
         }
 
@@ -494,12 +494,12 @@ function Select-VideoInteractive {
         if ([int]::TryParse($a, [ref]$n)) {
             $match = $streams | Where-Object { [int]$_.index -eq $n } | Select-Object -First 1
             if ($match) {
-                $ok = (Read-CvMenuLine ("   Usar la pista {0}? (ENTER=si / N=volver a la lista)" -f $n) $to).Trim()
+                $ok = (Read-CvMenuLine (Get-CvText -Key 'vd.usar.q' -Values @($n)) $to).Trim()
                 if ($ok -match '^[Nn]$') { continue }
                 $chosen = $match; continue
             }
         }
-        Write-Host '   Indice no valido.' -ForegroundColor Yellow
+        Write-Host (Get-CvText -Key 'con.indice.mal') -ForegroundColor Yellow
     }
     Write-Host ''
     return $chosen
@@ -526,13 +526,13 @@ function Invoke-CvAnamorphicAsk {
         'squareheight' = '3'
     }
     $lbl = @{
-        'keep'         = 'mantener SAR'
-        'square'       = 'cuadrar por ancho'
-        'squareheight' = 'cuadrar por alto'
+        'keep'         = (Get-CvText -Key 'vd.anam.keep')
+        'square'       = (Get-CvText -Key 'vd.anam.w')
+        'squareheight' = (Get-CvText -Key 'vd.anam.h')
     }
     $defN = if ($rev.ContainsKey($cur)) { $rev[$cur] } else { '2' }
-    Write-CvLog 'VIDEO' ("[ANAMORFICO] - Almacena {0}x{1} pero SE VE a {2}x{1} (SAR {3}); el tamano real no es el que reporta el contenedor." -f $Width, $Height, $dw, $Sar) -Indent 3
-    $prompt = "   [VIDEO] [ANAMORFICO] - [1] mantener SAR / [2] cuadrar por ancho / [3] cuadrar por alto  [ENTER={0}={1}]" -f $defN, $lbl[$num[$defN]]
+    Write-CvLog 'VIDEO' (Get-CvText -Key 'vd.anam.info' -Values @($Width, $Height, $dw, $Sar)) -Indent 3
+    $prompt = (Get-CvText -Key 'vd.anam.q') -f $defN, $lbl[$num[$defN]]
     $ans = (Read-CvLine -Prompt $prompt -TimeoutSec (Get-CvPromptTimeout $Context 'anamorphic') -TimeoutDefault $defN).Trim()
     Write-Host ''
     if (-not $ans) { $ans = $defN }
@@ -566,14 +566,14 @@ function Invoke-VideoAsk {
     # al codificar/multiplexar; asi nunca se cuela una caratula ni una pista equivocada.
     $vids = @(Get-VideoStreams -Info $Info)
     if ($vids.Count -eq 0) {
-        if ($Context.Debug) { Write-CvLog 'VIDEO' '[SKIP] - No se ha detectado pista de video' }
+        if ($Context.Debug) { Write-CvLog 'VIDEO' (Get-CvText -Key 'vd.sinpista') }
         $res.Skip = $true
         return [pscustomobject]$res
     }
     $vstream = $vids[0]
     if ($vids.Count -gt 1) {
         # 2+ pistas de video reales: avisar y preguntar cual usar (con reproduccion para confirmar).
-        Write-CvLog 'VIDEO' ("[AVISO] - Se han detectado {0} pistas de video; elige cual usar manualmente." -f $vids.Count) -Indent 3
+        Write-CvLog 'VIDEO' (Get-CvText -Key 'vd.varias' -Values @($vids.Count)) -Indent 3
         $vstream = Select-VideoInteractive -Context $Context -File $Info.format.filename -Info $Info -VideoStreams $vids -DefaultIndex ([int]$vids[0].index)
         $res.Manual = $true   # hubo seleccion manual de pista de video
     }
@@ -589,9 +589,9 @@ function Invoke-VideoAsk {
         # En copy no se recodifica: no se puede cambiar el SAR. Solo avisar del tamaño real.
         if ($isAnam) {
             $w = Get-CvAnamorphicWarning -Width $vW -Height $vH -Sar $vSar -Anamorphic $anamMode
-            Write-CvLog 'VIDEO' ("[AVISO] - {0} (copy: la pista se copia sin cambios)" -f $w) -Indent 3
+            Write-CvLog 'VIDEO' (Get-CvText -Key 'vd.copy.aviso' -Values @($w)) -Indent 3
         }
-        if ($Context.Debug) { Write-CvLog 'VIDEO' '[SKIP] - Se copiara la pista de video' }
+        if ($Context.Debug) { Write-CvLog 'VIDEO' (Get-CvText -Key 'vd.copy') }
         $res.Skip = $true
         return [pscustomobject]$res
     }
@@ -610,7 +610,7 @@ function Invoke-VideoAsk {
     $borderAuto = ($dbv -eq 'auto')
     if ($ForceBorder) {
         $borderOn = $true; $borderAuto = $false
-        Write-CvLog 'VIDEO' '[BORDE] - Prefijo _ : se fuerza la deteccion de bordes' -Indent 3
+        Write-CvLog 'VIDEO' (Get-CvText -Key 'vd.prefijo') -Indent 3
     }
     if ($borderOn -or $borderAuto) {
         # Duracion del video (para repartir los puntos de escaneo entre inicio y final).
@@ -624,12 +624,12 @@ function Invoke-VideoAsk {
             #  - reduccion < border.minCropPct % -> ruido de borde, NO hay barras -> no recorta;
             #  - barras con mayoria fiable (mismo voto que el modo normal) -> aplica el recorte solo;
             #  - ambiguo (sin mayoria) -> pasa al modo interactivo (menu).
-            Write-CvLog 'VIDEO' '[BORDE] - [AUTO] - Comprobando si hay barras negras...' -Indent 3
+            Write-CvLog 'VIDEO' (Get-CvText -Key 'vd.auto.comp') -Indent 3
             $ag = @((Find-CropDetectSamples -Context $Context -File $Info.format.filename -Start $start -Duration ([int]$Context.BorderAutoDuration) -VideoDuration $vdur -Index $res.Index -Samples ([int]$Context.BorderAutoSamples)).Groups)
             # La decision es de Resolve-CvCropAutoDecision (fuente unica, la misma que usa la ventana).
             $dec = Resolve-CvCropAutoDecision -Groups $ag -Width ([int]$vstream.width) -Height ([int]$vstream.height) `
                 -MinCropPct ([double]$Context.BorderMinCropPct) -MaxCropPct ([int]$Context.BorderAutoMaxCropPct)
-            Write-CvLog 'VIDEO' ("[BORDE] - [AUTO] - {0}" -f $dec.Reason) -Indent 3
+            Write-CvLog 'VIDEO' (Get-CvText -Key 'vd.auto.res' -Values @($dec.Reason)) -Indent 3
             switch ("$($dec.Decision)") {
                 'crop'  { $res.Crop = "$($dec.Crop)" }
                 'none'  { $res.Crop = '' }
@@ -641,19 +641,19 @@ function Invoke-VideoAsk {
         $res.Manual = $true   # la deteccion de bordes hace preguntas interactivas
         $done  = $false
         # Nº de muestras (puntos de escaneo) ANTES de escanear: por defecto el configurado, editable.
-        $samples = Read-IntOrDefault '   Numero de muestras (puntos de escaneo)' ([int]$Context.BorderSamples) -TimeoutSec (Get-CvPromptTimeout $Context 'border')
+        $samples = Read-IntOrDefault (Get-CvText -Key 'vd.muestras.q') ([int]$Context.BorderSamples) -TimeoutSec (Get-CvPromptTimeout $Context 'border')
 
         while (-not $done) {
             # Escaneo en varios puntos; agrupa recortes por votos.
             $groups = @((Find-CropDetectSamples -Context $Context -File $Info.format.filename -Start $start -Duration $dur -VideoDuration $vdur -Index $res.Index -Samples $samples).Groups)
 
             if ($groups.Count -eq 0) {
-                Write-CvLog 'VIDEO' '[BORDE] - No se detectaron bordes en este tramo' -Indent 3
-                $a = (Read-CvLine -Prompt '   [VIDEO] [BORDE] - [R] reintentar con otro tramo / [ENTER] continuar sin recorte' -TimeoutSec (Get-CvPromptTimeout $Context 'border')).Trim()
+                Write-CvLog 'VIDEO' (Get-CvText -Key 'vd.sinbordes') -Indent 3
+                $a = (Read-CvLine -Prompt (Get-CvText -Key 'vd.reintentar') -TimeoutSec (Get-CvPromptTimeout $Context 'border')).Trim()
                 if ($a -match '^[Rr]') {
-                    $start   = Read-IntOrDefault '   Segundo de inicio del scan' $start -TimeoutSec (Get-CvPromptTimeout $Context 'border')
-                    $dur     = Read-IntOrDefault '   Duracion total del scan (seg)' $dur -TimeoutSec (Get-CvPromptTimeout $Context 'border')
-                    $samples = Read-IntOrDefault '   Numero de muestras (puntos de escaneo)' $samples -TimeoutSec (Get-CvPromptTimeout $Context 'border')
+                    $start   = Read-IntOrDefault (Get-CvText -Key 'vd.inicio.q') $start -TimeoutSec (Get-CvPromptTimeout $Context 'border')
+                    $dur     = Read-IntOrDefault (Get-CvText -Key 'vd.dur.q') $dur -TimeoutSec (Get-CvPromptTimeout $Context 'border')
+                    $samples = Read-IntOrDefault (Get-CvText -Key 'vd.muestras.q') $samples -TimeoutSec (Get-CvPromptTimeout $Context 'border')
                     continue
                 }
                 $res.Crop = ''; $done = $true; continue
@@ -673,14 +673,14 @@ function Invoke-VideoAsk {
             if ($autoWin) {
                 if ($groups.Count -eq 1) {
                     $extra = if ($groups[0].Count -gt 1) { " (coincide en $($groups[0].Count) puntos)" } else { '' }
-                    Write-CvLog 'VIDEO' ("[BORDE] - Recorte detectado: {0}{1}" -f $groups[0].Crop, $extra) -Indent 3
+                    Write-CvLog 'VIDEO' (Get-CvText -Key 'vd.crop.det' -Values @($groups[0].Crop, $extra)) -Indent 3
                 } else {
                     $disc = (@($groups | Select-Object -Skip 1 | ForEach-Object { "{0} ({1})" -f $_.Crop, $_.Count }) -join ', ')
-                    Write-CvLog 'VIDEO' ("[BORDE] - Recorte por mayoria: {0} ({1}/{2} puntos, {3}%, +{4}); descartado(s): {5}" -f $groups[0].Crop, $groups[0].Count, $tot, $topPct, $margin, $disc) -Indent 3
+                    Write-CvLog 'VIDEO' (Get-CvText -Key 'vd.crop.may' -Values @($groups[0].Crop, $groups[0].Count, $tot, $topPct, $margin, $disc)) -Indent 3
                 }
             } else {
                 $lst = ($groups | ForEach-Object { "{0} ({1})" -f $_.Crop, $_.Count }) -join ' / '
-                Write-CvLog 'VIDEO' ("[AVISO] - Bordes sin mayoria fiable ({0}%/margen +{1}; min {2}%/+{3}): {4}" -f $topPct, $margin, $Context.BorderAutoAcceptPct, $Context.BorderAutoAcceptMargin, $lst) -Indent 3
+                Write-CvLog 'VIDEO' (Get-CvText -Key 'vd.crop.nomay' -Values @($topPct, $margin, $Context.BorderAutoAcceptPct, $Context.BorderAutoAcceptMargin, $lst)) -Indent 3
             }
 
             # Seleccion/preview sobre los recortes YA detectados (no re-escanea salvo re-detectar).
@@ -694,36 +694,36 @@ function Invoke-VideoAsk {
                     # en columna con indices de 1 y 2+ cifras; 'M'/'R'/'0' se alinean igual.
                     $numW  = Get-CvMenuNumWidth $groups.Count
                     $lines = @()
-                    for ($gi = 0; $gi -lt $groups.Count; $gi++) { $lines += ("{0}. {1}  ({2} voto(s))" -f (("$($gi + 1)").PadLeft($numW)), $groups[$gi].Crop, $groups[$gi].Count) }
+                    for ($gi = 0; $gi -lt $groups.Count; $gi++) { $lines += (Get-CvText -Key 'vd.op.voto' -Values @((("$($gi + 1)").PadLeft($numW)), $groups[$gi].Crop, $groups[$gi].Count)) }
                     $extra = @(
                         '',
-                        ('{0}. Valor manual'          -f ('M'.PadLeft($numW))),
-                        ('{0}. Reescanear (otro tramo)' -f ('R'.PadLeft($numW))),
-                        ('{0}. Sin recorte'           -f ('0'.PadLeft($numW)))
+                        (Get-CvText -Key 'vd.op.manual' -Values @(('M'.PadLeft($numW)))),
+                        (Get-CvText -Key 'vd.op.rescan' -Values @(('R'.PadLeft($numW)))),
+                        (Get-CvText -Key 'vd.op.sincrop' -Values @(('0'.PadLeft($numW))))
                     )
-                    Show-Menu -Title 'RECORTES DETECTADOS (elige cual probar) [por votos]:' -Lines ($lines + $extra) -Indent 3
-                    $sel = (Read-Host '   [VIDEO] [BORDE] - Opcion').Trim()
+                    Show-Menu -Title (Get-CvText -Key 'vd.crop.tit') -Lines ($lines + $extra) -Indent 3
+                    $sel = (Read-Host (Get-CvText -Key 'vd.crop.op')).Trim()
                     if ($sel -match '^0$') { $res.Crop = ''; $done = $true; continue }
                     if ($sel -match '^[Rr]$') {
-                        $start   = Read-IntOrDefault '   Segundo de inicio del scan' $start -TimeoutSec (Get-CvPromptTimeout $Context 'border')
-                        $dur     = Read-IntOrDefault '   Duracion total del scan (seg)' $dur -TimeoutSec (Get-CvPromptTimeout $Context 'border')
-                        $samples = Read-IntOrDefault '   Numero de muestras (puntos de escaneo)' $samples -TimeoutSec (Get-CvPromptTimeout $Context 'border')
+                        $start   = Read-IntOrDefault (Get-CvText -Key 'vd.inicio.q') $start -TimeoutSec (Get-CvPromptTimeout $Context 'border')
+                        $dur     = Read-IntOrDefault (Get-CvText -Key 'vd.dur.q') $dur -TimeoutSec (Get-CvPromptTimeout $Context 'border')
+                        $samples = Read-IntOrDefault (Get-CvText -Key 'vd.muestras.q') $samples -TimeoutSec (Get-CvPromptTimeout $Context 'border')
                         $reScan = $true; continue
                     }
                     if ($sel -match '^[Mm]$') { $crop = '__MANUAL__' }
                     else {
                         $gi = 0
                         if ([int]::TryParse($sel, [ref]$gi) -and $gi -ge 1 -and $gi -le $groups.Count) { $crop = $groups[$gi - 1].Crop }
-                        else { Write-Host '   Opcion no valida.' -ForegroundColor Yellow; continue }
+                        else { Write-Host (Get-CvText -Key 'con.opcion.mala2') -ForegroundColor Yellow; continue }
                     }
                 }
 
                 # Opcion "M" del menu de varios: pedir valor manual, previsualizar y confirmar.
                 if ($crop -eq '__MANUAL__') {
-                    $manual = (Read-Host '   Nuevo recorte en formato W:H:X:Y').Trim()
+                    $manual = (Read-Host (Get-CvText -Key 'vd.crop.nuevo')).Trim()
                     if ($manual -eq '') { continue }
                     Show-Preview -Context $Context -File $Info.format.filename -Crop $manual -VideoPos $vpos -Duration $vdur
-                    $ok = (Read-Host ("   Usar {0}? (ENTER=si / N=volver)" -f $manual)).Trim()
+                    $ok = (Read-Host (Get-CvText -Key 'vd.usar.q2' -Values @($manual))).Trim()
                     if ($ok -match '^[Nn]$') { continue }
                     $res.Crop = $manual; $done = $true; continue
                 }
@@ -731,24 +731,24 @@ function Invoke-VideoAsk {
                 # Preview del candidato (original + recorte) y confirmacion.
                 Show-Preview -Context $Context -File $Info.format.filename -VideoPos $vpos -Duration $vdur
                 Show-Preview -Context $Context -File $Info.format.filename -Crop $crop -VideoPos $vpos -Duration $vdur
-                $volver = if ($autoWin) { 'volver a detectar' } else { 'volver al menu' }
-                $a = (Read-CvLine -Prompt ("   [VIDEO] [BORDE] - [ENTER/S] usar / [N] {0} / [M] manual / [0] sin recorte" -f $volver) -TimeoutSec (Get-CvPromptTimeout $Context 'border')).Trim()
+                $volver = if ($autoWin) { (Get-CvText -Key 'vd.volver.det') } else { (Get-CvText -Key 'vd.volver.men') }
+                $a = (Read-CvLine -Prompt (Get-CvText -Key 'vd.crop.q' -Values @($volver)) -TimeoutSec (Get-CvPromptTimeout $Context 'border')).Trim()
                 if ($a -eq '' -or $a -match '^[SsYy]$') { $res.Crop = $crop; $done = $true }
                 elseif ($a -match '^0$') { $res.Crop = ''; $done = $true }
                 elseif ($a -match '^[Mm]$') {
-                    $manual = (Read-Host ("   Nuevo recorte en formato W:H:X:Y [{0}]" -f $crop)).Trim()
+                    $manual = (Read-Host (Get-CvText -Key 'vd.crop.nuevo2' -Values @($crop))).Trim()
                     if ($manual -eq '') { $manual = $crop }
                     Show-Preview -Context $Context -File $Info.format.filename -Crop $manual -VideoPos $vpos -Duration $vdur
-                    $ok = (Read-Host ("   Usar {0}? (ENTER=si / N=volver)" -f $manual)).Trim()
+                    $ok = (Read-Host (Get-CvText -Key 'vd.usar.q2' -Values @($manual))).Trim()
                     if ($ok -match '^[Nn]$') { continue }
                     $res.Crop = $manual; $done = $true
                 }
                 else {
                     # [N]: si hubo auto-aceptacion, re-escanear (otro tramo); con menu, volver al menu.
                     if ($autoWin) {
-                        $start   = Read-IntOrDefault '   Segundo de inicio del scan' $start -TimeoutSec (Get-CvPromptTimeout $Context 'border')
-                        $dur     = Read-IntOrDefault '   Duracion total del scan (seg)' $dur -TimeoutSec (Get-CvPromptTimeout $Context 'border')
-                        $samples = Read-IntOrDefault '   Numero de muestras (puntos de escaneo)' $samples -TimeoutSec (Get-CvPromptTimeout $Context 'border')
+                        $start   = Read-IntOrDefault (Get-CvText -Key 'vd.inicio.q') $start -TimeoutSec (Get-CvPromptTimeout $Context 'border')
+                        $dur     = Read-IntOrDefault (Get-CvText -Key 'vd.dur.q') $dur -TimeoutSec (Get-CvPromptTimeout $Context 'border')
+                        $samples = Read-IntOrDefault (Get-CvText -Key 'vd.muestras.q') $samples -TimeoutSec (Get-CvPromptTimeout $Context 'border')
                         $reScan = $true
                     }
                 }
@@ -769,7 +769,7 @@ function Invoke-VideoAsk {
             $sh = [int]$vstream.height
             $cs = Get-CvChangeSizeResize -ChangeSize $Prof.ChangeSize -Width $sw -Height $sh
             if ($cs) { $res.Resize = $cs }
-            else { Write-CvLog 'VIDEO' ("[RESIZE] - Origen {0}x{1} <= destino ({2}): no se amplia, se mantiene el tamaño original." -f $sw, $sh, $Prof.ChangeSize) -Indent 3 }
+            else { Write-CvLog 'VIDEO' (Get-CvText -Key 'vd.rs.noampl' -Values @($sw, $sh, $Prof.ChangeSize)) -Indent 3 }
         } else {
             $res.Resize = $Prof.ChangeSize
         }
@@ -788,19 +788,19 @@ function Invoke-VideoAsk {
         if ($rz) {
             $res.Resize = $rz
             if ($rz -match 'setsar=1') {
-                Write-CvLog 'VIDEO' ("[RESIZE] - Anamorfico ({0}): SAR {1} (mostrado {2}x{3}) -> pixeles cuadrados {4}." -f $anam, $sar, $dw, $sh, $rz) -Indent 3
+                Write-CvLog 'VIDEO' (Get-CvText -Key 'vd.rs.anam' -Values @($anam, $sar, $dw, $sh, $rz)) -Indent 3
             } elseif ($dw -ne $sw) {
-                Write-CvLog 'VIDEO' ("[RESIZE] - Anamorfico: ancho mostrado {0}px (almacenado {1}px, SAR {2}) > {3}px: se reescala a {4}." -f $dw, $sw, $sar, $mw, $rz) -Indent 3
+                Write-CvLog 'VIDEO' (Get-CvText -Key 'vd.rs.anam2' -Values @($dw, $sw, $sar, $mw, $rz)) -Indent 3
             } else {
-                Write-CvLog 'VIDEO' ("[RESIZE] - Origen {0}px de ancho > {1}px: se reescala a {2}." -f $sw, $mw, $rz) -Indent 3
+                Write-CvLog 'VIDEO' (Get-CvText -Key 'vd.rs.ancho' -Values @($sw, $mw, $rz)) -Indent 3
             }
         } elseif ($Context.Debug -and $mw -gt 0) {
-            Write-CvLog 'VIDEO' ("[RESIZE] - Ancho mostrado {0}px <= {1}px: no se reescala." -f $dw, $mw)
+            Write-CvLog 'VIDEO' (Get-CvText -Key 'vd.rs.no' -Values @($dw, $mw))
         }
     }
     if ($res.Resize -and $Context.Debug) {
-        if ($res.Crop -ne '') { Write-CvLog 'VIDEO' ("[RESIZE] - Se aplicara recorte {0} y luego escalado {1}" -f $res.Crop, $res.Resize) }
-        else                  { Write-CvLog 'VIDEO' ("[RESIZE] - Escalado a {0}" -f $res.Resize) }
+        if ($res.Crop -ne '') { Write-CvLog 'VIDEO' (Get-CvText -Key 'vd.rs.crop' -Values @($res.Crop, $res.Resize)) }
+        else                  { Write-CvLog 'VIDEO' (Get-CvText -Key 'vd.rs.esc' -Values @($res.Resize)) }
     }
 
     # ---- Animacion (solo libx264/libx265; -tune animation) ----
@@ -809,7 +809,7 @@ function Invoke-VideoAsk {
         'libx265'
     )
     if ($Prof.VideoEncoder -in $animEncoders) {
-        $a = (Read-CvLine -Prompt '   [VIDEO] - Es un video de animacion? (s/N)' -TimeoutSec (Get-CvPromptTimeout $Context 'animation')).Trim()
+        $a = (Read-CvLine -Prompt (Get-CvText -Key 'vd.anim.q') -TimeoutSec (Get-CvPromptTimeout $Context 'animation')).Trim()
         $res.Anim = ($a -match '^[SsYy]')
         $res.Manual = $true   # se pregunto por animacion (intervencion manual)
         Write-Host ''
@@ -950,7 +950,7 @@ function Get-CvVideoCopyRemuxWarning {
     $risky = @('.avi')
     $ext = [System.IO.Path]::GetExtension("$Path").ToLower()
     if ($ext -in $risky) {
-        return ("Copiar el video de un contenedor {0} a MKV sin recodificar puede fallar (timestamps); si falla, usa un perfil que RECODIFIQUE el video." -f $ext.TrimStart('.').ToUpper())
+        return (Get-CvText -Key 'vd.remux.av' -Values @($ext.TrimStart('.').ToUpper()))
     }
     return ''
 }
@@ -1161,11 +1161,11 @@ function Get-CvVideoPictureState {
         [double]$FpsTolerance = 0.01
     )
     $cambia = @()
-    if (-not (Test-CvCropNoop   -Crop $Crop     -SrcWidth $SrcWidth -SrcHeight $SrcHeight)) { $cambia += ("recorte {0}" -f "$Crop".Trim()) }
-    if (-not (Test-CvResizeNoop -Resize $Resize -SrcWidth $SrcWidth -SrcHeight $SrcHeight)) { $cambia += ("escalado {0}" -f "$Resize".Trim()) }
-    if ($Hdr -and ("$TonemapHdr".ToLower() -ne 'off')) { $cambia += 'tone-mapping HDR->SDR' }
+    if (-not (Test-CvCropNoop   -Crop $Crop     -SrcWidth $SrcWidth -SrcHeight $SrcHeight)) { $cambia += (Get-CvText -Key 'vd.est.crop' -Values @("$Crop".Trim())) }
+    if (-not (Test-CvResizeNoop -Resize $Resize -SrcWidth $SrcWidth -SrcHeight $SrcHeight)) { $cambia += (Get-CvText -Key 'vd.est.esc' -Values @("$Resize".Trim())) }
+    if ($Hdr -and ("$TonemapHdr".ToLower() -ne 'off')) { $cambia += (Get-CvText -Key 'vd.est.tm') }
     if ($SrcFps -gt 0 -and $OutFps -gt 0 -and [Math]::Abs($SrcFps - $OutFps) -gt $FpsTolerance) {
-        $cambia += ("fps {0} -> {1}" -f (Format-CvNumber ([math]::Round($SrcFps, 3))), (Format-CvNumber ([math]::Round($OutFps, 3))))
+        $cambia += (Get-CvText -Key 'vd.est.fps' -Values @((Format-CvNumber ([math]::Round($SrcFps, 3))), (Format-CvNumber ([math]::Round($OutFps, 3)))))
     }
     return @{
         Untouched = ($cambia.Count -eq 0)
@@ -1200,13 +1200,13 @@ function Get-CvVideoKeepPlan {
     if (-not $Untouched) {
         return @{
             UseOriginal = $false
-            Reason      = 'la imagen cambia (recorte, escalado, tone-mapping o fps forzado): el original no sirve de sustituto'
+            Reason      = (Get-CvText -Key 'vd.keep.imagen')
         }
     }
     if ($EncodedBytes -le 0 -or $OriginalBytes -le 0) {
         return @{
             UseOriginal = $false
-            Reason      = 'no se sabe cuanto ocupa alguna de las dos pistas'
+            Reason      = (Get-CvText -Key 'vd.keep.nosabe')
         }
     }
     $limite = [double]$OriginalBytes * $(if ($Ratio -gt 0) { [double]$Ratio } else { 1.0 })
@@ -1218,7 +1218,7 @@ function Get-CvVideoKeepPlan {
     }
     return @{
         UseOriginal = $true
-        Reason      = ("recodificar no compensa: {0} frente a {1} del original" -f (Format-CvSize -Kb ([long]($EncodedBytes / 1024))), (Format-CvSize -Kb ([long]($OriginalBytes / 1024))))
+        Reason      = (Get-CvText -Key 'vd.keep.no' -Values @((Format-CvSize -Kb ([long]($EncodedBytes / 1024))), (Format-CvSize -Kb ([long]($OriginalBytes / 1024)))))
     }
 }
 
@@ -1243,10 +1243,10 @@ function Invoke-VideoRun {
     $tonemap = $Hdr -and ("$($Context.TonemapHdr)".ToLower() -ne 'off')
     if ($Resize) {
         $rzTxt = "a $Resize"
-        if ($Resize -match '^(\d+):(-?\d+)$') { $rzTxt = if ([int]$Matches[2] -lt 0) { "a {0}px de ancho" -f $Matches[1] } else { "a {0}x{1}" -f $Matches[1], $Matches[2] } }
-        Write-CvInfoStep $Context 'VIDEO' ("Reescalando $rzTxt")
+        if ($Resize -match '^(\d+):(-?\d+)$') { $rzTxt = if ([int]$Matches[2] -lt 0) { (Get-CvText -Key 'vd.run.ancho') -f $Matches[1] } else { "a {0}x{1}" -f $Matches[1], $Matches[2] } }
+        Write-CvInfoStep $Context 'VIDEO' (Get-CvText -Key 'vd.reescalando' -Values @($rzTxt))
     }
-    if ($tonemap) { Write-CvInfoStep $Context 'VIDEO' 'Tone-mapping HDR -> SDR (BT.709)' }
+    if ($tonemap) { Write-CvInfoStep $Context 'VIDEO' (Get-CvText -Key 'vd.run.tm') }
 
     $ffArgs = Get-CvVideoRunArgs -Context $Context -Prof $Prof -File $File -OutTmp $outTmp -Crop $Crop -Resize $Resize -Anim $Anim -Index $Index -Hdr $Hdr
 
@@ -1256,19 +1256,19 @@ function Invoke-VideoRun {
     $global:CvLastToolError = $null   # el modo progreso lo rellena; se vuelca al log si ffmpeg falla
     if ($Context.Progress -and -not $Context.Debug -and $Duration -gt 0) {
         $total = if ($Context.TestLimit -gt 0) { [math]::Min([double]$Duration, [double]$Context.TestLimit) } else { [double]$Duration }
-        $code = Invoke-ToolProgress -Exe $Context.FFmpeg -Arguments $ffArgs -Context $Context -Label 'Procesando Video...' -TotalSeconds $total -Fps $Fps -ShowQ
+        $code = Invoke-ToolProgress -Exe $Context.FFmpeg -Arguments $ffArgs -Context $Context -Label (Get-CvText -Key 'vd.run.proc') -TotalSeconds $total -Fps $Fps -ShowQ
     } else {
-        Start-CvStep $Context 'VIDEO' 'Procesando Video...'
+        Start-CvStep $Context 'VIDEO' (Get-CvText -Key 'vd.run.proc')
         $code = Invoke-ToolShow -Exe $Context.FFmpeg -Arguments $ffArgs -Context $Context
     }
     if ($code -ne 0) {
-        Stop-CvStep $Context 'VIDEO' $false -FailMsg ("[ERR] - ffmpeg devolvio codigo {0}" -f $code)
+        Stop-CvStep $Context 'VIDEO' $false -FailMsg (Get-CvText -Key 'vd.run.codigo' -Values @($code))
         Show-CvToolError -Context $Context -Category 'VIDEO' -Name $name -Tool 'ffmpeg-video'
         if (Test-Path -LiteralPath $outTmp) { Remove-Item -Force -LiteralPath $outTmp -ErrorAction SilentlyContinue }
         return $false
     }
     $vOk = ((Test-Path -LiteralPath $outTmp) -and ((Get-Item -LiteralPath $outTmp).Length -gt 0))
-    Stop-CvStep $Context 'VIDEO' $vOk -FailMsg '[ERR] - la salida de video quedo vacia'
+    Stop-CvStep $Context 'VIDEO' $vOk -FailMsg (Get-CvText -Key 'vd.run.vacia')
     return $vOk
 }
 
@@ -1322,7 +1322,7 @@ function Measure-CvQuality {
         '-an'
         '-f', 'null'
         'NUL'
-    ) -Context $Context -Label ("Analizando calidad ({0})..." -f "$Metric".ToUpper()) -TotalSeconds $total
+    ) -Context $Context -Label (Get-CvText -Key 'vd.qc.analiza' -Values @("$Metric".ToUpper())) -TotalSeconds $total
     Write-Host ''   # cerrar la linea viva de progreso antes de que el llamador registre el resultado
     if ($code -ne 0) { return $null }
     Get-CvQualityScore -Metric $Metric -Text "$($global:CvLastToolError)"

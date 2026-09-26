@@ -1113,7 +1113,7 @@ function Get-CvConfig {
             $json = Get-Content -Raw -Path $path | ConvertFrom-Json
             Merge-CvConfig -Default $cfg -Override $json
         } catch {
-            Write-Host ("AVISO: config.json no valido, se usan valores por defecto ({0})" -f $_.Exception.Message) -ForegroundColor Yellow
+            Write-Host (Get-CvText -Key 'cf.malo' -Values @($_.Exception.Message)) -ForegroundColor Yellow
         }
     }
     return $cfg

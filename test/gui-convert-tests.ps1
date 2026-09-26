@@ -1173,7 +1173,8 @@ if ($null -eq $jobInfo) {
     $sumTxt = ($sum -join "`n")
     Assert-True 'Resumen: nombra el archivo'    ($sumTxt -match 'ARCHIVO : Serie_2x01')
     Assert-True 'Resumen: dice el perfil'       ($sumTxt -match 'PERFIL  :')
-    Assert-True 'Resumen: dice que hace el video' ($sumTxt -match 'VIDEO   :')
+    $etVideo = (Get-CvText -Key 'sum.video' -Values @('')).TrimEnd()
+    Assert-True 'Resumen: dice que hace el video' ($sumTxt.Contains($etVideo))
     Assert-True 'Resumen: cuenta las pistas de audio' ($sumTxt -match 'AUDIO   : 2 pista')
     # El '*' delante del [x] es lo que marca la pista PREDETERMINADA (antes era una palabra al final).
     Assert-True 'Resumen: marca la predeterminada'    ($sumTxt -match '\*\[x\] \[\d+\] eng')
@@ -1192,7 +1193,7 @@ if ($null -eq $jobInfo) {
     Assert-True 'Resumen: dice cual es forzado en origen'  ($sumInfo -match 'forzado en origen')
     # Informacion del ORIGEN (resolucion, codec, bits, fps, duracion) y calidad de cada pista de audio.
     # El video se pinta como el audio y los subtitulos: cabecera + una linea por pista del archivo.
-    Assert-True 'Resumen: cuenta las de video'  ($sumInfo -match 'VIDEO   : \d+ pista\(s\) en el archivo')
+    Assert-True 'Resumen: cuenta las de video'  ($sumInfo -match ([regex]::Escape($etVideo) + '\s*\d+'))
     Assert-True 'Resumen: describe el origen'   ($sumInfo -match '\*\[x\] \[\d+\] \d+x\d+')
     Assert-True 'Resumen: dice los fps'         ($sumInfo -match 'fps')
     Assert-True 'Resumen: dice la duracion'     ($sumInfo -match 'dura \d')

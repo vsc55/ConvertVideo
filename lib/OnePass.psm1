@@ -170,7 +170,7 @@ function Invoke-CvOnePass {
         foreach ($tr in $spec.Audio) {
             $measure = @('-i',$File,'-map',("0:{0}" -f $tr.Index),'-vn','-sn','-map_chapters','-1')
             if ($Context.TestLimit -gt 0) { $measure += @('-t',"$($Context.TestLimit)") }
-            Start-CvStep $Context 'UNA-PASADA' 'Analizando volumen...'
+            Start-CvStep $Context (Get-CvText -Key 'au.vol.an') 'Analizando volumen...'
             $peak = Get-MaxVolume -Context $Context -InputArgs $measure
             $peakTxt = if ($null -ne $peak) { '(pico {0} dB)' -f $peak } else { '(pico desconocido)' }
             Stop-CvStep $Context 'UNA-PASADA' $true -Extra $peakTxt -OkMsg ("[OK] - Volumen analizado {0}" -f $peakTxt)
@@ -193,9 +193,9 @@ function Invoke-CvOnePass {
 
     $global:CvLastToolError = $null   # el modo progreso lo rellena; se vuelca al log si ffmpeg falla
     if ($Context.Progress -and -not $Context.Debug -and $total -gt 0) {
-        $code = Invoke-ToolProgress -Exe $Context.FFmpeg -Arguments $ff -Context $Context -Label 'Una sola pasada (video+audio)...' -TotalSeconds $total -Fps $Fps -ShowQ
+        $code = Invoke-ToolProgress -Exe $Context.FFmpeg -Arguments $ff -Context $Context -Label (Get-CvText -Key 'op.pasada') -TotalSeconds $total -Fps $Fps -ShowQ
     } else {
-        Start-CvStep $Context 'UNA-PASADA' 'Codificando en una sola pasada...'
+        Start-CvStep $Context (Get-CvText -Key 'op.codificando') 'Codificando en una sola pasada...'
         $code = Invoke-ToolShow -Exe $Context.FFmpeg -Arguments $ff -Context $Context
     }
     # Borrar los temporales de subtitulos rescatados (se hayan usado o no).

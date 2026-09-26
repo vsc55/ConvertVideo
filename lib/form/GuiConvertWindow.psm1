@@ -684,7 +684,7 @@ function Show-CvConvertWindow {
             } catch { $existe = $true; $reales = 1 }   # si ni eso se puede mirar, mejor no tocar nada
             if (Test-CvQueueKeepRows -Rows 0 -Items $lv.Items.Count -DirExists $existe -RealFiles $reales) {
                 $st.Vacios++
-                Write-CvLog 'COLA' ("[AVISO] - Original se ha listado vacia teniendo {0} fichero(s); se conserva lo que hay y se reintenta ({1} vez/veces seguidas)." -f $reales, $st.Vacios)
+                Write-CvLog 'COLA' (Get-CvText -Key 'cw.original.vacia' -Values @($reales, $st.Vacios))
                 return
             }
             $st.Vacios = 0
@@ -846,9 +846,9 @@ function Show-CvConvertWindow {
             [void](Start-CvConvertWorker -Root $Root -CfgPath $CfgPath -Only $only -ShowConsole:$chkCon.Checked)
         }
         if ($only.Count -gt 0) {
-            Write-CvLog 'COLA' ("[WORKER] - Abiertos {0} worker(s) SOLO para {1} archivo(s) elegido(s): {2}" -f $n, $only.Count, (($only | Select-Object -First 8) -join ', '))
+            Write-CvLog 'COLA' (Get-CvText -Key 'cw.workers.only' -Values @($n, $only.Count, (($only | Select-Object -First 8) -join ', ')))
         } else {
-            Write-CvLog 'COLA' ("[WORKER] - Abiertos {0} worker(s) para {1} archivo(s) en cola." -f $n, $pend)
+            Write-CvLog 'COLA' (Get-CvText -Key 'cw.workers.n' -Values @($n, $pend))
         }
         & $refresh
     }
@@ -874,7 +874,7 @@ function Show-CvConvertWindow {
 
     $btnStop.Add_Click({
         [void](Set-CvWorkerStop -Context $Context)
-        Write-CvLog 'COLA' '[STOP] - Parada pedida: cada worker terminara el archivo que tenga y no cogera mas.'
+        Write-CvLog 'COLA' (Get-CvText -Key 'cw.stop')
         & $refresh
     })
 
@@ -884,7 +884,7 @@ function Show-CvConvertWindow {
         $msg = Get-CvText -Key 'cola.killall.msg' -Values @($live.Count)
         if (-not (Show-CvGuiConfirm -Title (Get-CvText -Key 'cola.btn.cancelar') -Message $msg)) { return }
         foreach ($w in $live) { [void](Stop-CvConvertWorker -ProcessId ([int]$w.Pid)) }
-        Write-CvLog 'COLA' ("[KILL] - Cortados {0} worker(s) a peticion del usuario." -f $live.Count)
+        Write-CvLog 'COLA' (Get-CvText -Key 'cw.kill' -Values @($live.Count))
         & $refresh
     })
 
@@ -914,7 +914,7 @@ function Show-CvConvertWindow {
         if (-not [bool]$Context.GuiQueueOnActivate) { return }
         if ($st.Busy) { return }
         $st.Busy = $true
-        try { & $refresh } catch { Write-CvLog 'COLA' ("[ERROR] - Refresco al volver: {0}" -f $_) } finally { $st.Busy = $false }
+        try { & $refresh } catch { Write-CvLog 'COLA' (Get-CvText -Key 'cw.refresco' -Values @($_)) } finally { $st.Busy = $false }
     })
     $cmbLog.Add_SelectedIndexChanged({ $txtLog.Text = ''; $st.LogStamp = '' })   # el refresco lo recarga
     $btnLogOpen.Add_Click({ [void](Open-CvGuiPath -Path "$($st.LogPath)" -Title (Get-CvText -Key 'logs.tit')) })
@@ -1083,7 +1083,7 @@ function Show-CvConvertWindow {
         $n = 0
         foreach ($r in $rows) {
             if (Stop-CvConvertWorker -ProcessId ([int]$r.WorkerPid)) { $n++ }
-            Write-CvLog 'COLA' ("[KILL] - Cortada la codificacion de {0} (worker #{1})." -f $r.Name, $r.WorkerPid)
+            Write-CvLog 'COLA' (Get-CvText -Key 'cw.kill.uno' -Values @($r.Name, $r.WorkerPid))
         }
         & $refresh
     })
@@ -1096,7 +1096,7 @@ function Show-CvConvertWindow {
             $rows.Count, ((@($rows | Select-Object -First 12 | ForEach-Object { $_.Name }) -join "`n") + $(if ($rows.Count -gt 12) { "`n..." } else { '' })))
         if (-not (Show-CvGuiConfirm -Title (Get-CvText -Key 'cola.purge.tit') -Message $msg)) { return }
         $n = Remove-CvQueueOutput -Context $Context -Names @($rows | ForEach-Object { $_.Name })
-        Write-CvLog 'COLA' ("[SALIDA] - Eliminada(s) {0} salida(s) a medias; vuelven a la cola." -f $n)
+        Write-CvLog 'COLA' (Get-CvText -Key 'cw.purge' -Values @($n))
         & $refresh
     })
     $miFree.Add_Click({
@@ -1104,7 +1104,7 @@ function Show-CvConvertWindow {
         if ($rows.Count -eq 0) { return }
         foreach ($r in $rows) {
             Exit-Lock -Context $Context -Name $r.Name
-            Write-CvLog 'COLA' ("[LOCK] - Liberado el bloqueo huerfano de {0}." -f $r.Name)
+            Write-CvLog 'COLA' (Get-CvText -Key 'cw.lock' -Values @($r.Name))
         }
         & $refresh
     })
@@ -1119,7 +1119,7 @@ function Show-CvConvertWindow {
         }
         if (-not (Show-CvGuiConfirm -Title (Get-CvText -Key 'cola.drop.tit') -Message $msg)) { return }
         foreach ($r in $rows) { Remove-CvJob -Context $Context -Name $r.Name }
-        Write-CvLog 'COLA' ("[JOB] - Quitados {0} job(s) de la cola." -f $rows.Count)
+        Write-CvLog 'COLA' (Get-CvText -Key 'cw.jobs.fuera' -Values @($rows.Count))
         & $refresh
     })
 
@@ -1132,7 +1132,7 @@ function Show-CvConvertWindow {
         # Si el refresco falla, se apunta en el log: tragarselo en silencio deja la ventana a medias
         # (la lista de una vuelta y los totales de otra) sin nada que mirar despues.
         # El temporizador hace el refresco LIGERO; ese decide si hace falta el completo.
-        try { & $refreshLive } catch { Write-CvLog 'COLA' ("[ERROR] - Refresco: {0}" -f $_) } finally { $st.Busy = $false }
+        try { & $refreshLive } catch { Write-CvLog 'COLA' (Get-CvText -Key 'cw.refresco2' -Values @($_)) } finally { $st.Busy = $false }
     })
 
     # La columna de progreso ocupa lo que sobre: al abrir, al redimensionar la ventana y al cambiar
@@ -1158,7 +1158,7 @@ function Show-CvConvertWindow {
             $muertos = @(Get-CvWorkerStates -Context $Context | Where-Object { -not $_.Alive })
             if ($muertos.Count -gt 0) {
                 $n = Remove-CvWorkerStates -States $muertos
-                if ($n -gt 0) { Write-CvLog 'COLA' ("[LIMPIEZA] - Retirados {0} estado(s) de workers que ya no existen." -f $n) }
+                if ($n -gt 0) { Write-CvLog 'COLA' (Get-CvText -Key 'cw.limpieza' -Values @($n)) }
             }
         } catch { }
 
@@ -1204,15 +1204,15 @@ function Show-CvConvertWindow {
                         -Options (Get-CvQueueCloseActions)
                     switch ($pick) {
                         'background' {
-                            Write-CvLog 'COLA' ("[CERRAR] - Ventana cerrada con {0} worker(s) siguiendo en segundo plano." -f $liveW.Count)
+                            Write-CvLog 'COLA' (Get-CvText -Key 'cw.cerrar.bg' -Values @($liveW.Count))
                         }
                         'stop' {
                             [void](Set-CvWorkerStop -Context $Context)
-                            Write-CvLog 'COLA' ("[CERRAR] - Parada pedida al cerrar: {0} worker(s) terminaran su archivo y saldran." -f $liveW.Count)
+                            Write-CvLog 'COLA' (Get-CvText -Key 'cw.cerrar.stop' -Values @($liveW.Count))
                         }
                         'kill' {
                             foreach ($w in $liveW) { [void](Stop-CvConvertWorker -ProcessId ([int]$w.Pid)) }
-                            Write-CvLog 'COLA' ("[CERRAR] - Cortados {0} worker(s) al cerrar la ventana." -f $liveW.Count)
+                            Write-CvLog 'COLA' (Get-CvText -Key 'cw.cerrar.kill' -Values @($liveW.Count))
                         }
                         default {
                             # 'cancel' o cerrar el aviso con la X: no se cierra (lo seguro).

@@ -83,11 +83,11 @@ function Confirm-CvTool {
     param([Parameter(Mandatory)]$Context, [Parameter(Mandatory)][string]$Name, [string]$Version, [switch]$Quiet)
     if ([string]::IsNullOrWhiteSpace($Version)) { return $false }
     if (-not (Test-CvToolSupported -Context $Context -Name $Name)) {
-        if (-not $Quiet) { Write-CvLog 'GLOBAL' ("[{0}] - [NO SOPORTADO] - No hay build para la plataforma de este equipo ({1})." -f $Name.ToUpper(), (Get-CvPlatform)) }
+        if (-not $Quiet) { Write-CvLog 'GLOBAL' (Get-CvText -Key 'tl.nosop' -Values @($Name.ToUpper(), (Get-CvPlatform))) }
         return $false
     }
     if (Test-CvToolInstalled -Context $Context -Name $Name -Version $Version) { return $true }
-    if (-not $Quiet) { Write-CvLog 'GLOBAL' ("[{0}] - Falta la version {1}; descargando..." -f $Name.ToUpper(), $Version) }
+    if (-not $Quiet) { Write-CvLog 'GLOBAL' (Get-CvText -Key 'tl.falta' -Values @($Name.ToUpper(), $Version)) }
     return (Install-CvTool -Context $Context -Name $Name -Version $Version)
 }
 
@@ -216,7 +216,7 @@ function Select-CvToolVersion {
     $sel = "$($app.selected)"
     $defIdx = [array]::IndexOf($versions, $sel) + 1
     if ($defIdx -lt 1) { $defIdx = 1 }
-    return (Select-FromList -Title ("Version de {0} a instalar:" -f $Name) -Options $versions -NoneLabel 'cancelar' -DefaultIndex $defIdx)
+    return (Select-FromList -Title (Get-CvText -Key 'tl.version.q' -Values @($Name)) -Options $versions -NoneLabel 'cancelar' -DefaultIndex $defIdx)
 }
 
 function Install-CvTool {
@@ -234,7 +234,7 @@ function Install-CvTool {
     if ($null -eq $app) { Write-CvLog 'GLOBAL' ("{0} - [ERR] - No hay descriptor de descarga para '{1}'" -f $tag, $Name); return $false }
 
     if (-not (Test-CvToolSupported -Context $Context -Name $Name)) {
-        Write-CvLog 'GLOBAL' ("{0} - [NO SOPORTADO] - No hay build de {1} para la plataforma de este equipo ({2})." -f $tag, $Name, (Get-CvPlatform))
+        Write-CvLog 'GLOBAL' (Get-CvText -Key 'tl.nosop2' -Values @($tag, $Name, (Get-CvPlatform)))
         return $false
     }
 
@@ -244,7 +244,7 @@ function Install-CvTool {
         if ([string]::IsNullOrWhiteSpace("$dep")) { continue }
         $depApp = Get-CvAppDescriptor -Context $Context -Name "$dep"
         $depVer = if ($depApp) { "$($depApp.selected)" } else { '' }
-        Write-CvLog 'GLOBAL' ("{0} - Dependencia: {1} {2}" -f $tag, $dep, $depVer)
+        Write-CvLog 'GLOBAL' (Get-CvText -Key 'tl.dep' -Values @($tag, $dep, $depVer))
         if (-not (Confirm-CvTool -Context $Context -Name "$dep" -Version $depVer -Quiet)) {
             Write-CvLog 'GLOBAL' ("{0} - [ERR] - No se pudo obtener la dependencia '{1}'" -f $tag, $dep)
             return $false
@@ -252,7 +252,7 @@ function Install-CvTool {
     }
 
     $ver = if (-not [string]::IsNullOrWhiteSpace($Version)) { $Version } else { "$($app.selected)" }
-    if ([string]::IsNullOrWhiteSpace($ver)) { Write-CvLog 'GLOBAL' ("{0} - [ERR] - Version no seleccionada" -f $tag); return $false }
+    if ([string]::IsNullOrWhiteSpace($ver)) { Write-CvLog 'GLOBAL' (Get-CvText -Key 'tl.sinver' -Values @($tag)); return $false }
     $url    = ("$($app.url)")     -replace '\{version\}', $ver
     $binRel = ("$($app.binPath)") -replace '\{version\}', $ver
     $files  = @($app.files)
@@ -272,7 +272,7 @@ function Install-CvTool {
     $type = "$($app.type)"; if ([string]::IsNullOrWhiteSpace($type)) { $type = 'zip' }
     $dl = Join-Path $tmp $(switch ($type) { 'zip' { 'pkg.zip' } '7z' { 'pkg.7z' } default { 'pkg.dat' } })
 
-    Write-CvLog 'GLOBAL' ("{0} - Descargando {1} {2} (puede tardar)..." -f $tag, $Name, $ver)
+    Write-CvLog 'GLOBAL' (Get-CvText -Key 'tl.bajando' -Values @($tag, $Name, $ver))
     Write-CvLog 'GLOBAL' ("{0} - {1}" -f $tag, $url)
     try { [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12 } catch {}
     $oldPref = $ProgressPreference
@@ -285,14 +285,14 @@ function Install-CvTool {
             Invoke-WebRequest -Uri $url -OutFile $dl -UseBasicParsing
             $downloaded = $true; break
         } catch {
-            Write-CvLog 'GLOBAL' ("{0} - [AVISO] - Descarga fallida (intento {1}/{2}): {3}" -f $tag, $i, $attempts, $_.Exception.Message)
+            Write-CvLog 'GLOBAL' (Get-CvText -Key 'tl.baja.mal' -Values @($tag, $i, $attempts, $_.Exception.Message))
             if (Test-Path $dl) { Remove-Item -Force $dl -ErrorAction SilentlyContinue }
             if ($i -lt $attempts) { Start-Sleep -Seconds (2 * $i) }
         }
     }
     $ProgressPreference = $oldPref
     if (-not $downloaded -or -not (Test-Path $dl)) {
-        Write-CvLog 'GLOBAL' ("{0} - [ERR] - No se pudo descargar tras {1} intentos" -f $tag, $attempts)
+        Write-CvLog 'GLOBAL' (Get-CvText -Key 'tl.baja.no' -Values @($tag, $attempts))
         Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
         return $false
     }
@@ -300,15 +300,15 @@ function Install-CvTool {
     if (-not [string]::IsNullOrWhiteSpace($sha)) {
         $got = (Get-FileHash -Path $dl -Algorithm SHA256).Hash
         if ($got.ToUpper() -ne $sha.Trim().ToUpper()) {
-            Write-CvLog 'GLOBAL' ("{0} - [ERR] - SHA256 no coincide." -f $tag)
-            Write-CvLog 'GLOBAL' ("{0} -   esperado: {1}" -f $tag, $sha)
-            Write-CvLog 'GLOBAL' ("{0} -   obtenido: {1}" -f $tag, $got)
+            Write-CvLog 'GLOBAL' (Get-CvText -Key 'tl.sha.mal' -Values @($tag))
+            Write-CvLog 'GLOBAL' (Get-CvText -Key 'tl.sha.esp' -Values @($tag, $sha))
+            Write-CvLog 'GLOBAL' (Get-CvText -Key 'tl.sha.obt' -Values @($tag, $got))
             Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
             return $false
         }
-        Write-CvLog 'GLOBAL' ("{0} - SHA256 verificado [OK]" -f $tag)
+        Write-CvLog 'GLOBAL' (Get-CvText -Key 'tl.sha.ok' -Values @($tag))
     } else {
-        Write-CvLog 'GLOBAL' ("{0} - [AVISO] - Sin SHA256 para la version {1}, se omite la verificacion" -f $tag, $ver)
+        Write-CvLog 'GLOBAL' (Get-CvText -Key 'tl.sha.sin' -Values @($tag, $ver))
     }
 
     $ok = $true
@@ -316,9 +316,9 @@ function Install-CvTool {
         # Ejecutable directo: se copia (renombrando) al destino.
         $target = if ($files.Count -ge 1) { $files[0] } else { Split-Path $url -Leaf }
         try { Copy-Item -Force -Path $dl -Destination (Join-Path $destDir $target) }
-        catch { Write-CvLog 'GLOBAL' ("{0} - [ERR] - No se pudo copiar: {1}" -f $tag, $_.Exception.Message); $ok = $false }
+        catch { Write-CvLog 'GLOBAL' (Get-CvText -Key 'tl.copia.no' -Values @($tag, $_.Exception.Message)); $ok = $false }
     } else {
-        Write-CvLog 'GLOBAL' ("{0} - Extrayendo..." -f $tag)
+        Write-CvLog 'GLOBAL' (Get-CvText -Key 'tl.extra' -Values @($tag))
         $extracted = $false
         if ($type -eq '7z') {
             # .7z (LZMA): se extrae con 7zr (app 'sevenzip', asegurada por dependsOn).
@@ -332,10 +332,10 @@ function Install-CvTool {
             }
             $r = Invoke-ToolCapture -Exe $zr -Arguments @('x', $dl, ("-o{0}" -f $tmp), '-y') -Context $Context
             $extracted = ($r.ExitCode -eq 0)
-            if (-not $extracted) { Write-CvLog 'GLOBAL' ("{0} - [ERR] - 7zr devolvio codigo {1}" -f $tag, $r.ExitCode) }
+            if (-not $extracted) { Write-CvLog 'GLOBAL' (Get-CvText -Key 'tl.7z.mal' -Values @($tag, $r.ExitCode)) }
         } else {
             try { Expand-Archive -Path $dl -DestinationPath $tmp -Force; $extracted = $true }
-            catch { Write-CvLog 'GLOBAL' ("{0} - [ERR] - No se pudo extraer: {1}" -f $tag, $_.Exception.Message) }
+            catch { Write-CvLog 'GLOBAL' (Get-CvText -Key 'tl.extra.no' -Values @($tag, $_.Exception.Message)) }
         }
         if (-not $extracted) {
             Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
@@ -350,15 +350,15 @@ function Install-CvTool {
                 if ($alt) { $src = $alt.FullName }
             }
             if (Test-Path $src) { Copy-Item -Force -Path $src -Destination (Join-Path $destDir $file) }
-            else { Write-CvLog 'GLOBAL' ("{0} - [ERR] - No se encontro {1} en el paquete" -f $tag, $file); $ok = $false }
+            else { Write-CvLog 'GLOBAL' (Get-CvText -Key 'tl.nofound' -Values @($tag, $file)); $ok = $false }
         }
     }
     Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
 
     if ($ok) {
         $iv = Get-CvToolInstalledVersion -Context $Context -Name $Name -Version $ver
-        if ($iv) { Write-CvLog 'GLOBAL' ("{0} - [OK] - {1} instalado en {2} (version detectada: {3})" -f $tag, $Name, $destDir, $iv) }
-        else     { Write-CvLog 'GLOBAL' ("{0} - [OK] - {1} {2} instalado en {3}" -f $tag, $Name, $ver, $destDir) }
+        if ($iv) { Write-CvLog 'GLOBAL' (Get-CvText -Key 'tl.ok.det' -Values @($tag, $Name, $destDir, $iv)) }
+        else     { Write-CvLog 'GLOBAL' (Get-CvText -Key 'tl.ok' -Values @($tag, $Name, $ver, $destDir)) }
         # Validacion de compatibilidad: para ffmpeg, comprobar que la codificacion por GPU
         # (NVENC) funciona con esta version y el driver NVIDIA de este equipo. El resultado se
         # expone por -NvencOk (si se paso) para que setup pueda volver a la version anterior.
@@ -430,22 +430,22 @@ function Get-CvNvencCause {
 function Write-CvNvencReport {
     <# Ejecuta Test-CvNvenc y escribe un veredicto claro: COMPATIBLE / NO COMPATIBLE. #>
     param([Parameter(Mandatory)]$Context, [Parameter(Mandatory)][string]$Version, [string]$Tag = '[FFMPEG]')
-    Write-CvLog 'GLOBAL' ("{0} - [GPU] - Comprobando compatibilidad de la codificacion por GPU (NVENC)..." -f $Tag)
+    Write-CvLog 'GLOBAL' (Get-CvText -Key 'tl.gpu.comp' -Values @($Tag))
     $nv = Test-CvNvenc -Context $Context -Version $Version
     if ($nv.Ok) {
         Write-Host ("[GLOBAL] {0} - [GPU] - " -f $Tag) -NoNewline
-        Write-Host ' COMPATIBLE ' -ForegroundColor Black -BackgroundColor Green -NoNewline
-        Write-Host (": la codificacion por GPU (NVENC) funciona ({0})." -f $nv.Encoder)
+        Write-Host (Get-CvText -Key 'tl.gpu.si') -ForegroundColor Black -BackgroundColor Green -NoNewline
+        Write-Host (Get-CvText -Key 'tl.gpu.si.t' -Values @($nv.Encoder))
     } else {
         Write-Host ("[GLOBAL] {0} - [GPU] - " -f $Tag) -NoNewline
-        Write-Host ' NO COMPATIBLE ' -ForegroundColor White -BackgroundColor Red -NoNewline
-        Write-Host (": la codificacion por GPU (NVENC) no funciona con ffmpeg {0} en este equipo." -f $Version)
+        Write-Host (Get-CvText -Key 'tl.gpu.no') -ForegroundColor White -BackgroundColor Red -NoNewline
+        Write-Host (Get-CvText -Key 'tl.gpu.no.t' -Values @($Version))
         $causes = @($nv.Causes)
         if ($causes.Count -gt 0) {
-            Write-CvLog 'GLOBAL' ("{0} - [GPU] -   Causa:" -f $Tag)
+            Write-CvLog 'GLOBAL' (Get-CvText -Key 'tl.gpu.causa' -Values @($Tag))
             foreach ($c in $causes) { Write-CvLog 'GLOBAL' ("{0} - [GPU] -     {1}" -f $Tag, $c) }
         }
-        Write-CvLog 'GLOBAL' ("{0} - [GPU] -   Solucion: perfil CPU (libx264/libx265), otra version de ffmpeg o actualizar el driver NVIDIA." -f $Tag)
+        Write-CvLog 'GLOBAL' (Get-CvText -Key 'tl.gpu.sol' -Values @($Tag))
     }
     return $nv.Ok
 }
@@ -533,15 +533,15 @@ function Write-CvGpuCapsSummary {
     $ok  = @($gpu | Where-Object { $script:CvGpuEncCache["$_"] })
     $src = if ($Cached) { ' (cache)' } else { '' }
     if ($ok.Count -eq $gpu.Count) {
-        Write-CvLog 'GLOBAL' ("[GPU] - Codificacion por GPU (NVENC) disponible, incluido AV1 (av1_nvenc){0}." -f $src)
+        Write-CvLog 'GLOBAL' (Get-CvText -Key 'tl.gpu.av1' -Values @($src))
     } elseif ($ok.Count -gt 0) {
         $okTxt = ($ok | ForEach-Object { $_ -replace '_nvenc', '' }) -join ', '
-        Write-CvLog 'GLOBAL' ("[GPU] - Codificacion por GPU (NVENC) disponible: {0}{1}." -f $okTxt, $src)
+        Write-CvLog 'GLOBAL' (Get-CvText -Key 'tl.gpu.disp' -Values @($okTxt, $src))
         if ('av1_nvenc' -notin $ok) {
-            Write-CvLog 'GLOBAL' '[GPU] - AV1 por GPU (av1_nvenc) NO lo soporta esta GPU (requiere RTX 40+/Ada); para AV1 usa libsvtav1 (CPU).'
+            Write-CvLog 'GLOBAL' (Get-CvText -Key 'tl.gpu.noav1')
         }
     } else {
-        Write-CvLog 'GLOBAL' ("[GPU] - Sin codificacion por GPU (NVENC) en este equipo{0}; usa perfiles de CPU (libx264/libx265)." -f $src)
+        Write-CvLog 'GLOBAL' (Get-CvText -Key 'tl.gpu.sin' -Values @($src))
     }
 }
 
@@ -582,7 +582,7 @@ function Save-CvGpuCache {
         Set-CvChildLeaf -Node $raw -Key 'gpuCache' -Value $gc
         Save-CvConfigFile -Path $CfgPath -Config $raw
     } catch {
-        Write-CvLog 'GLOBAL' ("[GPU] - No se pudo guardar la cache de GPU en el config: {0}" -f $_.Exception.Message)
+        Write-CvLog 'GLOBAL' (Get-CvText -Key 'tl.gpu.cache' -Values @($_.Exception.Message))
     }
 }
 
@@ -613,7 +613,7 @@ function Initialize-CvGpuCaps {
     }
 
     # Sin cache valida (primera vez, o cambio de ffmpeg/GPU): sondear y (si procede) persistir.
-    Write-CvLog 'GLOBAL' '[GPU] - Comprobando compatibilidad de la GPU con los encoders por GPU (una sola vez; se cachea)...'
+    Write-CvLog 'GLOBAL' (Get-CvText -Key 'tl.gpu.probe')
     $map = [ordered]@{}
     foreach ($e in $gpuEnc) { $map[$e] = [bool](Test-CvGpuEncoder -Context $Context -Encoder $e) }
     if ($Persist) { Save-CvGpuCache -CfgPath $CfgPath -Ffmpeg $ffVer -Gpu $gpuNm -Encoders $map }

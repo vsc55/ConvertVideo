@@ -65,7 +65,7 @@ foreach ($m in $modules) {
 # -Config explicito no se pregunta. Cancelar = no abrir nada.
 if ([string]::IsNullOrWhiteSpace($Config)) {
     if (-not (Initialize-CvGui)) {
-        Write-Host 'No hay entorno grafico (o el host no es STA). Usa setup.cmd, que hace lo mismo en consola.'
+        Write-Host (Get-CvText -Key 'sg.singui')
         return
     }
     $Config = Show-CvSetupConfigChooser -Root $Root
@@ -86,13 +86,13 @@ $logFile = $sess.LogFile
 # 'Alterno' = NO es el config.json de junto al programa. Se compara la RUTA ya resuelta, no si vino
 # -Config: ahora el chooser siempre rellena -Config, y elegir el normal no debe salir como alterno.
 $isAlt = ($CfgPath -ne (Join-Path $Root 'config.json'))
-Write-CvLog 'SETUP' ("Abriendo setup en ventana ({0})..." -f $CfgName)
+Write-CvLog 'SETUP' (Get-CvText -Key 'sg.abriendo' -Values @($CfgName))
 
 $ok = Show-CvSetupWindow -Context $ctx -Root $Root -CfgPath $CfgPath -CfgName $CfgName -IsAlt $isAlt -CurrentLog "$logFile"
 if (-not $ok) {
-    Write-CvLog 'SETUP' '[ERR] - No se pudo abrir la ventana (sin entorno grafico o el host no es STA).'
-    Write-CvLog 'SETUP' 'Usa setup.cmd (la version de consola hace exactamente lo mismo).'
+    Write-CvLog 'SETUP' (Get-CvText -Key 'sg.noventana')
+    Write-CvLog 'SETUP' (Get-CvText -Key 'sg.usaconsola')
 }
 
-Write-CvLog 'SETUP' 'Hecho.'
+Write-CvLog 'SETUP' (Get-CvText -Key 'cli.hecho')
 if ($logFile) { Stop-CvLog }
