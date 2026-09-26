@@ -100,14 +100,14 @@ $didInstall = $false
 # ffmpeg (siempre necesario): debe existir la version 'selected'.
 if (-not (Test-CvToolInstalled -Context $ctx -Name 'ffmpeg' -Version $ctx.FFmpegVersion)) {
     if (-not (Test-CvToolSupported -Context $ctx -Name 'ffmpeg')) {
-        Write-Host ("ERROR: ffmpeg no tiene build para la plataforma de este equipo ({0})." -f $ctx.Platform) -ForegroundColor Red
+        Write-Host (Get-CvText -Key 'cv.ff.nosop' -Values @($ctx.Platform)) -ForegroundColor Red
         exit 1
     }
-    Write-CvLog 'GLOBAL' ("[FFMPEG] - Falta la version {0}." -f $ctx.FFmpegVersion)
+    Write-CvLog 'GLOBAL' (Get-CvText -Key 'cv.ff.falta' -Values @($ctx.FFmpegVersion))
     # Desatendido: no hay nadie para contestar el menu de descarga (ver Test-CvConvertReady, que es
     # justo lo que comprueba la ventana ANTES de abrir un worker). Se aborta con el motivo en el log.
     if ($Unattended) {
-        Write-CvLog 'GLOBAL' '[FFMPEG] - [ERR] - Modo desatendido: instala ffmpeg desde setup y vuelve a lanzar.'
+        Write-CvLog 'GLOBAL' (Get-CvText -Key 'cv.ff.desat')
         Remove-CvWorkerState -Context $ctx
         if ($cvLog) { Stop-CvLog }
         exit 1
@@ -119,17 +119,17 @@ if (-not (Test-CvToolInstalled -Context $ctx -Name 'ffmpeg' -Version $ctx.FFmpeg
             $ctx = New-CvToolContext -Context $ctx -FFmpegVersion $ffVer   # usar la version instalada
         }
     } else {
-        Write-CvLog 'GLOBAL' '[FFMPEG] - Descarga cancelada.'
+        Write-CvLog 'GLOBAL' (Get-CvText -Key 'cv.ff.cancel')
     }
 }
 
 # aacgain (solo si el metodo de volumen es 'aacgain').
 if ("$($ctx.VolumeMethod)".ToLower() -eq 'aacgain' -and -not (Test-CvToolInstalled -Context $ctx -Name 'aacgain' -Version $ctx.AacGainVersion)) {
     if (-not (Test-CvToolSupported -Context $ctx -Name 'aacgain')) {
-        Write-Host ("ERROR: aacgain no tiene build para la plataforma de este equipo ({0})." -f $ctx.Platform) -ForegroundColor Red
+        Write-Host (Get-CvText -Key 'cv.ag.nosop' -Values @($ctx.Platform)) -ForegroundColor Red
         exit 1
     }
-    Write-CvLog 'GLOBAL' ("[AACGAIN] - Falta la version {0}." -f $ctx.AacGainVersion)
+    Write-CvLog 'GLOBAL' (Get-CvText -Key 'cv.ag.falta' -Values @($ctx.AacGainVersion))
     # Desatendido: no se ofrece el menu de descarga (no hay quien lo conteste); se sigue sin aacgain,
     # que solo afecta al ajuste de volumen, no a la conversion.
     $agVer = if ($Unattended) { '' } else { Select-CvToolVersion -Context $ctx -Name 'aacgain' }
@@ -141,7 +141,7 @@ if ("$($ctx.VolumeMethod)".ToLower() -eq 'aacgain' -and -not (Test-CvToolInstall
     } elseif ($Unattended) {
         Write-CvLog 'GLOBAL' '[AACGAIN] - [AVISO] - Modo desatendido: no se descarga; el ajuste de volumen se omitira.'
     } else {
-        Write-CvLog 'GLOBAL' '[AACGAIN] - Descarga cancelada.'
+        Write-CvLog 'GLOBAL' (Get-CvText -Key 'cv.ag.cancel')
     }
 }
 
@@ -160,7 +160,7 @@ if ($ctx.StripTags -and [string]::IsNullOrWhiteSpace("$($ctx.MkvPropEditOverride
 $missing = Test-CvTools -Context $ctx
 if ($missing.Count -gt 0) {
     # Si algo falta (o una descarga fallo) se deja el error en pantalla, no se limpia.
-    Write-Host 'ERROR: faltan herramientas:' -ForegroundColor Red
+    Write-Host (Get-CvText -Key 'cv.faltan') -ForegroundColor Red
     $missing | ForEach-Object { Write-Host ("  - {0}" -f $_) -ForegroundColor Red }
     exit 1
 }
@@ -170,10 +170,10 @@ if ($didInstall) { Clear-Host }
 
 # Version en uso (leida de la propia app de la version seleccionada).
 $ffInstalled = Get-CvToolInstalledVersion -Context $ctx -Name 'ffmpeg' -Version $ctx.FFmpegVersion
-if ($ffInstalled) { Write-CvLog 'GLOBAL' ("[FFMPEG] - Version en uso: {0}" -f $ffInstalled) }
+if ($ffInstalled) { Write-CvLog 'GLOBAL' (Get-CvText -Key 'cv.ff.usando' -Values @($ffInstalled)) }
 if ("$($ctx.VolumeMethod)".ToLower() -eq 'aacgain') {
     $agInstalled = Get-CvToolInstalledVersion -Context $ctx -Name 'aacgain' -Version $ctx.AacGainVersion
-    if ($agInstalled) { Write-CvLog 'GLOBAL' ("[AACGAIN] - Version en uso: {0}" -f $agInstalled) }
+    if ($agInstalled) { Write-CvLog 'GLOBAL' (Get-CvText -Key 'cv.ag.usando' -Values @($agInstalled)) }
 }
 # Modo pruebas activo: avisar bien visible de que la salida sera un RECORTE, no el archivo entero.
 if ($ctx.TestLimit -gt 0) {
@@ -238,13 +238,13 @@ function Write-PrepareStatus {
     #>
     param([bool]$Ok, [switch]$Warn)
     if (-not $Ok) {
-        Write-Host '   No se pudo preparar ' -NoNewline; Write-Host (Get-CvMark $false) -ForegroundColor Red
+        Write-Host (Get-CvText -Key 'cv.prep.no') -NoNewline; Write-Host (Get-CvMark $false) -ForegroundColor Red
         return
     }
     if ($Warn) {
-        Write-Host '   Preparado (seleccion manual) ' -NoNewline; Write-Host (Get-CvMark $true) -ForegroundColor Yellow
+        Write-Host (Get-CvText -Key 'cv.prep.manual') -NoNewline; Write-Host (Get-CvMark $true) -ForegroundColor Yellow
     } else {
-        Write-Host '   Preparado ' -NoNewline; Write-Host (Get-CvMark $true) -ForegroundColor Green
+        Write-Host (Get-CvText -Key 'cv.prep.ok') -NoNewline; Write-Host (Get-CvMark $true) -ForegroundColor Green
     }
 }
 
@@ -255,7 +255,7 @@ function Write-PrepareStatus {
 # (mismo BaseName con distinta extension: se avisa aqui y se ignoran; ver Get-ProcessableFiles).
 $files = @(Get-ProcessableFiles -Context $ctx)
 if ($files.Count -eq 0) {
-    Write-CvLog 'GLOBAL' ("[FIN] - No hay archivos procesables en {0}" -f $ctx.Original)
+    Write-CvLog 'GLOBAL' (Get-CvText -Key 'cv.fin.nada' -Values @($ctx.Original))
     Remove-CvWorkerState -Context $ctx
     exit 0
 }
@@ -300,7 +300,7 @@ if ($needPrepare) {
     $cfgProfile = Select-Profile -Extra $ctx.Profiles -Context $ctx
     if ($null -eq $cfgProfile) {
         # El usuario eligio salir (X): cierre limpio.
-        Write-CvLog 'GLOBAL' '[SALIR] - Cancelado por el usuario.'
+        Write-CvLog 'GLOBAL' (Get-CvText -Key 'cv.salir')
         if ($ctx.LockClose) { Set-CvCloseButton -Enabled $true }
         Remove-CvWorkerState -Context $ctx
         if ($cvLog) { Stop-CvLog }
@@ -312,7 +312,7 @@ if ($needPrepare) {
     $cfgProfile = Resolve-CvProfileAuto -Context $ctx -Prof $cfgProfile
     Write-ProfileInfo -Prof $cfgProfile
 
-    Write-CvLog 'GLOBAL' '[PREPARAR] - Generando configuracion de los archivos...'
+    Write-CvLog 'GLOBAL' (Get-CvText -Key 'cv.prep.gen')
     foreach ($f in $files) {
         $name = $f.BaseName
         if (Test-Path -LiteralPath (Get-OutputPath $ctx $name)) { continue }
@@ -325,7 +325,7 @@ if ($needPrepare) {
 
         $info = Get-MediaInfo -Context $ctx -File $f.FullName
         if ($null -eq $info) {
-            if ($ctx.Debug) { Write-CvLog 'PREPARAR' ("[ERR] - No se pudo leer {0}" -f $name) } else { Write-PrepareStatus -Ok $false }
+            if ($ctx.Debug) { Write-CvLog 'PREPARAR' (Get-CvText -Key 'cv.prep.noleo' -Values @($name)) } else { Write-PrepareStatus -Ok $false }
             continue
         }
 
@@ -337,9 +337,9 @@ if ($needPrepare) {
             Write-Host ''
             Write-Host ''
             Write-Host $sepLine
-            Write-CvLog 'PREPARAR' ("ARCHIVO: {0}" -f $name)
+            Write-CvLog 'PREPARAR' (Get-CvText -Key 'cv.archivo' -Values @($name))
             Write-Host $sepLine
-            Write-CvLog 'PREPARAR' ("[INFO] - Tamano: {0}  Duracion: {1}" -f (Get-VideoSize (Get-VideoStream $info)), (Get-DurationText $info))
+            Write-CvLog 'PREPARAR' (Get-CvText -Key 'cv.info.tam' -Values @((Get-VideoSize (Get-VideoStream $info)), (Get-DurationText $info)))
             Write-Host ''
         }
 
@@ -348,7 +348,7 @@ if ($needPrepare) {
         # puede fallar por timestamps. Se avisa aquí para que se sepa antes de codificar (no se bloquea).
         if ($vAsk.Skip) {
             $copyWarn = Get-CvVideoCopyRemuxWarning -Path $f.FullName
-            if ($copyWarn) { Write-CvLog 'VIDEO' ("[AVISO] - {0}" -f $copyWarn) -Indent 3 }
+            if ($copyWarn) { Write-CvLog 'VIDEO' (Get-CvText -Key 'cv.aviso' -Values @($copyWarn)) -Indent 3 }
         }
         $aAsk   = Invoke-AudioAsk -Context $ctx -Prof $cfgProfile -Info $info
         $subManual = $false
@@ -371,12 +371,12 @@ if ($needPrepare) {
         $manual = ([bool]$vAsk.Manual) -or ([bool]$aAsk.Manual) -or $subManual
         if ($ctx.Debug) {
             Write-Host ''
-            Write-CvLog 'PREPARAR' ("[OK] - Job creado: {0}.job.json{1}" -f $name, $(if ($manual) { ' (seleccion manual)' } else { '' }))
+            Write-CvLog 'PREPARAR' (Get-CvText -Key 'cv.job.creado' -Values @($name, $(if ($manual) { (Get-CvText -Key 'cv.job.manual') } else { '' })))
         } else {
             Write-PrepareStatus -Ok $true -Warn:$manual
         }
     }
-    Write-CvLog 'GLOBAL' '[PREPARAR] - Configuracion completada.'
+    Write-CvLog 'GLOBAL' (Get-CvText -Key 'cv.prep.fin')
 
     # Preguntar cuantos workers codificaran EN PARALELO (esta ventana + N-1 ventanas nuevas).
     # Las ventanas nuevas se lanzan en modo -WorkerOnly: como ya esta todo preparado, entran
@@ -390,7 +390,7 @@ if ($needPrepare) {
     if ($nw -le 0) {
         # Solo preparar: no se codifica ni se abre ningun worker. Los jobs quedan listos para
         # lanzar la conversion despues (abriendo Convert.cmd cuando se quiera).
-        Write-CvLog 'GLOBAL' '[PREPARAR] - Solo preparar: los jobs quedan listos. Abre Convert.cmd cuando quieras codificar.'
+        Write-CvLog 'GLOBAL' (Get-CvText -Key 'cv.soloprep')
         if ($ctx.LockClose) { Set-CvCloseButton -Enabled $true }
         Remove-CvWorkerState -Context $ctx
         if ($cvLog) { Stop-CvLog }
@@ -404,7 +404,7 @@ if ($needPrepare) {
     }).Count
     $cap = [Math]::Max(1, $pending)
     if ($nw -gt $cap) {
-        Write-CvLog 'GLOBAL' ("[WORKER] - {0} archivo(s) por codificar; se usan {1} worker(s) en vez de {2}." -f $pending, $cap, $nw)
+        Write-CvLog 'GLOBAL' (Get-CvText -Key 'cv.workers.n' -Values @($pending, $cap, $nw))
         $nw = $cap
     }
 
@@ -418,9 +418,9 @@ if ($needPrepare) {
         $opened = 0
         for ($i = 1; $i -le $extra; $i++) {
             try { Start-Process -FilePath $cmdPath -ArgumentList $wArgs -WorkingDirectory $Root | Out-Null; $opened++ }
-            catch { Write-CvLog 'GLOBAL' ("[AVISO] - No se pudo abrir un worker adicional: {0}" -f $_.Exception.Message) }
+            catch { Write-CvLog 'GLOBAL' (Get-CvText -Key 'cv.worker.no' -Values @($_.Exception.Message)) }
         }
-        Write-CvLog 'GLOBAL' ("[WORKER] - Abiertos {0} worker(s) adicional(es); {1} en paralelo." -f $opened, ($opened + 1))
+        Write-CvLog 'GLOBAL' (Get-CvText -Key 'cv.workers.ab' -Values @($opened, ($opened + 1)))
     }
 }
 
@@ -429,9 +429,9 @@ if ($needPrepare) {
 # ============================================================
 Write-Host ''
 if ($Only.Count -gt 0) {
-    Write-CvLog 'GLOBAL' ("[WORKER] - Solo se codificaran {0} archivo(s) pedidos: {1}" -f $Only.Count, ((($Only | Select-Object -First 8) -join ', ') + $(if ($Only.Count -gt 8) { ', ...' } else { '' })))
+    Write-CvLog 'GLOBAL' (Get-CvText -Key 'cv.only' -Values @($Only.Count, ((($Only | Select-Object -First 8) -join ', ') + $(if ($Only.Count -gt 8) { ', ...' } else { '' }))))
 }
-Write-CvLog 'GLOBAL' '[WORKER] - Buscando archivos preparados para codificar...'
+Write-CvLog 'GLOBAL' (Get-CvText -Key 'cv.buscando')
 
 # Reintentos: nº de fallos por archivo; a partir de $maxRetries se abandona (evita bucle
 # infinito con inputs corruptos, perfiles que fallan o ffmpeg que no arranca).
@@ -470,7 +470,7 @@ while ($didAny) {
             Write-Host ''
             Write-Host ''
             Write-Host $sepLine
-            Write-CvLog 'WORKER' ("CODIFICANDO: {0}" -f $name)
+            Write-CvLog 'WORKER' (Get-CvText -Key 'cv.codificando' -Values @($name))
             Write-Host $(if ($ctx.Debug) { $sepLine } else { $dashLine })
 
             $job  = Read-CvJob -Context $ctx -Name $name
@@ -483,10 +483,10 @@ while ($didAny) {
             # Asegurar ffmpeg de la version del job (se instala si falta). Si no se puede,
             # se marca para no reintentar en bucle y se pasa al siguiente.
             if (-not (Confirm-CvTool -Context $ctx -Name 'ffmpeg' -Version $ffVer)) {
-                Write-CvLog 'WORKER' ("[ERR] - No se pudo obtener ffmpeg {0}; se omite este archivo" -f $ffVer)
+                Write-CvLog 'WORKER' (Get-CvText -Key 'cv.ff.nohay' -Values @($ffVer))
                 $results[$name] = @{
                     Status   = 'ERROR'
-                    Reason   = ("no se pudo obtener ffmpeg {0}" -f $ffVer)
+                    Reason   = (Get-CvText -Key 'cv.ff.nohay.c' -Values @($ffVer))
                     Attempts = 1
                     Elapsed  = $null
                 }
@@ -497,17 +497,17 @@ while ($didAny) {
             # Adjuntar el job al contexto del worker: la seccion 'AJUSTES DEL JOB' del log de error
             # (Show-CvToolError -> Save-CvToolError) lo lee de aqui sin tener que pasarlo por cada Invoke-*.
             $jctx | Add-Member -NotePropertyName CurrentJob -NotePropertyValue $job -Force
-            if ($jctx.Debug) { Write-CvLog 'WORKER' ("[INFO] - ffmpeg {0}" -f $ffVer) } else { Write-Host (" - ffmpeg {0}" -f $ffVer) }
+            if ($jctx.Debug) { Write-CvLog 'WORKER' (Get-CvText -Key 'cv.ff.info' -Values @($ffVer)) } else { Write-Host (" - ffmpeg {0}" -f $ffVer) }
             if ("$($jctx.VolumeMethod)".ToLower() -eq 'aacgain' -and -not (Confirm-CvTool -Context $ctx -Name 'aacgain' -Version $agVer)) {
-                Write-CvLog 'WORKER' ("[AVISO] - No se pudo obtener aacgain {0}; el ajuste de volumen se omitira" -f $agVer)
+                Write-CvLog 'WORKER' (Get-CvText -Key 'cv.ag.nohay' -Values @($agVer))
             }
 
             $info = Get-MediaInfo -Context $jctx -File $f.FullName
             if ($null -eq $info) {
-                Write-CvLog 'WORKER' '[ERR] - No se pudo leer el archivo; se descarta'
+                Write-CvLog 'WORKER' (Get-CvText -Key 'cv.noleo')
                 $results[$name] = @{
                     Status   = 'ERROR'
-                    Reason   = 'no se pudo leer el archivo'
+                    Reason   = (Get-CvText -Key 'cv.noleo.c')
                     Attempts = 1
                     Elapsed  = $null
                 }
@@ -516,8 +516,8 @@ while ($didAny) {
 
             # Info del archivo (util para saber cuanto durara la codificacion).
             $vs  = Get-VideoStream $info
-            $res = if ($vs) { ("Resolucion: {0}  Duracion: {1}" -f (Get-VideoSize -VideoStream $vs), (Get-DurationText $info)) } else { ("Duracion: {0}" -f (Get-DurationText $info)) }
-            if ($jctx.Debug) { Write-CvLog 'WORKER' ("[INFO] - {0}" -f $res) } else { Write-Host (" - {0}" -f $res) }
+            $res = if ($vs) { (Get-CvText -Key 'cv.res.dur' -Values @((Get-VideoSize -VideoStream $vs), (Get-DurationText $info))) } else { (Get-CvText -Key 'cv.dur' -Values @((Get-DurationText $info))) }
+            if ($jctx.Debug) { Write-CvLog 'WORKER' (Get-CvText -Key 'cv.info' -Values @($res)) } else { Write-Host (" - {0}" -f $res) }
 
             # Modo pruebas: resumen COMPLETO de las pistas del origen antes de codificar.
             if ($jctx.TestLimit -gt 0) { Write-SourceSummary -Context $jctx -File $f.FullName -Info $info }
@@ -559,12 +559,12 @@ while ($didAny) {
             )
             $onePass = Test-CvOnePassEligible -Context $jctx -Job $job -Prof $prof
             if ($onePass.Ok) {
-                Write-CvInfoStep $jctx 'WORKER' 'Modo una sola pasada [beta] (audio + video + multiplexado en un ffmpeg)'
+                Write-CvInfoStep $jctx 'WORKER' (Get-CvText -Key 'cv.1pass')
                 $ok = Invoke-CvOnePass -Context $jctx -Prof $prof -File $f.FullName -Info $info -Job $job -Duration (Get-MediaDuration $info) -Fps (Get-CvOutputFps -Context $jctx -Info $info)
-                if (-not $ok) { $failReason = 'fallo en la ejecucion unica' }
+                if (-not $ok) { $failReason = (Get-CvText -Key 'cv.1pass.mal') }
             }
             else {
-            if ($jctx.Debug -and $jctx.BetaOnePass) { Write-CvLog 'WORKER' ("[1PASS] - No aplica ({0}); se usa el pipeline por etapas" -f $onePass.Reason) }
+            if ($jctx.Debug -and $jctx.BetaOnePass) { Write-CvLog 'WORKER' (Get-CvText -Key 'cv.1pass.no' -Values @($onePass.Reason)) }
 
             # ---------- AUDIO ----------
             if ($jctx.Debug) { Write-Host '' }
@@ -573,7 +573,7 @@ while ($didAny) {
             if ($job.audio.skip) {
                 # copy: no se recodifica. Con pistas elegidas (multipista beta en copy) se copian esas del
                 # original; sin pistas (copy clasico) el multiplex cae a 0:a:0.
-                if ($jctx.Debug) { Write-CvLog 'AUDIO' '[SKIP] - se omite recodificar (copy)' } else { Write-Host ' - Audio (copy)' }
+                if ($jctx.Debug) { Write-CvLog 'AUDIO' (Get-CvText -Key 'cv.audio.skip') } else { Write-Host (Get-CvText -Key 'cv.audio.copy') }
                 foreach ($t in $spec.Audio) {
                     $audioTracks += [pscustomobject]@{
                         Source  = 'copy'
@@ -589,7 +589,7 @@ while ($didAny) {
                 $adur = Get-MediaDuration $info
                 for ($ti = 0; $ti -lt $spec.Audio.Count; $ti++) {
                     $t = $spec.Audio[$ti]
-                    if ($spec.Audio.Count -gt 1) { Write-CvInfoStep $jctx 'AUDIO' ("Pista {0}/{1} (idioma={2}{3})" -f ($ti + 1), $spec.Audio.Count, $t.Lang, $(if ($t.Default) { ', predeterminada' } else { '' })) }
+                    if ($spec.Audio.Count -gt 1) { Write-CvInfoStep $jctx 'AUDIO' (Get-CvText -Key 'cv.pista' -Values @(($ti + 1), $spec.Audio.Count, $t.Lang, $(if ($t.Default) { (Get-CvText -Key 'cv.pista.def') } else { '' }))) }
                     # Canales de origen (para que audioChannels no haga upmix: es un maximo) ya resueltos en el spec.
                     $outA = Invoke-AudioRun -Context $jctx -Prof $prof -File $f.FullName -Sync ([double]$t.Sync) -Index ([int]$t.Index) -Is51 ([bool]$t.Is51) -Duration $adur -SourceChannels ([int]$t.SourceChannels) -Pos $ti
                     if (-not $outA) { $audioOk = $false; break }
@@ -609,7 +609,7 @@ while ($didAny) {
             # Indice de la pista de video elegida (congelado en PREPARAR). Jobs antiguos sin el
             # campo -> -1, y tanto Invoke-VideoRun como Invoke-Multiplex caen a '0:v:0' como antes.
             $vIdx = if ($null -ne $job.video.index) { [int]$job.video.index } else { -1 }
-            if ($job.video.skip) { if ($jctx.Debug) { Write-CvLog 'VIDEO' '[SKIP] - se omite (copy)' } else { Write-Host ' - Video (copy)' } }
+            if ($job.video.skip) { if ($jctx.Debug) { Write-CvLog 'VIDEO' (Get-CvText -Key 'cv.video.skip') } else { Write-Host (Get-CvText -Key 'cv.video.copy') } }
             else { $videoOk = Invoke-VideoRun -Context $jctx -Prof $prof -File $f.FullName -Crop $job.video.crop -Resize $job.video.resize -Anim ([bool]$job.video.anim) -Index $vIdx -Hdr ([bool]$job.video.hdr) -Duration (Get-MediaDuration $info) -Fps (Get-CvOutputFps -Context $jctx -Info $info) }
 
             # Recodificar que ENGORDA (encode.video.keepOriginalIfBigger): si lo codificado ocupa mas
@@ -630,25 +630,25 @@ while ($didAny) {
                 $keep  = Get-CvVideoKeepPlan -EncodedBytes $encBytes -OriginalBytes ([long]$origV.Bytes) -Enabled $true `
                     -Ratio ([double]$jctx.KeepOriginalRatio) -Untouched ([bool]$img.Untouched)
                 if ([bool]$keep.UseOriginal) {
-                    Write-CvLog 'VIDEO' ("[ORIGINAL] - {0} (el tamano del original sale de: {1}); se usa la pista de video ORIGINAL" -f $keep.Reason, $origV.From)
-                    if (-not $jctx.Debug) { Write-Host ' - Video: recodificar no compensa, se usa el original' }
+                    Write-CvLog 'VIDEO' (Get-CvText -Key 'cv.orig.usa' -Values @($keep.Reason, $origV.From))
+                    if (-not $jctx.Debug) { Write-Host (Get-CvText -Key 'cv.orig.corto') }
                     if (Test-Path -LiteralPath $vTmpPath) { Remove-Item -Force -LiteralPath $vTmpPath -ErrorAction SilentlyContinue }
                     $vSkip     = $true
                     $vOriginal = $true
                 } elseif ([bool]$img.Untouched -and "$($keep.Reason)" -ne '') {
-                    Write-CvLog 'VIDEO' ("[ORIGINAL] - No se comprueba si compensa: {0}" -f $keep.Reason)
+                    Write-CvLog 'VIDEO' (Get-CvText -Key 'cv.orig.no' -Values @($keep.Reason))
                 }
             }
 
             # ---------- MULTIPLEX ----------
             if ((-not $audioOk) -or (-not $videoOk)) {
-                $failReason = if (-not $audioOk) { 'fallo en la codificacion de audio' } else { 'fallo en la codificacion de video' }
-                Write-CvLog 'WORKER' ("[ERR] - {0}; no se multiplexa" -f $failReason)
+                $failReason = if (-not $audioOk) { (Get-CvText -Key 'cv.audio.mal') } else { (Get-CvText -Key 'cv.video.mal') }
+                Write-CvLog 'WORKER' (Get-CvText -Key 'cv.nomux' -Values @($failReason))
                 $ok = $false
             } else {
                 if ($jctx.Debug) { Write-Host '' }
                 $ok = Invoke-Multiplex -Context $jctx -File $f.FullName -Info $info -VideoSkipped $vSkip -AudioSkipped ([bool]$job.audio.skip) -AudioTracks $audioTracks -Subtitles $job.subtitles -VideoIndex $vIdx -VideoFromSource $vOriginal
-                if (-not $ok) { $failReason = 'fallo en el multiplexado' }
+                if (-not $ok) { $failReason = (Get-CvText -Key 'cv.mux.mal') }
             }
             }   # fin del pipeline por etapas (else de la ejecucion unica)
 
@@ -670,10 +670,10 @@ while ($didAny) {
                     -EncodedBytes ([long](Get-Item -LiteralPath $outFin).Length) -OriginalBytes ([long]$f.Length) `
                     -Untouched ([bool]$imgFin.Untouched)
                 if ([bool]$keepFin.UseOriginal) {
-                    Write-CvLog 'VIDEO' ("[ORIGINAL] - La salida ha quedado mas grande que el original ({0}); se le cambia el video por el original" -f $keepFin.Reason)
+                    Write-CvLog 'VIDEO' (Get-CvText -Key 'cv.orig.fin' -Values @($keepFin.Reason))
                     $vOriginal = Invoke-CvVideoSwap -Context $jctx -File $f.FullName -OutFile $outFin -VideoIndex $vIdxOne
                 } elseif (-not [bool]$imgFin.Untouched) {
-                    Write-CvLog 'VIDEO' ("[ORIGINAL] - No se mira si compensa: la imagen cambia ({0}), asi que el original no sirve de sustituto" -f $imgFin.Reason)
+                    Write-CvLog 'VIDEO' (Get-CvText -Key 'cv.orig.imagen' -Values @($imgFin.Reason))
                 }
             }
 
@@ -682,13 +682,13 @@ while ($didAny) {
                 if ($ctx.CleanTemps) {
                     Remove-CvTemps -Context $ctx -Name $name
                 } elseif ($ctx.Debug) {
-                    Write-CvLog 'WORKER' '[TEMP] - Se conservan los temporales (existe marcador keep_temp)'
+                    Write-CvLog 'WORKER' (Get-CvText -Key 'cv.temp.keep')
                 }
                 Remove-CvJob -Context $ctx -Name $name
                 $sw.Stop()
                 if ($ctx.Debug) {
                     Write-Host ''
-                    Write-CvLog 'WORKER' ("[OK] - Finalizado: {0}" -f $name)
+                    Write-CvLog 'WORKER' (Get-CvText -Key 'cv.ok.fin' -Values @($name))
                 }
                 # Indice de audio de origen para el resumen: la pista predeterminada (1a de la lista);
                 # con varias pistas el resumen las enumera todas de la salida (no usa este indice).
@@ -702,9 +702,9 @@ while ($didAny) {
                     $qScore = Measure-CvQuality -Context $jctx -Source $f.FullName -Output $out -Metric $ctx.QualityCheck
                     if ($null -ne $qScore) {
                         $qTxt = if ($ctx.QualityCheck -eq 'vmaf') { "{0} / 100" -f (Format-CvNumber $qScore) } else { "{0}  (0-1, 1 = identico)" -f (Format-CvNumber $qScore) }
-                        Write-CvLog 'WORKER' ("[QC] - Calidad {0}: {1}" -f $ctx.QualityCheck.ToUpper(), $qTxt)
+                        Write-CvLog 'WORKER' (Get-CvText -Key 'cv.qc' -Values @($ctx.QualityCheck.ToUpper(), $qTxt))
                     } else {
-                        Write-CvLog 'WORKER' ("[QC] - No se pudo medir la calidad ({0}); se continua (vmaf requiere libvmaf en ffmpeg)." -f $ctx.QualityCheck)
+                        Write-CvLog 'WORKER' (Get-CvText -Key 'cv.qc.no' -Values @($ctx.QualityCheck))
                     }
                 }
                 $results[$name] = @{
@@ -714,7 +714,7 @@ while ($didAny) {
                     Elapsed  = $sw.Elapsed
                 }
             } else {
-                if (-not $failReason) { $failReason = 'no se genero la salida' }
+                if (-not $failReason) { $failReason = (Get-CvText -Key 'cv.nosalida') }
                 $results[$name] = @{
                     Status   = 'ERROR'
                     Reason   = $failReason
@@ -724,11 +724,11 @@ while ($didAny) {
                 $n = 1 + [int]$fail[$name]; $fail[$name] = $n
                 Write-Host ''
                 if ($n -ge $maxRetries) {
-                    Write-CvLog 'WORKER' ("[ERR] - Fallo {0} intento(s), se abandona: {1}" -f $n, $name)
+                    Write-CvLog 'WORKER' (Get-CvText -Key 'cv.abandona' -Values @($n, $name))
                     [void]$skip.Add($name)
                     # Advertencia destacada en consola (el detalle de ffmpeg, si lo hubo, ya se mostro
                     # y se guardo en logs\error_*.log via Show-CvToolError).
-                    Show-CvBox -Title 'ERROR - No se pudo convertir el archivo' -Lines @($name, ("Motivo: {0}" -f $failReason), 'Detalle en logs\ (error_*.log si fallo ffmpeg).') -Color Red
+                    Show-CvBox -Title (Get-CvText -Key 'cv.err.tit') -Lines @($name, (Get-CvText -Key 'cv.err.motivo' -Values @($failReason)), (Get-CvText -Key 'cv.err.detalle')) -Color Red
                 } else {
                     Write-CvLog 'WORKER' ("[ERR] - No se genero la salida (intento {0}/{1}), se reintentara: {2}" -f $n, $maxRetries, $name)
                 }
@@ -747,7 +747,7 @@ while ($didAny) {
             Write-CvLog 'WORKER' ("[ERR] - Error inesperado en {0}: {1}" -f $name, $emsg)
             if ($n -ge $maxRetries) {
                 [void]$skip.Add($name)
-                Show-CvBox -Title 'ERROR - No se pudo convertir el archivo' -Lines @($name, ("Motivo: error inesperado - {0}" -f $emsg)) -Color Red
+                Show-CvBox -Title (Get-CvText -Key 'cv.err.tit') -Lines @($name, (Get-CvText -Key 'cv.err.inesp' -Values @($emsg))) -Color Red
             }
         }
         finally {
@@ -761,10 +761,10 @@ while ($didAny) {
     }
     if ($stopped) { break }
 }
-if ($stopped) { Write-CvLog 'GLOBAL' '[STOP] - Parada pedida (Proceso\stop.flag): no se toman mas archivos.' }
+if ($stopped) { Write-CvLog 'GLOBAL' (Get-CvText -Key 'cv.stop') }
 
 Write-Host ''
-Write-CvLog 'GLOBAL' '[END] - No quedan archivos libres por procesar'
+Write-CvLog 'GLOBAL' (Get-CvText -Key 'cv.end')
 
 # Resumen de TODO lo que ha procesado este worker (OK/ERROR + motivo de los fallos). Solo si ha
 # tocado algun archivo (si no, no ensucia con un resumen vacio cuando no habia nada que hacer).
@@ -775,7 +775,7 @@ if ($done.Count -gt 0) {
     $nErr = $done.Count - $nOk
     Write-Host ''
     Write-Host $sepLine
-    Write-Host '  RESUMEN DEL WORKER'
+    Write-Host (Get-CvText -Key 'cv.res.tit')
     Write-Host $dashLine
     foreach ($n in $done) {
         $r    = $results[$n]
@@ -787,15 +787,15 @@ if ($done.Count -gt 0) {
         # Extra entre parentesis: tiempo (si OK) y nº de intentos (si hubo reintentos).
         $extra = @()
         if ($isOk -and $r.Elapsed) { $extra += (Format-CvEta $r.Elapsed.TotalSeconds) }
-        if ([int]$r.Attempts -gt 1) { $extra += ("{0} intentos" -f [int]$r.Attempts) }
+        if ([int]$r.Attempts -gt 1) { $extra += (Get-CvText -Key 'cv.res.intentos' -Values @([int]$r.Attempts)) }
         if ($extra.Count -gt 0) { Write-Host ('   (' + ($extra -join ', ') + ')') -ForegroundColor DarkGray -NoNewline }
         Write-Host ''
     }
     Write-Host $dashLine
     $totCol = if ($nErr -gt 0) { 'Yellow' } else { 'Green' }
-    Write-Host ("  Total: {0}    OK: {1}    Errores: {2}    Tiempo: {3}" -f $done.Count, $nOk, $nErr, (Format-CvEta $workerSw.Elapsed.TotalSeconds)) -ForegroundColor $totCol
+    Write-Host (Get-CvText -Key 'cv.res.total' -Values @($done.Count, $nOk, $nErr, (Format-CvEta $workerSw.Elapsed.TotalSeconds))) -ForegroundColor $totCol
     Write-Host $sepLine
-    if ($nErr -gt 0) { Write-CvLog 'GLOBAL' ("[AVISO] - {0} archivo(s) con error; revisa el resumen y logs\error_*.log" -f $nErr) }
+    if ($nErr -gt 0) { Write-CvLog 'GLOBAL' (Get-CvText -Key 'cv.res.conerror' -Values @($nErr)) }
 }
 
 # Reactivar el boton X al terminar.
@@ -815,5 +815,5 @@ if ($cvLog) { Stop-CvLog }
 # (no devuelve EOF), asi que la bateria colgaria tras el resumen del worker.
 if ((@($results.Keys).Count -gt 0) -and -not $Unattended -and -not [Console]::IsInputRedirected) {
     Write-Host ''
-    Read-Host 'ENTER para cerrar esta ventana' | Out-Null
+    Read-Host (Get-CvText -Key 'cv.enter.cerrar') | Out-Null
 }

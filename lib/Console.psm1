@@ -161,7 +161,7 @@ function Set-CvAppearance {
             Clear-Host   # repinta toda la ventana con el nuevo fondo
         } catch {}
     } elseif ($Context.ConsoleBackground -or $Context.ConsoleForeground) {
-        Write-Host ("AVISO: color de consola no valido. Validos: {0}" -f ($colors -join ', ')) -ForegroundColor Yellow
+        Write-Host (Get-CvText -Key 'con.color.malo' -Values @(($colors -join ', '))) -ForegroundColor Yellow
     }
 }
 
@@ -277,7 +277,7 @@ function Read-CvLine {
     # ENTER envia); $false = clasico (al expirar envia lo tecleado). Sin timeout (0), lectura bloqueante.
     $timed = ($TimeoutSec -gt 0)
     $dhint = if ($timed -and $TimeoutDefault -ne '') { "->{0}" -f $TimeoutDefault } else { '' }
-    $ptxt  = if ($timed) { "{0} [auto {1}s{2}]: " -f $Prompt, $TimeoutSec, $dhint } else { "{0}: " -f $Prompt }
+    $ptxt  = if ($timed) { Get-CvText -Key 'con.auto' -Values @($Prompt, $TimeoutSec, $dhint) } else { "{0}: " -f $Prompt }
     Write-Host $ptxt -NoNewline
     $sb = New-Object System.Text.StringBuilder
     $sw = if ($timed) { [System.Diagnostics.Stopwatch]::StartNew() } else { $null }
@@ -357,7 +357,7 @@ function Read-QOrNull {
     #>
     param([string]$Prompt, [object]$Default, [int]$Max = 0, [switch]$AllowCancel)
     $dtxt = if ($null -eq $Default) { '-' } else { "$Default" }
-    $hint = if ($AllowCancel) { '-1 = desactivar, C/ESC = cancelar' } else { '-1 = desactivar' }
+    $hint = if ($AllowCancel) { (Get-CvText -Key 'con.q.cancelar') } else { (Get-CvText -Key 'con.q.desactivar') }
     $pr   = "{0} [{1}] ({2})" -f $Prompt, $dtxt, $hint
     while ($true) {
         $v = (& { if ($AllowCancel) { Read-CvLine -Prompt $pr -AllowCancel } else { Read-Host $pr } }).Trim()
@@ -366,10 +366,10 @@ function Read-QOrNull {
         $n = 0
         if ([int]::TryParse($v, [ref]$n)) {
             if ($n -lt 0) { return $null }                                    # negativo = desactivar/auto
-            if ($Max -gt 0 -and $n -gt $Max) { Write-Host ("   Fuera de rango (0-{0})." -f $Max) -ForegroundColor Yellow; continue }
+            if ($Max -gt 0 -and $n -gt $Max) { Write-Host (Get-CvText -Key 'con.fuera' -Values @($Max)) -ForegroundColor Yellow; continue }
             return $n
         }
-        Write-Host '   Valor no valido (numero entero).' -ForegroundColor Yellow
+        Write-Host (Get-CvText -Key 'con.noentero') -ForegroundColor Yellow
     }
 }
 
@@ -381,8 +381,8 @@ function Read-YesNo {
         (Con stdin redirigido -tests- no hay ESC: cae a Read-Host.)
     #>
     param([string]$Prompt, [bool]$Default = $true, [switch]$AllowCancel)
-    $d = if ($Default) { 'S' } else { 'N' }
-    $opts = if ($AllowCancel) { 's/n, ESC=cancelar' } else { 's/n, ESC=no' }
+    $d = if ($Default) { (Get-CvText -Key 'con.si.letra') } else { (Get-CvText -Key 'con.no.letra') }
+    $opts = if ($AllowCancel) { (Get-CvText -Key 'con.sn.cancelar') } else { (Get-CvText -Key 'con.sn.no') }
     $pr = "{0} ({1}) [{2}]" -f $Prompt, $opts, $d
     $a = ''
     try { $a = (Read-CvLine -Prompt $pr -AllowCancel).Trim() }
@@ -392,6 +392,8 @@ function Read-YesNo {
     }
     if ($AllowCancel -and $a -match '^[Cc]$') { throw 'CV_CANCEL' }
     if ($a -eq '') { return $Default }
+    # La expresion acepta la S del castellano y la Y del ingles a la vez: asi vale sea cual sea
+    # el idioma de la pregunta, y quien tiene el habito de teclear 'y' no se queda fuera.
     return ($a -match '^[SsYy]')
 }
 
@@ -406,7 +408,7 @@ function Read-CvInt {
         $s = (Read-CvLine -Prompt $Prompt).Trim()
         if ($s -eq '' -and $AllowEmpty) { return $null }
         if ($s -match '^\d+$') { return [int]$s }
-        Write-Host '  Numero no valido.' -ForegroundColor Yellow
+        Write-Host (Get-CvText -Key 'con.nonumero') -ForegroundColor Yellow
     }
 }
 
@@ -445,7 +447,7 @@ function Show-Menu {
         # esta GPU no admite). Se pinta como BADGE amarillo (mismo helper que los avisos): resalta
         # aunque el texto de la consola ya sea amarillo (console.foreground) y sus caps evitan que el
         # fondo se "estire" hasta el margen al redimensionar la ventana.
-        $mk = '[NO SOPORTADO]'
+        $mk = (Get-CvText -Key 'con.nosoportado')
         $at = $line.IndexOf($mk)
         if ($at -ge 0) {
             Write-Host $line.Substring(0, $at) -NoNewline
@@ -584,7 +586,7 @@ function Select-FromList {
     }
     $defShown = if ($null -ne $defRet) { $defRet } else { "$defIdx" }
 
-    $mark    = '  <= por defecto'
+    $mark    = (Get-CvText -Key 'con.pordefecto')
     # La opcion 0 (none) tambien se elige con ESC (salvo -AllowCancel, donde ESC cancela). Se anota.
     $noneEsc = if ($AllowCancel) { '' } else { ' / ESC' }
     $noneNum = if ($NoneKey) { '0 / {0}{1}' -f $NoneKey.ToUpper(), $noneEsc } else { '0{0}' -f $noneEsc }
@@ -623,7 +625,7 @@ function Select-FromList {
     }
     if ($AllowCancel) {
         $lines += ''                                       # separacion antes de la linea de cancelar
-        $lines += $(if ($CancelLabel) { $CancelLabel } else { 'C / ESC. Cancelar' })
+        $lines += $(if ($CancelLabel) { $CancelLabel } else { (Get-CvText -Key 'con.cancelar') })
     }
     Show-Menu -Title $Title -Lines $lines
     # ESC captura si hay -AllowCancel (cancela) o si hay opcion 0 (vuelve = elige none). Si no hay
@@ -631,7 +633,7 @@ function Select-FromList {
     $escBack = $hasNone -and -not $AllowCancel
     $useLine = $AllowCancel -or $escBack
     while ($true) {
-        $pr = "   Opcion [{0}]" -f $defShown
+        $pr = Get-CvText -Key 'con.opcion' -Values @($defShown)
         $k = $null
         try { $k = (& { if ($useLine) { Read-CvLine -Prompt $pr -AllowCancel } else { Read-Host $pr } }).Trim() }
         catch {
@@ -652,7 +654,7 @@ function Select-FromList {
             if ($n -eq 0 -and $hasNone) { return $noneVal }
             if ($n -ge 1 -and $n -le $numbered.Count) { return $numbered[$n - 1].Val }
         }
-        Write-Host '   Opcion no valida.' -ForegroundColor Yellow
+        Write-Host (Get-CvText -Key 'con.opcion.mala') -ForegroundColor Yellow
     }
 }
 

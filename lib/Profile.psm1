@@ -1232,7 +1232,7 @@ function New-CustomProfile {
             # GPU no admite (sondeo cacheado): asi se ve en el propio menu, antes de seleccionar.
             $encList = @($encList | ForEach-Object {
                 $t = "$($_.Text)"
-                if (-not (Test-CvEncoderSupported -Context $Context -Encoder "$($_.Value)")) { $t = "$t [NO SOPORTADO]" }
+                if (-not (Test-CvEncoderSupported -Context $Context -Encoder "$($_.Value)")) { $t = ("{0} {1}" -f $t, (Get-CvText -Key 'con.nosoportado')) }
                 @{
                     Value = "$($_.Value)"
                     Text  = $t
@@ -1240,18 +1240,18 @@ function New-CustomProfile {
             })
             # 'auto' (solo builder/config, no es un encoder real de ffmpeg): mejor encoder del equipo,
             # se resuelve al PREPARAR (Resolve-CvProfileAuto). Se ofrece SIEMPRE (no depende de la GPU).
-            $encList = @(@{ Value = 'auto'; Text = 'auto (mejor encoder del equipo; se resuelve al preparar)' }) + $encList
+            $encList = @(@{ Value = 'auto'; Text = (Get-CvText -Key 'cp.autoenc') }) + $encList
             $encVals = @($encList | ForEach-Object { "$($_.Value)" })
             $encDefIdx = 1 + [array]::IndexOf($encVals, "$defEnc")
             if ($encDefIdx -le 0) { $encDefIdx = 1 + [array]::IndexOf($encVals, 'hevc_nvenc') }
             if ($encDefIdx -le 0) { $encDefIdx = 1 }
-            $enc = Select-FromList -Title 'ENCODER DE VIDEO:' -Options $encList -NoNone -DefaultIndex $encDefIdx `
-                -CancelLabel 'C / ESC. Cancelar (volver al menu de perfiles)' -AllowCancel
+            $enc = Select-FromList -Title (Get-CvText -Key 'cp.encoder') -Options $encList -NoNone -DefaultIndex $encDefIdx 
+                -CancelLabel (Get-CvText -Key 'cp.cancelar') -AllowCancel
 
             # Encoder por GPU no soportado por ESTA GPU (p. ej. av1_nvenc en GPUs anteriores a RTX 40):
             # se avisa y se vuelve al menu del encoder en vez de dejar que ffmpeg falle al codificar.
             if (-not (Test-CvEncoderSupported -Context $Context -Encoder "$enc")) {
-                Write-CvOptionUnsupported -Option "$enc" -Reason 'tu GPU no lo soporta' -Hint 'Elige otro encoder (para AV1, usa libsvtav1 por CPU).'
+                Write-CvOptionUnsupported -Option "$enc" -Reason (Get-CvText -Key 'cp.gpu.no') -Hint (Get-CvText -Key 'cp.gpu.otro')
                 continue
             }
 
@@ -1260,37 +1260,37 @@ function New-CustomProfile {
             if ($enc -ne 'copy') {
                 # Deteccion de bordes: No / Si (interactivo) / Auto (pre-escaneo decide). Semilla: $defDetect.
                 $dbDef = if ("$defDetect" -eq 'auto') { 'auto' } elseif ([bool]$defDetect) { '1' } else { '0' }
-                $dbSel = Select-FromList -Title 'DETECTAR BORDES NEGROS:' -Options @(
+                $dbSel = Select-FromList -Title (Get-CvText -Key 'cp.bordes') -Options @(
                     @{ Value = '0';    Text = 'No' }
                     @{ Value = '1';    Text = 'Si (interactivo, con preview)' }
-                    @{ Value = 'auto'; Text = 'Auto (pre-escaneo decide solo)' }
+                    @{ Value = 'auto'; Text = (Get-CvText -Key 'cat.border.auto') }
                 ) -NoNone -DefaultValue $dbDef -AllowCancel
                 $p.DetectBorder = switch ("$dbSel") { '1' { $true } 'auto' { 'auto' } default { $false } }
 
                 # Reescalado: No / Maximo ancho (reduce solo si es mayor) / Escalar siempre. Semilla: maxWidth/changeSize.
                 $rzDef = if ($defMaxW -gt 0) { 'max' } elseif ("$defChange" -ne '') { 'scale' } else { 'no' }
-                $rzSel = Select-FromList -Title 'REDIMENSIONAR VIDEO:' -Options @(
+                $rzSel = Select-FromList -Title (Get-CvText -Key 'cp.resize') -Options @(
                     @{ Value = 'no';    Text = 'No cambiar el tamano' }
-                    @{ Value = 'max';   Text = 'Maximo ancho (reduce solo si es mayor; no amplia)' }
-                    @{ Value = 'scale'; Text = 'Escalar siempre a un ancho (altura -2 automatica PAR)' }
+                    @{ Value = 'max';   Text = (Get-CvText -Key 'cp.resize.max') }
+                    @{ Value = 'scale'; Text = (Get-CvText -Key 'cp.resize.fijo') }
                 ) -NoNone -DefaultValue $rzDef -AllowCancel
                 if ($rzSel -eq 'max') {
                     $mwDef = if ($defMaxW -gt 0) { "$defMaxW" } else { '1920' }
-                    $mw = (Read-CvLine -Prompt ("   Ancho maximo en px [ENTER = {0}, C/ESC = cancelar]" -f $mwDef) -AllowCancel).Trim()
+                    $mw = (Read-CvLine -Prompt (Get-CvText -Key 'cp.ancho.q' -Values @($mwDef)) -AllowCancel).Trim()
                     if ($mw -match '^[Cc]$') { throw 'CV_CANCEL' }
                     if ($mw -eq '') { $mw = $mwDef }
                     if ($mw -match '^\d+$') { $p.MaxWidth = [int]$mw }
                 }
                 elseif ($rzSel -eq 'scale') {
                     $sizeLines = @(Get-CvVideoSizes | ForEach-Object { '{0,-24}- {1}' -f $_.Text, $_.Value })
-                    Show-Menu -Title 'TAMANOS DE REFERENCIA:' -Lines ($sizeLines + @(
+                    Show-Menu -Title (Get-CvText -Key 'cp.tamanos') -Lines ($sizeLines + @(
                         '',
-                        'Altura -2 = automatica manteniendo aspecto y PAR (ej 1920:-2)',
+                        (Get-CvText -Key 'cp.altura'),
                         '',
-                        'C / ESC. Cancelar'
+                        (Get-CvText -Key 'con.cancelar')
                     ))
                     $szDef = if ("$defChange" -ne '') { "$defChange" } else { '1920:-2' }
-                    $sz = (Read-CvLine -Prompt ("   Nuevo tamano (ej 1920:-2, 1280:720) [ENTER = {0}, C/ESC = cancelar]" -f $szDef) -AllowCancel).Trim()
+                    $sz = (Read-CvLine -Prompt (Get-CvText -Key 'cp.tamano.q' -Values @($szDef)) -AllowCancel).Trim()
                     if ($sz -match '^[Cc]$') { throw 'CV_CANCEL' }
                     if ($sz -eq '') { $sz = $szDef }
                     if ($sz -ne '') {
@@ -1300,7 +1300,7 @@ function New-CustomProfile {
                         if ($sz -notmatch ':') { $sz = "$sz`:-2" }
                         $p.ChangeSize = $sz
                         # Solo reducir: si el video es MAS pequeño que el destino, no ampliarlo (dejarlo tal cual).
-                        $nuSel = Select-FromList -Title '¿Solo reducir? (no ampliar videos mas pequeños que el destino):' -Options @(
+                        $nuSel = Select-FromList -Title (Get-CvText -Key 'cp.soloreducir') -Options @(
                             @{ Value = '1'; Text = 'Si (solo reduce; un 720p no sube a 1080p)' }
                             @{ Value = '0'; Text = 'No (escala siempre al destino, tambien amplia)' }
                         ) -NoNone -DefaultValue $(if ($defNoUp) { '1' } else { '0' }) -AllowCancel
@@ -1321,19 +1321,19 @@ function New-CustomProfile {
                     if ($profDefIdx -le 0) { $profDefIdx = 1 }
                     $lvlDefIdx  = 1 + [array]::IndexOf(@($lvlOpts  | ForEach-Object { "$($_.Value)" }), "$defLvl")
                     if ($lvlDefIdx -le 0) { $lvlDefIdx = 1 }
-                    $p.VideoProfile = Select-FromList -Title 'Perfil de codec:' -Options $profOpts -NoNone -DefaultIndex $profDefIdx -AllowCancel
+                    $p.VideoProfile = Select-FromList -Title (Get-CvText -Key 'cp.perfilcodec') -Options $profOpts -NoNone -DefaultIndex $profDefIdx -AllowCancel
                     # AV1 no usa level: si el codec no ofrece niveles, se salta el menu.
-                    if ($lvlOpts.Count -gt 0) { $p.VideoLevel = Select-FromList -Title 'Level (resolucion/fps orientativos):' -Options $lvlOpts -NoNone -DefaultIndex $lvlDefIdx -AllowCancel }
+                    if ($lvlOpts.Count -gt 0) { $p.VideoLevel = Select-FromList -Title (Get-CvText -Key 'cp.level') -Options $lvlOpts -NoNone -DefaultIndex $lvlDefIdx -AllowCancel }
                     else { $p.VideoLevel = '' }
 
                     # Control de tasa: CRF (CPU: libx264/libx265/libsvtav1) o qmin/qmax (NVENC). Defaults de config.
                     if ($enc -in (Get-CvCpuEncoders)) {
-                        $p.Crf = Read-QOrNull '   CRF (calidad 0-51)' $defCrf -Max 51 -AllowCancel
+                        $p.Crf = Read-QOrNull (Get-CvText -Key 'cp.crf.q') $defCrf -Max 51 -AllowCancel
                     } else {
-                        $p.Qmin = Read-QOrNull '   QP minimo (0-51)' $defQmin -Max 51 -AllowCancel
-                        $p.Qmax = Read-QOrNull '   QP maximo (0-51)' $defQmax -Max 51 -AllowCancel
+                        $p.Qmin = Read-QOrNull (Get-CvText -Key 'cp.qmin.q') $defQmin -Max 51 -AllowCancel
+                        $p.Qmax = Read-QOrNull (Get-CvText -Key 'cp.qmax.q') $defQmax -Max 51 -AllowCancel
                         # 2-pass NVENC (multipass): catalogo @{Value;Text;Position} ('off'=opcion 0). Default por valor.
-                        $p.Multipass = Select-FromList -Title '2-pass NVENC (multipass):' `
+                        $p.Multipass = Select-FromList -Title (Get-CvText -Key 'cp.multipass') 
                             -Options (Get-CvNvencMultipass) -DefaultValue "$defMp" -AllowCancel
                     }
                 }
@@ -1343,7 +1343,7 @@ function New-CustomProfile {
             # 2) bitrate (Get-CvAudioBitrates -Codec; FLAC/copy lo saltan), 3) frecuencia, 4) canales y
             # 5) downmix. Todo con semilla de customProfile (audioEncoder/Bitrate/Codec/Hz/Channels/Downmix*).
             $defOut = if ("$defAEnc" -eq 'copy') { 'copy' } else { "$defCodec" }
-            $out = Select-FromList -Title 'SALIDA DE AUDIO (codec):' -Options (Get-CvAudioCodecs) -NoNone -DefaultValue "$defOut" -AllowCancel
+            $out = Select-FromList -Title (Get-CvText -Key 'cp.audio') -Options (Get-CvAudioCodecs) -NoNone -DefaultValue "$defOut" -AllowCancel
             if ($out -eq 'copy') {
                 $p.AudioEncoder = 'copy'; $p.AudioCodec = 'aac'; $p.AudioBitrate = ''
             } else {
@@ -1352,9 +1352,9 @@ function New-CustomProfile {
                     $p.AudioBitrate = ''    # sin perdida: el bitrate no aplica
                 } else {
                     while ($true) {
-                        $ab = Select-FromList -Title 'BITRATE DE AUDIO:' -Options (Get-CvAudioBitrates -Codec $out) -NoNone -DefaultValue "$defAb" -AllowCancel
+                        $ab = Select-FromList -Title (Get-CvText -Key 'cp.bitrate') -Options (Get-CvAudioBitrates -Codec $out) -NoNone -DefaultValue "$defAb" -AllowCancel
                         if ($ab -eq 'custom') {
-                            $cb = (Read-CvLine -Prompt '   Bitrate (ej 96k, 448k)' -AllowCancel).Trim()
+                            $cb = (Read-CvLine -Prompt (Get-CvText -Key 'cp.bitrate.q') -AllowCancel).Trim()
                             if ($cb -match '^[Cc]$') { throw 'CV_CANCEL' }
                             if ($cb -ne '') { $p.AudioBitrate = $cb; break }
                             continue   # vacio -> volver a mostrar el menu
@@ -1363,26 +1363,26 @@ function New-CustomProfile {
                     }
                 }
                 # Frecuencia de salida (Hz). Semilla: customProfile.audioHz. (Opus se fuerza a 48000 al codificar.)
-                $hzIn = (Read-CvLine -Prompt ("   Frecuencia de audio en Hz [ENTER = {0}, C/ESC = cancelar]" -f $defHz) -AllowCancel).Trim()
+                $hzIn = (Read-CvLine -Prompt (Get-CvText -Key 'cp.hz.q' -Values @($defHz)) -AllowCancel).Trim()
                 if ($hzIn -match '^[Cc]$') { throw 'CV_CANCEL' }
                 $p.AudioHz = if ($hzIn -match '^\d+$') { [int]$hzIn } else { [int]$defHz }
                 # Canales de salida (MAXIMO, no upmix). Semilla: customProfile.audioChannels.
-                $chSel = Select-FromList -Title 'CANALES DE SALIDA:' -Options (Get-CvAudioChannels) -NoNone -DefaultValue "$defCh" -AllowCancel
+                $chSel = Select-FromList -Title (Get-CvText -Key 'cp.canales') -Options (Get-CvAudioChannels) -NoNone -DefaultValue "$defCh" -AllowCancel
                 $p.AudioChannels = [int]$chSel
                 # Downmix SOLO si la salida es estereo (2): solo entonces se baja 5.1 -> estereo. Semilla: customProfile.downmixMode.
                 if ([int]$chSel -eq 2) {
-                    $p.DownmixMode = Select-FromList -Title 'DOWNMIX 5.1 -> estereo:' -Options (Get-CvDownmixModes) -NoNone -DefaultValue "$defDm" -AllowCancel
+                    $p.DownmixMode = Select-FromList -Title (Get-CvText -Key 'cp.downmix') -Options (Get-CvDownmixModes) -NoNone -DefaultValue "$defDm" -AllowCancel
                     # Coeficientes del downmix 'dialogue' (voz reforzada). Semilla: customProfile.downmixCoeffs;
                     # se pueden personalizar (si no, se conserva la semilla).
                     if ("$($p.DownmixMode)" -eq 'dialogue') {
                         $p.DownmixCoeffs = @{ Center = $defCoeffs.Center; Front = $defCoeffs.Front; Surround = $defCoeffs.Surround }
-                        if (Read-YesNo ("   Coeficientes de downmix personalizados? (actual C={0}/F={1}/S={2})" -f $defCoeffs.Center, $defCoeffs.Front, $defCoeffs.Surround) $false -AllowCancel) {
+                        if (Read-YesNo (Get-CvText -Key 'cp.coefs.q' -Values @($defCoeffs.Center, $defCoeffs.Front, $defCoeffs.Surround)) $false -AllowCancel) {
                             $toNum = { param($s, $d) if ("$s" -match '^\d+([.,]\d+)?$') { [double]("$s" -replace ',', '.') } else { [double]$d } }
-                            $cC = (Read-CvLine -Prompt ("   Peso CENTRAL (dialogos) [ENTER = {0}]" -f $defCoeffs.Center) -AllowCancel).Trim()
+                            $cC = (Read-CvLine -Prompt (Get-CvText -Key 'cp.coef.c' -Values @($defCoeffs.Center)) -AllowCancel).Trim()
                             if ($cC -match '^[Cc]$') { throw 'CV_CANCEL' }
-                            $cF = (Read-CvLine -Prompt ("   Peso FRONTALES L/R [ENTER = {0}]" -f $defCoeffs.Front) -AllowCancel).Trim()
+                            $cF = (Read-CvLine -Prompt (Get-CvText -Key 'cp.coef.f' -Values @($defCoeffs.Front)) -AllowCancel).Trim()
                             if ($cF -match '^[Cc]$') { throw 'CV_CANCEL' }
-                            $cS = (Read-CvLine -Prompt ("   Peso SURROUNDS [ENTER = {0}]" -f $defCoeffs.Surround) -AllowCancel).Trim()
+                            $cS = (Read-CvLine -Prompt (Get-CvText -Key 'cp.coef.s' -Values @($defCoeffs.Surround)) -AllowCancel).Trim()
                             if ($cS -match '^[Cc]$') { throw 'CV_CANCEL' }
                             $p.DownmixCoeffs = @{
                                 Center   = (& $toNum $cC $defCoeffs.Center)
@@ -1396,14 +1396,14 @@ function New-CustomProfile {
 
             # Resumen y confirmacion.
             Write-ProfileInfo -Prof $p
-            $conf = (Read-CvLine -Prompt '[ENTER] usar esta config / [R] rehacer / [C o ESC] cancelar' -AllowCancel).Trim()
+            $conf = (Read-CvLine -Prompt (Get-CvText -Key 'cp.fin') -AllowCancel).Trim()
             if ($conf -match '^[Rr]$') { continue }
             # Guardarlo para REUTILIZARLO: hasta ahora un perfil hecho aqui moria con el job y habia
             # que reescribirlo a mano en config.json. Se ofrece con el default en NO, asi que quien
             # siempre ha pulsado ENTER no nota el cambio.
             if (-not $NoSaveOffer -and $Context -and "$($Context.ConfigPath)" -ne '') {
                 try {
-                    if (Read-YesNo '   Guardar este perfil en el config para reutilizarlo?' $false) {
+                    if (Read-YesNo (Get-CvText -Key 'cp.guardar.q') $false) {
                         [void](Save-CvProfileInteractive -Prof $p -Path "$($Context.ConfigPath)")
                     }
                 } catch {
@@ -1473,27 +1473,27 @@ function Select-Profile {
     foreach ($it in $extraItems) { $extraLines += ((& $marca $it.Num) + (& $numFmt $it.Num $it.Label)) }
 
     $menuLines = @($baseLines)
-    if ($extraLines.Count) { $menuLines += @('', '-- Perfiles de config.json --') + $extraLines }
+    if ($extraLines.Count) { $menuLines += @('', (Get-CvText -Key 'cp.deconfig')) + $extraLines }
     # OJO con los parentesis: dentro de un @(...) la COMA ata mas que el '+', asi que
     # `'', '  ' + $texto` no es una linea con sangria, son DOS elementos ('' y '  ') mas el texto
     # suelto. Cada concatenacion va entera entre parentesis.
     $menuLines += @(
         '',
-        ('  ' + ('{0}. Custom (configuracion personalizada)' -f ('0'.PadLeft($numW)))),
-        ((& $marca 'A') + ('{0}. Auto  (mejor encoder de este equipo: GPU si puede, si no CPU)' -f ('A'.PadLeft($numW)))),
+        ('  ' + (Get-CvText -Key 'cp.op.custom' -Values @(('0'.PadLeft($numW))))),
+        ((& $marca 'A') + (Get-CvText -Key 'cp.op.auto' -Values @(('A'.PadLeft($numW))))),
         '',
-        ('  ' + ('{0}. Salir' -f ('X'.PadLeft($numW)))),
+        ('  ' + (Get-CvText -Key 'cp.op.salir' -Values @(('X'.PadLeft($numW))))),
         '',
-        '  (* = predeterminado, se elige con ENTER; se cambia en setup > Perfiles)'
+        (Get-CvText -Key 'cp.marcado')
     )
 
     $show = $true
     while ($true) {
         if ($show) {
-            Show-Menu -Title 'USAR PERFIL:' -Lines $menuLines
+            Show-Menu -Title (Get-CvText -Key 'cp.usarperfil') -Lines $menuLines
             $show = $false
         }
-        $sel = (Read-Host '[GLOBAL] [PROFILE] - OPCION NUMERO (ENTER = el marcado con *, A = auto, X = salir)').Trim()
+        $sel = (Read-Host (Get-CvText -Key 'cp.opcion.q')).Trim()
         if ($sel -eq '') { $sel = "$defKey" }                      # ENTER = el predeterminado
         if ($sel -match '^[Xx]$') { return $null }                 # salir
         if ($sel -eq '0') {
@@ -1515,7 +1515,7 @@ function Select-Profile {
             # Perfil (de serie o de config.json) con encoder por GPU que ESTA GPU no soporta: se
             # avisa y se vuelve al menu, en vez de dejar que ffmpeg falle luego al codificar.
             if (-not (Test-CvEncoderSupported -Context $Context -Encoder "$($chosen.VideoEncoder)")) {
-                Write-CvOptionUnsupported -Option "$($chosen.VideoEncoder)" -Reason 'el perfil lo usa y tu GPU no lo soporta' -Hint 'Elige otro perfil (para AV1, uno con libsvtav1 por CPU).'
+                Write-CvOptionUnsupported -Option "$($chosen.VideoEncoder)" -Reason (Get-CvText -Key 'cp.gpu.usa') -Hint 'Elige otro perfil (para AV1, uno con libsvtav1 por CPU).'
                 continue
             }
             return $chosen

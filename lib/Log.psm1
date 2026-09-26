@@ -64,7 +64,11 @@ function Write-CvLog {
     #>
     param([string]$Tag = 'GLOBAL', [string]$Message = '', [int]$Indent = 0)
     $pad = ' ' * $Indent
-    if ($Message -match '\[(ERR|AVISO|WARN|NO SOPORTADO)\]') {
+    # El marcador de 'no soportado' se saca del RECURSO: es texto de interfaz y cambia con el
+    # idioma, asi que buscarlo escrito a mano aqui dejaria los avisos sin resaltar en ingles.
+    # Los niveles ([ERR]/[AVISO]/[WARN]) NO se traducen: son marcas del log, para buscarlas.
+    $marcaNS = [regex]::Escape((Get-CvText -Key 'con.nosoportado'))
+    if ($Message -match ('\[(ERR|AVISO|WARN)\]|' + $marcaNS)) {
         # Quitar los corchetes de TODOS los tokens iniciales, no solo del primero: "[AVISO] - x"
         # -> "AVISO - x", y tambien "[FFMPEG] - [ERR] - x" -> "FFMPEG - ERR - x" (el nivel puede
         # no ser el primer token). El padding del bloque lo aportan los espacios de abajo.

@@ -39,7 +39,7 @@ function Get-CvSetupStatusText {
     $L.Add('Estado de las herramientas:')
     foreach ($t in (Get-CvSetupToolStatus -Context $Context)) {
         if (-not $t.Supported) {
-            $L.Add(("  {0} {1,-10} [NO SOPORTADO en {2}]    por defecto: {3}" -f (Get-CvMark $false), $t.Name, $t.Platform, $t.Selected))
+            $L.Add((Get-CvText -Key 'setup.tool.no' -Values @((Get-CvMark $false), $t.Name, $t.Platform, $t.Selected)))
             continue
         }
         $instTxt = if (@($t.Installed).Count) { (@($t.Installed) -join ', ') } else { 'ninguna' }

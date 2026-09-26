@@ -57,26 +57,26 @@ $ctx  = $sess.Context
 # 1) Entrada
 if (-not $Path) { $Path = Select-CvSrtFile -Dir "$($ctx.Original)" }
 $Path = "$Path".Trim('"').Trim()
-if (-not (Test-Path -LiteralPath $Path)) { Write-CvLog 'SUB' ("[ERROR] - No existe: {0}" -f $Path) -Indent 3; exit 1 }
+if (-not (Test-Path -LiteralPath $Path)) { Write-CvLog 'SUB' (Get-CvText -Key 'fss.noexiste' -Values @($Path)) -Indent 3; exit 1 }
 $Path = (Resolve-Path -LiteralPath $Path).Path
 
 $text  = Read-CvSrtText -Path $Path
 $blocks = @(Get-CvSrtBlocks $text)
-Write-CvLog 'SUB' ("[INFO] - {0}  ({1} cues)" -f (Split-Path -Leaf $Path), $blocks.Count) -Indent 3
+Write-CvLog 'SUB' (Get-CvText -Key 'fss.info' -Values @((Split-Path -Leaf $Path), $blocks.Count)) -Indent 3
 
 # 2) Correcciones de texto
-if (Read-YesNo '  Corregir OCR (l->I en mayusculas) y espaciado (signos invertidos)?' $true) {
+if (Read-YesNo (Get-CvText -Key 'fss.ocr') $true) {
     $r1 = Repair-CvSrtOcr $text
     $r2 = Repair-CvSrtSpacing $r1.Text
     $text = $r2.Text
-    Write-CvLog 'SUB' ("OCR corregidos: {0}   espaciados: {1}" -f $r1.Changed.Count, $r2.Count) -Indent 5
+    Write-CvLog 'SUB' (Get-CvText -Key 'fss.ocr.n' -Values @($r1.Changed.Count, $r2.Count)) -Indent 5
     $r1.Changed | Select-Object -Unique | ForEach-Object { Write-CvLog 'SUB' "$_" -Indent 7 }
-    if (Read-YesNo '  Anadir sustituciones manuales (buscar=reemplazar)?' $false) {
+    if (Read-YesNo (Get-CvText -Key 'fss.sust') $false) {
         while ($true) {
-            $r = (Read-CvLine -Prompt '    buscar=reemplazar (vacio para terminar)').Trim()
+            $r = (Read-CvLine -Prompt (Get-CvText -Key 'fss.sust.pide')).Trim()
             if ($r -eq '') { break }
             $i = $r.IndexOf('=')
-            if ($i -lt 1) { Write-CvLog 'SUB' '[AVISO] - formato invalido (usa buscar=reemplazar)' -Indent 5; continue }
+            if ($i -lt 1) { Write-CvLog 'SUB' (Get-CvText -Key 'fss.sust.mal') -Indent 5; continue }
             $find = $r.Substring(0, $i); $repl = $r.Substring($i + 1)
             $c = ([regex]::Matches($text, [regex]::Escape($find))).Count
             $text = $text.Replace($find, $repl)
@@ -90,57 +90,57 @@ if (Read-YesNo '  Corregir OCR (l->I en mayusculas) y espaciado (signos invertid
 $syncOpts = @(
     @{
         Value = 'no'
-        Text  = 'no sincronizar'
+        Text  = (Get-CvText -Key 'fss.no')
     }
     @{
         Value = 'offset'
-        Text  = 'offset constante (adelanta/retrasa todo por igual)'
+        Text  = (Get-CvText -Key 'fss.offset')
     }
     @{
         Value = 'lineal'
-        Text  = 'lineal por 2 cues (escala + desplazamiento)'
+        Text  = (Get-CvText -Key 'fss.lineal')
     }
     @{
         Value = 'tramos'
-        Text  = 'por tramos (deja intactas las cues anteriores a N)'
+        Text  = (Get-CvText -Key 'fss.tramos')
     }
     @{
         Value = 'extremos'
-        Text  = 'por extremos (primer y ultimo subtitulo)'
+        Text  = (Get-CvText -Key 'fss.extremos')
     }
 )
-$mode = Select-FromList -Title 'Sincronizacion' -Options $syncOpts -DefaultValue 'no' -NoNone
+$mode = Select-FromList -Title (Get-CvText -Key 'fss.tit') -Options $syncOpts -DefaultValue 'no' -NoNone
 
 $A = 1.0; $B = 0.0; $fromCue = 1; $doSync = $true
 switch ($mode) {
     'offset' {
-        $off = Read-CvSrtTime -Prompt '    Offset en segundos (+ retrasa, - adelanta), o vacio para darlo por cue' -AllowEmpty
-        if ($null -eq $off) { $s1 = 0.0; $r1 = 0.0; Read-CvSrtAnchor $blocks 'Referencia' ([ref]$s1) ([ref]$r1); $off = $r1 - $s1 }
+        $off = Read-CvSrtTime -Prompt (Get-CvText -Key 'fss.offset.q') -AllowEmpty
+        if ($null -eq $off) { $s1 = 0.0; $r1 = 0.0; Read-CvSrtAnchor $blocks (Get-CvText -Key 'fss.ref') ([ref]$s1) ([ref]$r1); $off = $r1 - $s1 }
         $A = 1.0; $B = $off
-        Write-CvLog 'SUB' ("offset = {0:N3}s" -f $B) -Indent 5
+        Write-CvLog 'SUB' (Get-CvText -Key 'fss.offset.r' -Values @($B)) -Indent 5
     }
     'lineal' {
         $s1 = 0.0; $r1 = 0.0; $s2 = 0.0; $r2 = 0.0; $fit = $null
-        Read-CvSrtAnchor $blocks 'Punto 1' ([ref]$s1) ([ref]$r1)
+        Read-CvSrtAnchor $blocks (Get-CvText -Key 'fss.p1') ([ref]$s1) ([ref]$r1)
         while ($null -eq $fit) {
-            Read-CvSrtAnchor $blocks 'Punto 2' ([ref]$s2) ([ref]$r2)
+            Read-CvSrtAnchor $blocks (Get-CvText -Key 'fss.p2') ([ref]$s2) ([ref]$r2)
             $fit = Get-CvSrtLinearFit $s1 $r1 $s2 $r2
-            if ($null -eq $fit) { Write-CvLog 'SUB' '[AVISO] - el punto 2 debe ser una cue distinta del punto 1' -Indent 5 }
+            if ($null -eq $fit) { Write-CvLog 'SUB' (Get-CvText -Key 'fss.p2.mal') -Indent 5 }
         }
         $A = $fit.A; $B = $fit.B
         Write-CvLog 'SUB' ("A={0:N6}  B={1:N3}s" -f $A, $B) -Indent 5
     }
     'tramos' {
-        $fromCue = Read-CvInt -Prompt '    Aplicar DESDE el cue numero (las anteriores no se tocan)'
+        $fromCue = Read-CvInt -Prompt (Get-CvText -Key 'fss.desde')
         $s1 = 0.0; $r1 = 0.0; $s2 = 0.0; $r2 = 0.0; $fit = $null
-        Read-CvSrtAnchor $blocks 'Punto 1 (>= ese cue)' ([ref]$s1) ([ref]$r1)
+        Read-CvSrtAnchor $blocks (Get-CvText -Key 'fss.p1.desde') ([ref]$s1) ([ref]$r1)
         while ($null -eq $fit) {
-            Read-CvSrtAnchor $blocks 'Punto 2 (>= ese cue)' ([ref]$s2) ([ref]$r2)
+            Read-CvSrtAnchor $blocks (Get-CvText -Key 'fss.p2.desde') ([ref]$s2) ([ref]$r2)
             $fit = Get-CvSrtLinearFit $s1 $r1 $s2 $r2
-            if ($null -eq $fit) { Write-CvLog 'SUB' '[AVISO] - el punto 2 debe ser una cue distinta del punto 1' -Indent 5 }
+            if ($null -eq $fit) { Write-CvLog 'SUB' (Get-CvText -Key 'fss.p2.mal') -Indent 5 }
         }
         $A = $fit.A; $B = $fit.B
-        Write-CvLog 'SUB' ("desde cue {0}:  A={1:N6}  B={2:N3}s" -f $fromCue, $A, $B) -Indent 5
+        Write-CvLog 'SUB' (Get-CvText -Key 'fss.desde.r' -Values @($fromCue, $A, $B)) -Indent 5
     }
     'extremos' {
         # Por extremos: primer subtitulo A AJUSTAR (ENTER = el 1o, o empiezas en otro si el principio
@@ -149,19 +149,19 @@ switch ($mode) {
         $srtL = Get-CvSrtCueStart -Blocks $blocks -Num $lastNum
         $fit = $null
         while ($null -eq $fit) {
-            $sc = Read-CvSrtCueNum -Blocks $blocks -Prompt '    Desde que subtitulo ajustar? (numero, ENTER = el primero)' -AllowEmpty
+            $sc = Read-CvSrtCueNum -Blocks $blocks -Prompt (Get-CvText -Key 'fss.desdecual') -AllowEmpty
             $fromCue = if ($null -eq $sc) { Get-CvSrtBlockNum $blocks[0] } else { $sc }
             $srtF = Get-CvSrtCueStart -Blocks $blocks -Num $fromCue
-            Write-CvLog 'SUB' ("PRIMER subtitulo a ajustar (cue {0}) esta en {1}" -f $fromCue, (ConvertTo-CvSrtStamp $srtF)) -Indent 5
-            $realF = Read-CvSrtTime -Prompt '      tiempo REAL de esa cue (h:mm:ss.mmm)'
-            Write-CvLog 'SUB' ("ULTIMO subtitulo (cue {0}) esta en {1}" -f $lastNum, (ConvertTo-CvSrtStamp $srtL)) -Indent 5
-            $realL = Read-CvSrtTime -Prompt '      tiempo REAL del ULTIMO subtitulo (h:mm:ss.mmm)'
+            Write-CvLog 'SUB' (Get-CvText -Key 'fss.primero' -Values @($fromCue, (ConvertTo-CvSrtStamp $srtF))) -Indent 5
+            $realF = Read-CvSrtTime -Prompt (Get-CvText -Key 'fss.primero.q')
+            Write-CvLog 'SUB' (Get-CvText -Key 'fss.ultimo' -Values @($lastNum, (ConvertTo-CvSrtStamp $srtL))) -Indent 5
+            $realL = Read-CvSrtTime -Prompt (Get-CvText -Key 'fss.ultimo.q')
             $fit = Get-CvSrtLinearFit $srtF $realF $srtL $realL
-            if ($null -eq $fit) { Write-CvLog 'SUB' '[AVISO] - la cue de inicio no puede ser la ultima; elige una anterior' -Indent 5 }
+            if ($null -eq $fit) { Write-CvLog 'SUB' (Get-CvText -Key 'fss.inicio.mal') -Indent 5 }
         }
         $A = $fit.A; $B = $fit.B
-        if ($fromCue -gt 1) { Write-CvLog 'SUB' ("cues 1..{0} sin tocar" -f ($fromCue - 1)) -Indent 5 }
-        Write-CvLog 'SUB' ("desde cue {0}:  A={1:N6}  B={2:N3}s" -f $fromCue, $A, $B) -Indent 5
+        if ($fromCue -gt 1) { Write-CvLog 'SUB' (Get-CvText -Key 'fss.sintocar' -Values @(($fromCue - 1))) -Indent 5 }
+        Write-CvLog 'SUB' (Get-CvText -Key 'fss.desde.r' -Values @($fromCue, $A, $B)) -Indent 5
     }
     default { $doSync = $false }
 }
@@ -173,29 +173,28 @@ $base = [IO.Path]::GetFileNameWithoutExtension($Path)
 $rb = @(Get-CvSrtBlocks $text)
 if ($rb.Count -gt 0) {
     $fN = Get-CvSrtBlockNum $rb[0]; $lN = Get-CvSrtBlockNum $rb[-1]
-    Write-CvLog 'SUB' ("Resultado: {0} cues. primera (cue {1}) {2}  ...  ultima (cue {3}) {4}" -f `
-        $rb.Count, $fN, (ConvertTo-CvSrtStamp (Get-CvSrtCueStart $rb $fN)), $lN, (ConvertTo-CvSrtStamp (Get-CvSrtCueStart $rb $lN))) -Indent 3
+    Write-CvLog 'SUB' (Get-CvText -Key 'fss.resultado' -Values @($rb.Count, $fN, (ConvertTo-CvSrtStamp (Get-CvSrtCueStart $rb $fN)), $lN, (ConvertTo-CvSrtStamp (Get-CvSrtCueStart $rb $lN)))) -Indent 3
 }
 
 # 5) Previsualizacion opcional con ffplay (si hay un video con el mismo nombre junto al .srt)
 $video = Find-CvSrtVideo -Dir $dir -SrtPath $Path
 if ($video) {
-    while (Read-YesNo ("  Previsualizar con el video ({0})?" -f (Split-Path -Leaf $video)) $false) {
+    while (Read-YesNo (Get-CvText -Key 'fss.preview' -Values @((Split-Path -Leaf $video))) $false) {
         $tmp = Join-Path ([IO.Path]::GetTempPath()) 'fixsyncsub-preview.srt'
         Write-CvSrtText -Text $text -Path $tmp -Bom $false
         $esc = ($tmp -replace '\\', '/') -replace ':', '\:'   # escape para el filtro subtitles de ffmpeg
-        try { Invoke-CvPreview -Context $ctx -File $video -ExtraArgs @('-vf', "subtitles='$esc'") -Label 'PREVIEW SUBTITULO' }
-        catch { Write-CvLog 'SUB' ("[AVISO] - no se pudo previsualizar: {0}" -f $_.Exception.Message) -Indent 3 }
+        try { Invoke-CvPreview -Context $ctx -File $video -ExtraArgs @('-vf', "subtitles='$esc'") -Label (Get-CvText -Key 'fss.preview.t') }
+        catch { Write-CvLog 'SUB' (Get-CvText -Key 'fss.preview.no' -Values @($_.Exception.Message)) -Indent 3 }
         Remove-Item -LiteralPath $tmp -ErrorAction SilentlyContinue
     }
 }
 
 # 6) Guardar
-if (-not (Read-YesNo '  Guardar el resultado?' $true)) { Write-CvLog 'SUB' 'Cancelado: no se ha guardado nada.' -Indent 3; exit 0 }
+if (-not (Read-YesNo (Get-CvText -Key 'fss.guardar') $true)) { Write-CvLog 'SUB' (Get-CvText -Key 'fss.nogurdado') -Indent 3; exit 0 }
 $defOut = Join-Path $dir ("{0}.es.srt" -f $base)
-$outPath = (Read-CvLine -Prompt ("  Guardar en [{0}]" -f $defOut)).Trim()
+$outPath = (Read-CvLine -Prompt (Get-CvText -Key 'fss.guardar.en' -Values @($defOut))).Trim()
 if ($outPath -eq '') { $outPath = $defOut } else { $outPath = $outPath.Trim('"') }
-$withBom = Read-YesNo '  Escribir con BOM (UTF-8)?' $false
+$withBom = Read-YesNo (Get-CvText -Key 'fss.bom') $false
 Write-CvSrtText -Text $text -Path $outPath -Bom $withBom
 
 Write-Host ''

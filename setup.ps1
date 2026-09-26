@@ -68,18 +68,18 @@ $logFile = $sess.LogFile
 function Wait-Setup {
     # Pausa antes de limpiar la pantalla, para poder leer la info mostrada.
     Write-Host ''
-    Read-Host 'ENTER para continuar' | Out-Null
+    Read-Host (Get-CvText -Key 'cli.enter') | Out-Null
 }
 
 function Reset-Config {
     # UI del reset; la logica vive en Reset-CvConfig (modulo Config).
     Clear-Host
-    Write-CvLog 'SETUP' ("Restablecer {0} a los valores por defecto." -f $CfgName)
-    Write-CvLog 'SETUP' 'Se CONSERVA el catalogo de herramientas (downloads). El resto vuelve al valor por defecto.'
-    $a = (Read-Host 'Continuar? (s/N)').Trim()
-    if ($a -notmatch '^[SsYy]') { Write-CvLog 'SETUP' 'Cancelado.'; Wait-Setup; return }
+    Write-CvLog 'SETUP' (Get-CvText -Key 'cli.reset.1' -Values @($CfgName))
+    Write-CvLog 'SETUP' (Get-CvText -Key 'cli.reset.2')
+    $a = (Read-Host (Get-CvText -Key 'cli.continuar')).Trim()
+    if ($a -notmatch '^[SsYy]') { Write-CvLog 'SETUP' (Get-CvText -Key 'cli.cancelado'); Wait-Setup; return }
     [void](Reset-CvConfig -Path $CfgPath)
-    Write-CvLog 'SETUP' ("[OK] - {0} restablecido (copia en {0}.bak; catalogo de herramientas conservado)." -f $CfgName)
+    Write-CvLog 'SETUP' (Get-CvText -Key 'cli.reset.ok' -Values @($CfgName))
     Wait-Setup
 }
 
@@ -87,15 +87,15 @@ function Clear-Logs {
     # UI de limpieza de logs; la logica vive en Log.psm1 (excluye el log de la sesion actual).
     Clear-Host
     $files = @(Get-CvLogFiles -Context $ctx -ExceptPath $logFile)
-    if ($files.Count -eq 0) { Write-CvLog 'SETUP' 'No hay logs que eliminar.'; Wait-Setup; return }
-    Write-CvLog 'SETUP' ("Se eliminaran {0} log(s):" -f $files.Count)
+    if ($files.Count -eq 0) { Write-CvLog 'SETUP' (Get-CvText -Key 'cli.logs.no'); Wait-Setup; return }
+    Write-CvLog 'SETUP' (Get-CvText -Key 'cli.logs.n' -Values @($files.Count))
     $files | ForEach-Object { Write-Host ("   - {0}" -f $_.Name) }
-    $a = (Read-Host 'Confirmar borrado? (s/N)').Trim()
+    $a = (Read-Host (Get-CvText -Key 'cli.confirmar')).Trim()
     if ($a -match '^[SsYy]') {
         [void](Remove-CvLogFiles -Files $files)
-        Write-CvLog 'SETUP' '[OK] - Logs eliminados.'
+        Write-CvLog 'SETUP' (Get-CvText -Key 'cli.logs.ok')
     } else {
-        Write-CvLog 'SETUP' 'Cancelado.'
+        Write-CvLog 'SETUP' (Get-CvText -Key 'cli.cancelado')
     }
     Wait-Setup
 }
@@ -109,21 +109,21 @@ function Invoke-TestSuite {
     param([Parameter(Mandatory)][string]$Suite)
     Clear-Host
     $s = Get-CvSetupTestSuite -Suite $Suite
-    if (-not $s) { Write-CvLog 'SETUP' ("Bateria desconocida: {0}" -f $Suite); Wait-Setup; return }
+    if (-not $s) { Write-CvLog 'SETUP' (Get-CvText -Key 'cli.suite.no' -Values @($Suite)); Wait-Setup; return }
     $script = Join-Path $Root $s.File
     if (-not (Test-Path -LiteralPath $script)) {
-        Write-CvLog 'SETUP' ("No se encuentra {0} (no incluido en este paquete)." -f $s.File)
+        Write-CvLog 'SETUP' (Get-CvText -Key 'cli.suite.falta' -Values @($s.File))
         Wait-Setup; return
     }
-    Write-CvLog 'SETUP' ("Ejecutando {0}{1}..." -f $s.Text, $(if ($s.Info) { " ($($s.Info))" } else { '' }))
+    Write-CvLog 'SETUP' (Get-CvText -Key 'cli.suite.run' -Values @($s.Text, $(if ($s.Info) { " ($($s.Info))" } else { '' })))
     Write-Host ''
     # -Sta: powershell.exe ya lo es por defecto, pero se fija explicito porque la bateria de setup
     # abre ventanas WinForms (que exigen STA) y sin el se saltaria esos casos.
     & powershell -NoProfile -ExecutionPolicy Bypass -Sta -File $script
     $code = $LASTEXITCODE
     Write-Host ''
-    if ($code -eq 0) { Write-CvLog 'SETUP' ("[OK] - {0}: todo en verde." -f $s.Text) }
-    else             { Write-CvLog 'SETUP' ("[ERROR] - {0}: fallo algun caso (codigo {1})." -f $s.Text, $code) }
+    if ($code -eq 0) { Write-CvLog 'SETUP' (Get-CvText -Key 'cli.suite.ok' -Values @($s.Text)) }
+    else             { Write-CvLog 'SETUP' (Get-CvText -Key 'cli.suite.mal' -Values @($s.Text, $code)) }
     Wait-Setup
 }
 
@@ -148,39 +148,39 @@ function Set-AppSelected {
 function Show-Dirs {
     # Checklist de las carpetas de trabajo (Get-CvSetupDirStatus crea las que falten).
     Write-Host ''
-    Write-CvLog 'SETUP' 'Directorios de trabajo:'
+    Write-CvLog 'SETUP' (Get-CvText -Key 'cli.dirs')
     foreach ($d in (Get-CvSetupDirStatus -Context $ctx)) {
-        $extra = if ($d.Created) { ' (creada)' } else { '' }
+        $extra = if ($d.Created) { (Get-CvText -Key 'cli.dirs.creada') } else { '' }
         Write-CvLog 'SETUP' ("  {0,-12} {1}{2}" -f $d.Name, (Get-CvMark $d.Ok), $extra)
     }
 }
 
 function Show-Status {
     Write-Host ''
-    Write-CvLog 'SETUP' 'Estado de las herramientas:'
+    Write-CvLog 'SETUP' (Get-CvText -Key 'cli.estado')
     foreach ($t in (Get-CvSetupToolStatus -Context $ctx)) {
         if (-not $t.Supported) {
-            Write-CvLog 'SETUP' ("  {0} {1,-10} [NO SOPORTADO en {2}]    por defecto: {3}" -f (Get-CvMark $false), $t.Name, $t.Platform, $t.Selected)
+            Write-CvLog 'SETUP' (Get-CvText -Key 'cli.tool.no' -Values @((Get-CvMark $false), $t.Name, $t.Platform, $t.Selected))
             continue
         }
         $instTxt = if (@($t.Installed).Count) { (@($t.Installed) -join ', ') } else { 'ninguna' }
         # Marca: la version 'selected' (la que usa el conversor) esta instalada?
-        Write-CvLog 'SETUP' ("  {0} {1,-10} [{2}] instaladas: {3,-22} por defecto (config): {4}" -f (Get-CvMark $t.SelectedOk), $t.Name, $t.Platform, $instTxt, $t.Selected)
+        Write-CvLog 'SETUP' (Get-CvText -Key 'cli.tool.ok' -Values @((Get-CvMark $t.SelectedOk), $t.Name, $t.Platform, $instTxt, $t.Selected))
     }
     Write-Host ''
 }
 function Invoke-InstallApp {
     param([string]$Name, [string]$Version, [switch]$Ask, [switch]$SetDefault)
-    if ([string]::IsNullOrWhiteSpace($Version)) { Write-CvLog 'SETUP' ("[ERR] - {0}: version no indicada" -f $Name); return $false }
+    if ([string]::IsNullOrWhiteSpace($Version)) { Write-CvLog 'SETUP' (Get-CvText -Key 'cli.inst.sinver' -Values @($Name)); return $false }
     if (-not (Test-CvToolSupported -Context $ctx -Name $Name)) {
-        Write-CvLog 'SETUP' ("[NO SOPORTADO] - {0} no tiene build para la plataforma de este equipo ({1})." -f $Name, (Get-CvPlatform))
+        Write-CvLog 'SETUP' (Get-CvText -Key 'cli.inst.nosop' -Values @($Name, (Get-CvPlatform)))
         return $false
     }
-    Write-CvLog 'SETUP' ("Reinstalando {0} {1} (se borra esa version y se descarga)..." -f $Name, $Version)
+    Write-CvLog 'SETUP' (Get-CvText -Key 'cli.inst.reinst' -Values @($Name, $Version))
     Remove-AppVersion -Name $Name -Version $Version
     $nvOk = $true
     $ok = Install-CvTool -Context $ctx -Name $Name -Version $Version -NvencOk ([ref]$nvOk)
-    if (-not $ok) { Write-CvLog 'SETUP' ("[ERR] - Fallo la instalacion de {0} {1}" -f $Name, $Version); return $false }
+    if (-not $ok) { Write-CvLog 'SETUP' (Get-CvText -Key 'cli.inst.fallo' -Values @($Name, $Version)); return $false }
 
     # FALLBACK NVENC (solo ffmpeg): si la version instalada NO es compatible con NVENC en este equipo,
     # se PRUEBAN las versiones ANTERIORES del catalogo (mas nueva -> mas antigua), instalando (descarga
@@ -191,15 +191,15 @@ function Invoke-InstallApp {
         $cands = @(Get-CvNvencFallbackCandidates -Failed $Version -Available $catalog)
         $chosen = ''
         foreach ($cv in $cands) {
-            Write-CvLog 'SETUP' ("[GPU] - {0} {1} no es compatible; probando la version anterior {2}..." -f $Name, $Version, $cv)
+            Write-CvLog 'SETUP' (Get-CvText -Key 'cli.inst.gpu' -Values @($Name, $Version, $cv))
             $cvOk = $false
             if ((Install-CvTool -Context $ctx -Name $Name -Version $cv -NvencOk ([ref]$cvOk)) -and $cvOk) { $chosen = $cv; break }
         }
         if ($chosen) {
-            if (Set-AppSelected -Name $Name -Version $chosen) { Write-CvLog 'SETUP' ("[OK] - {0}: {1}.selected = {2} (compatible con NVENC)" -f $CfgName, $Name, $chosen) }
-            else { Write-CvLog 'SETUP' ("[AVISO] - No se pudo actualizar {0}." -f $CfgName) }
+            if (Set-AppSelected -Name $Name -Version $chosen) { Write-CvLog 'SETUP' (Get-CvText -Key 'cli.inst.sel' -Values @($CfgName, $Name, $chosen)) }
+            else { Write-CvLog 'SETUP' (Get-CvText -Key 'cli.inst.noupd' -Values @($CfgName)) }
         } else {
-            Write-CvLog 'SETUP' ("[AVISO] - Ninguna version anterior de {0} es compatible con NVENC en este equipo. Usa un perfil CPU (libx264/libx265) o actualiza el driver NVIDIA." -f $Name)
+            Write-CvLog 'SETUP' (Get-CvText -Key 'cli.inst.nogpu' -Values @($Name))
         }
         return $true
     }
@@ -210,12 +210,12 @@ function Invoke-InstallApp {
     if (($Ask -or $SetDefault) -and "$((Get-App $Name).selected)" -ne $Version) {
         $yes = $true
         if ($Ask -and -not $SetDefault) {
-            $a = (Read-Host ("   Fijar {0} como version por defecto de {1} en {2}? (S/n)" -f $Version, $Name, $CfgName)).Trim()
+            $a = (Read-Host (Get-CvText -Key 'cli.inst.fijar' -Values @($Version, $Name, $CfgName))).Trim()
             $yes = ($a -eq '' -or $a -match '^[SsYy]')
         }
         if ($yes) {
-            if (Set-AppSelected -Name $Name -Version $Version) { Write-CvLog 'SETUP' ("[OK] - {0}: {1}.selected = {2}" -f $CfgName, $Name, $Version) }
-            else { Write-CvLog 'SETUP' ("[AVISO] - No se pudo actualizar {0}." -f $CfgName) }
+            if (Set-AppSelected -Name $Name -Version $Version) { Write-CvLog 'SETUP' (Get-CvText -Key 'cli.inst.sel2' -Values @($CfgName, $Name, $Version)) }
+            else { Write-CvLog 'SETUP' (Get-CvText -Key 'cli.inst.noupd' -Values @($CfgName)) }
         }
     }
     return $true
@@ -227,15 +227,15 @@ function Invoke-InstallApp {
 function Show-NvencCheck {
     Clear-Host
     if (-not (Test-CvToolSupported -Context $ctx -Name 'ffmpeg')) {
-        Write-CvLog 'SETUP' ("ffmpeg [NO SOPORTADO] en esta plataforma ({0})." -f (Get-CvPlatform))
+        Write-CvLog 'SETUP' (Get-CvText -Key 'cli.nvenc.nosop' -Values @((Get-CvPlatform)))
         Wait-Setup; return
     }
     $vers = @(Get-CvInstalledVersions -Context $ctx -Name 'ffmpeg')
     if ($vers.Count -eq 0) {
-        Write-CvLog 'SETUP' 'No hay ninguna version de ffmpeg instalada. Instala una primero.'
+        Write-CvLog 'SETUP' (Get-CvText -Key 'cli.nvenc.sinff')
         Wait-Setup; return
     }
-    Write-CvLog 'SETUP' ("Comprobando NVENC (codificacion por GPU) en {0} version(es) de ffmpeg..." -f $vers.Count)
+    Write-CvLog 'SETUP' (Get-CvText -Key 'cli.nvenc.comp' -Values @($vers.Count))
     foreach ($v in $vers) {
         Write-Host ''
         [void](Write-CvNvencReport -Context $ctx -Version $v -Tag ("[FFMPEG {0}]" -f $v))
@@ -248,18 +248,18 @@ function Show-NvencCheck {
 # ===========================================================================
 function Clear-Proceso {
     param([ValidateSet('jobs','locks','temps','all')][string]$What)
-    if (-not (Test-Path -LiteralPath $ctx.Proceso)) { Write-CvLog 'SETUP' 'No existe la carpeta Proceso.'; return }
+    if (-not (Test-Path -LiteralPath $ctx.Proceso)) { Write-CvLog 'SETUP' (Get-CvText -Key 'cli.proc.no'); return }
     $files = @(Get-CvSetupCleanTargets -Context $ctx -What $What)   # que se borraria (aun sin borrar)
-    if ($files.Count -eq 0) { Write-CvLog 'SETUP' 'Nada que eliminar.'; return }
+    if ($files.Count -eq 0) { Write-CvLog 'SETUP' (Get-CvText -Key 'cli.proc.nada'); return }
 
-    Write-CvLog 'SETUP' ("Se eliminaran {0} fichero(s):" -f $files.Count)
+    Write-CvLog 'SETUP' (Get-CvText -Key 'cli.proc.n' -Values @($files.Count))
     $files | ForEach-Object { Write-Host ("   - {0}" -f $_.Name) }
-    $a = (Read-Host 'Confirmar borrado? (s/N)').Trim()
+    $a = (Read-Host (Get-CvText -Key 'cli.confirmar')).Trim()
     if ($a -match '^[SsYy]') {
         [void](Remove-CvSetupFiles -Files $files)
-        Write-CvLog 'SETUP' '[OK] - Eliminados.'
+        Write-CvLog 'SETUP' (Get-CvText -Key 'cli.proc.ok')
     } else {
-        Write-CvLog 'SETUP' 'Cancelado.'
+        Write-CvLog 'SETUP' (Get-CvText -Key 'cli.cancelado')
     }
 }
 
@@ -278,20 +278,20 @@ function Show-ProfilesMenu {
     while ($true) {
         Clear-Host
         $rows = @(Get-CvConfigProfileRows -Path $CfgPath)
-        Write-CvLog 'SETUP' ("Perfiles propios de {0}: {1}   (los de serie salen al duplicar)" -f $CfgName, $rows.Count)
+        Write-CvLog 'SETUP' (Get-CvText -Key 'cli.prof.propios' -Values @($CfgName, $rows.Count))
         if ($rows.Count -gt 0) {
             Write-Host ''
             foreach ($r in $rows) { Write-Host ("   - {0}   ({1})" -f $r.Label, $r.Text) -ForegroundColor Gray }
         }
         Write-Host ''
-        Write-CvLog 'SETUP' ("Predeterminado (sale marcado al preparar): {0}" -f (Get-CvConfigDefaultProfile -Path $CfgPath))
+        Write-CvLog 'SETUP' (Get-CvText -Key 'cli.prof.def' -Values @((Get-CvConfigDefaultProfile -Path $CfgPath)))
         Write-Host ''
-        $optNew = 'Crear un perfil nuevo'
-        $optDup = 'Duplicar un perfil (propio o de serie)'
-        $optDef = 'Elegir el perfil predeterminado'
+        $optNew = (Get-CvText -Key 'cli.prof.nuevo')
+        $optDup = (Get-CvText -Key 'cli.prof.dup')
+        $optDef = (Get-CvText -Key 'cli.prof.elegirdef')
         $opts = @($optNew, $optDup, $optDef)
-        if ($rows.Count -gt 0) { $opts += @('Editar un perfil', 'Borrar un perfil') }
-        $sel = Select-FromList -Title 'PERFILES' -Options $opts -NoneLabel 'volver' -DefaultIndex 0
+        if ($rows.Count -gt 0) { $opts += @((Get-CvText -Key 'cli.prof.editar'), (Get-CvText -Key 'cli.prof.borrar')) }
+        $sel = Select-FromList -Title (Get-CvText -Key 'cli.prof.tit') -Options $opts -NoneLabel (Get-CvText -Key 'cli.volver') -DefaultIndex 0
         if ($sel -eq '') { return }
 
         # Para editar / duplicar / borrar, primero cual. Al duplicar entran tambien los de serie.
@@ -302,7 +302,7 @@ function Show-ProfilesMenu {
             if ($sel -eq $optDef) {
                 $pool = @($pool) + @([pscustomobject]@{
                     Label = 'Auto'
-                    Text  = 'mejor encoder de este equipo (GPU si puede, si no CPU)'
+                    Text  = (Get-CvText -Key 'cli.prof.auto')
                     Kind  = 'auto'
                     Prof  = $null
                 })
@@ -317,7 +317,7 @@ function Show-ProfilesMenu {
                     Text  = ("{0}   [{1}]   ({2})" -f $pool[$i].Label, "$($pool[$i].Kind)", $pool[$i].Text)
                 }
             }
-            $pick = Select-FromList -Title 'QUE PERFIL:' -Options $ops -NoneLabel 'volver' -DefaultIndex 1
+            $pick = Select-FromList -Title (Get-CvText -Key 'cli.prof.cual') -Options $ops -NoneLabel (Get-CvText -Key 'cli.volver') -DefaultIndex 1
             if ("$pick" -eq '') { continue }
             $target = $pool[[int]"$pick"]
             if ($null -eq $target) { continue }
@@ -325,41 +325,41 @@ function Show-ProfilesMenu {
 
         Clear-Host
         switch ($sel) {
-            'Crear un perfil nuevo' {
+            (Get-CvText -Key 'cli.prof.nuevo') {
                 # -NoSaveOffer: aqui el guardado no se OFRECE, se da por hecho (a eso se ha venido),
                 # asi que lo pide este menu y no el builder.
                 $p = New-CustomProfile -Context $ctx -NoSaveOffer
                 if ($null -ne $p) { [void](Save-CvProfileInteractive -Prof $p -Path $CfgPath) }
-                else { Write-CvLog 'SETUP' 'Cancelado.' }
+                else { Write-CvLog 'SETUP' (Get-CvText -Key 'cli.cancelado') }
                 Wait-Setup
             }
-            'Editar un perfil' {
+            (Get-CvText -Key 'cli.prof.editar') {
                 Write-CvLog 'SETUP' ("Editando '{0}'. Se parte de sus valores; al terminar se guarda con el mismo nombre." -f $target.Label)
                 $p = New-CustomProfile -Context $ctx -Seed $target.Prof -NoSaveOffer
                 if ($null -ne $p) { [void](Save-CvProfileInteractive -Prof $p -Path $CfgPath -Current $target.Label) }
-                else { Write-CvLog 'SETUP' 'Cancelado.' }
+                else { Write-CvLog 'SETUP' (Get-CvText -Key 'cli.cancelado') }
                 Wait-Setup
             }
-            'Duplicar un perfil (propio o de serie)' {
+            (Get-CvText -Key 'cli.prof.dup') {
                 Write-CvLog 'SETUP' ("Duplicando '{0}'. Cambia lo que quieras y dale OTRO nombre." -f $target.Label)
                 $p = New-CustomProfile -Context $ctx -Seed $target.Prof -NoSaveOffer
                 if ($null -ne $p) { [void](Save-CvProfileInteractive -Prof $p -Path $CfgPath) }
-                else { Write-CvLog 'SETUP' 'Cancelado.' }
+                else { Write-CvLog 'SETUP' (Get-CvText -Key 'cli.cancelado') }
                 Wait-Setup
             }
-            'Elegir el perfil predeterminado' {
+            (Get-CvText -Key 'cli.prof.elegirdef') {
                 $r = Save-CvConfigDefaultProfile -Path $CfgPath -Label "$($target.Label)"
                 if ($r.Ok) { Write-CvLog 'SETUP' ("[OK] - Predeterminado: '{0}' (sale marcado al preparar, y con ENTER en el menu)." -f $target.Label) }
-                else { Write-CvLog 'SETUP' ("[ERROR] - {0}" -f $r.Error) }
+                else { Write-CvLog 'SETUP' (Get-CvText -Key 'cli.error' -Values @($r.Error)) }
                 Wait-Setup
             }
-            'Borrar un perfil' {
+            (Get-CvText -Key 'cli.prof.borrar') {
                 if (Read-YesNo ("Borrar el perfil '{0}'?" -f $target.Label) $false) {
                     $r = Remove-CvConfigProfile -Path $CfgPath -Label $target.Label
                     if ($r.Ok) { Write-CvLog 'SETUP' ("[OK] - Borrado '{0}' (quedan {1})." -f $target.Label, $r.Count) }
-                    else { Write-CvLog 'SETUP' ("[ERROR] - {0}" -f $r.Error) }
+                    else { Write-CvLog 'SETUP' (Get-CvText -Key 'cli.error' -Values @($r.Error)) }
                 } else {
-                    Write-CvLog 'SETUP' 'Cancelado.'
+                    Write-CvLog 'SETUP' (Get-CvText -Key 'cli.cancelado')
                 }
                 Wait-Setup
             }
@@ -373,19 +373,21 @@ function Show-CleanMenu {
     $njob  = @(Get-ChildItem -LiteralPath $proc -Filter '*.job.json' -File -ErrorAction SilentlyContinue).Count
     $nlock = @(Get-ChildItem -LiteralPath $proc -Filter '*.lock'     -File -ErrorAction SilentlyContinue).Count
     $opts = @(
-        ("Eliminar jobs (*.job.json)        [{0}]" -f $njob),
-        ("Eliminar bloqueos y estado de workers [{0}]" -f $nlock),
-        'Eliminar temporales (mkv / m4a / wav)',
-        'Eliminar TODO (jobs + bloqueos + temporales)'
+        (Get-CvText -Key 'cli.clean.jobs' -Values @($njob)),
+        (Get-CvText -Key 'cli.clean.locks' -Values @($nlock)),
+        (Get-CvText -Key 'cli.clean.temps'),
+        (Get-CvText -Key 'cli.clean.all')
     )
-    $sel = Select-FromList -Title ("Limpiar carpeta Proceso") -Options $opts -NoneLabel 'volver' -DefaultIndex 0
+    $sel = Select-FromList -Title ((Get-CvText -Key 'cli.clean.tit')) -Options $opts -NoneLabel (Get-CvText -Key 'cli.volver') -DefaultIndex 0
     if ($sel -eq '') { return }
     Clear-Host
-    switch -Wildcard ($sel) {
-        'Eliminar jobs*'       { Clear-Proceso -What 'jobs' }
-        'Eliminar bloqueos*'   { Clear-Proceso -What 'locks' }
-        'Eliminar temporales*' { Clear-Proceso -What 'temps' }
-        'Eliminar TODO*'       { Clear-Proceso -What 'all' }
+    # Por POSICION, no por el texto: la etiqueta esta traducida y compararla romperia el menu
+    # en cuanto el idioma no fuese castellano.
+    switch ([array]::IndexOf($opts, $sel)) {
+        0 { Clear-Proceso -What 'jobs' }
+        1 { Clear-Proceso -What 'locks' }
+        2 { Clear-Proceso -What 'temps' }
+        3 { Clear-Proceso -What 'all' }
     }
     Wait-Setup
 }
@@ -401,7 +403,7 @@ function Show-MaintenanceMenu {
     #>
     while ($true) {
         Clear-Host
-        Write-CvLog 'SETUP' 'Mantenimiento: esto es lo que hay ahora mismo'
+        Write-CvLog 'SETUP' (Get-CvText -Key 'cli.mant.tit')
         Write-Host ''
         Write-Host (Get-CvSetupMaintenanceText -Context $ctx -CurrentLog $logFile) -ForegroundColor Gray
         Write-Host ''
@@ -410,24 +412,24 @@ function Show-MaintenanceMenu {
         foreach ($i in $items) {
             $ops += @{
                 Value = "$($i.Key)"
-                Text  = ("{0,4}  {1}{2}" -f $i.Count, $i.Text, $(if ([bool]$i.Warn) { '   (OJO: habria que volver a preparar)' } else { '' }))
+                Text  = ("{0,4}  {1}{2}" -f $i.Count, $i.Text, $(if ([bool]$i.Warn) { (Get-CvText -Key 'cli.mant.ojo') } else { '' }))
             }
         }
         $ops += @{
             Value = 'ALL'
-            Text  = ("{0,4}  TODO lo de arriba" -f (($items | Measure-Object -Property Count -Sum).Sum))
+            Text  = (Get-CvText -Key 'cli.mant.todo' -Values @((($items | Measure-Object -Property Count -Sum).Sum)))
         }
-        $sel = Select-FromList -Title 'MANTENIMIENTO (que borrar)' -Options $ops -NoneLabel 'volver' -DefaultIndex 0
+        $sel = Select-FromList -Title (Get-CvText -Key 'cli.mant.menu') -Options $ops -NoneLabel (Get-CvText -Key 'cli.volver') -DefaultIndex 0
         if ("$sel" -eq '') { return }
         $claves = $(if ("$sel" -eq 'ALL') { @($items | ForEach-Object { "$($_.Key)" }) } else { @("$sel") })
         $cuantos = 0
         foreach ($i in $items) { if ($claves -contains "$($i.Key)") { $cuantos += [int]$i.Count } }
-        if ($cuantos -le 0) { Write-CvLog 'SETUP' 'No hay nada que borrar ahi.'; Wait-Setup; continue }
+        if ($cuantos -le 0) { Write-CvLog 'SETUP' (Get-CvText -Key 'cli.mant.nada'); Wait-Setup; continue }
         Clear-Host
-        if (-not (Read-YesNo ("Borrar {0} elemento(s)?" -f $cuantos) $false)) { Write-CvLog 'SETUP' 'Cancelado.'; Wait-Setup; continue }
+        if (-not (Read-YesNo (Get-CvText -Key 'cli.mant.confirm' -Values @($cuantos)) $false)) { Write-CvLog 'SETUP' (Get-CvText -Key 'cli.cancelado'); Wait-Setup; continue }
         foreach ($r in @(Invoke-CvSetupMaintenance -Context $ctx -Keys $claves -CurrentLog $logFile)) {
-            if ($r.Ok) { Write-CvLog 'SETUP' ("[OK] - {0}: {1} borrado(s)." -f $r.Text, $r.Removed) }
-            else { Write-CvLog 'SETUP' ("[ERROR] - {0}: {1}" -f $r.Text, $r.Error) }
+            if ($r.Ok) { Write-CvLog 'SETUP' (Get-CvText -Key 'cli.mant.ok' -Values @($r.Text, $r.Removed)) }
+            else { Write-CvLog 'SETUP' (Get-CvText -Key 'cli.mant.mal' -Values @($r.Text, $r.Error)) }
         }
         Wait-Setup
     }
@@ -441,30 +443,30 @@ function Show-Identity {
     Write-Host ''
     $id = Get-CvSetupIdentity -Context $ctx -CfgPath $CfgPath -IsAlt (-not [string]::IsNullOrWhiteSpace($Config))
     Write-CvLog 'SETUP' ("{0} v{1}" -f $id.AppName, $id.Version)
-    $tag = if ($id.IsAlt) { 'alterno (-Config)' } else { 'por defecto' }
+    $tag = if ($id.IsAlt) { (Get-CvText -Key 'cli.cfg.alterno') } else { (Get-CvText -Key 'cli.cfg.defecto') }
     $ex  = if ($id.Exists) { '' } else { '  (no existe -> se usan los valores por defecto)' }
-    Write-CvLog 'SETUP' ("  config: {0}  [{1}]{2}" -f $id.CfgPath, $tag, $ex)
+    Write-CvLog 'SETUP' (Get-CvText -Key 'cli.cfg.linea' -Values @($id.CfgPath, $tag, $ex))
 }
 
 function Show-ProcesoStatus {
     # Estado de Proceso\: jobs pendientes, bloqueos (marcando caducados/huerfanos) y temporales.
     Write-Host ''
-    Write-CvLog 'SETUP' 'Carpeta Proceso:'
+    Write-CvLog 'SETUP' (Get-CvText -Key 'cli.proc.tit')
     $p = Get-CvSetupProcesoStatus -Context $ctx
-    if (-not $p.Exists) { Write-CvLog 'SETUP' '  (no existe)'; return }
-    $staleTxt = if ($p.Stale -gt 0) { "  ({0} caducado(s)/huerfano(s))" -f $p.Stale } else { '' }
-    Write-CvLog 'SETUP' ("  jobs pendientes : {0}" -f $p.Jobs)
-    Write-CvLog 'SETUP' ("  bloqueos        : {0}{1}" -f $p.Locks, $staleTxt)
-    Write-CvLog 'SETUP' ("  temporales      : {0}" -f $p.Temps)
+    if (-not $p.Exists) { Write-CvLog 'SETUP' (Get-CvText -Key 'cli.proc.noexiste'); return }
+    $staleTxt = if ($p.Stale -gt 0) { (Get-CvText -Key 'cli.proc.caducados') -f $p.Stale } else { '' }
+    Write-CvLog 'SETUP' (Get-CvText -Key 'cli.proc.jobs' -Values @($p.Jobs))
+    Write-CvLog 'SETUP' (Get-CvText -Key 'cli.proc.locks' -Values @($p.Locks, $staleTxt))
+    Write-CvLog 'SETUP' (Get-CvText -Key 'cli.proc.temps' -Values @($p.Temps))
 }
 
 function Show-Pending {
     # Trabajo pendiente: videos de entrada en Original\ vs convertidos (*_fix.<ext>) en Convertido\.
     Write-Host ''
-    Write-CvLog 'SETUP' 'Trabajo:'
+    Write-CvLog 'SETUP' (Get-CvText -Key 'cli.trabajo')
     $w = Get-CvSetupWorkStatus -Context $ctx
-    Write-CvLog 'SETUP' ("  en Original     : {0} video(s) de entrada" -f $w.Input)
-    Write-CvLog 'SETUP' ("  en Convertido   : {0} convertido(s)" -f $w.Converted)
+    Write-CvLog 'SETUP' (Get-CvText -Key 'cli.trabajo.in' -Values @($w.Input))
+    Write-CvLog 'SETUP' (Get-CvText -Key 'cli.trabajo.out' -Values @($w.Converted))
 }
 
 function Show-GpuStatus {
@@ -472,19 +474,19 @@ function Show-GpuStatus {
     # la cache de config.json (gpuCache) y se resetea la memoizacion para SONDEAR cada encoder ahora
     # (util para ver el estado real, p. ej. tras cambiar de GPU o de driver).
     Write-Host ''
-    Write-CvLog 'SETUP' 'Codecs por GPU (NVENC) soportados por esta grafica (comprobacion en vivo):'
+    Write-CvLog 'SETUP' (Get-CvText -Key 'cli.gpu.tit')
     $g = Get-CvSetupGpuStatus -Context $ctx               # sondea en vivo (ignora la cache gpuCache)
-    Write-CvLog 'SETUP' ("  GPU: {0}" -f $(if ($g.Gpu) { $g.Gpu } else { '(no detectada)' }))
+    Write-CvLog 'SETUP' (Get-CvText -Key 'cli.gpu.gpu' -Values @($(if ($g.Gpu) { $g.Gpu } else { (Get-CvText -Key 'cli.gpu.nodet') })))
     if (-not $g.Ready) {
-        Write-CvLog 'SETUP' '  [AVISO] - ffmpeg no instalado: no se puede comprobar. Instala ffmpeg primero.'
+        Write-CvLog 'SETUP' (Get-CvText -Key 'cli.gpu.sinff')
         return
     }
     foreach ($e in $g.Encoders) {
         # Solo el estado va como BADGE con fondo de color (verde=soportado, rojo=no); el resto de la
         # linea en color normal. Write-CvBadge escribe inline (el llamador cierra el salto de linea).
         Write-Host ("[SETUP]   {0} {1,-12} " -f (Get-CvMark $e.Ok), $e.Name) -NoNewline
-        if ($e.Ok) { Write-CvBadge -Text 'soportado'    -Fg Black -Bg Green }
-        else       { Write-CvBadge -Text 'NO soportado' -Fg White -Bg Red }
+        if ($e.Ok) { Write-CvBadge -Text (Get-CvText -Key 'cli.gpu.si')    -Fg Black -Bg Green }
+        else       { Write-CvBadge -Text (Get-CvText -Key 'cli.gpu.no') -Fg White -Bg Red }
         Write-Host ''
     }
 }
@@ -492,7 +494,7 @@ function Show-GpuStatus {
 function Show-Estado {
     $sep = Get-CvSepLine
     Write-Host $sep
-    Write-Host 'ESTADO'
+    Write-Host (Get-CvText -Key 'cli.estado.tit')
     Write-Host $sep
     Show-Identity
     Show-Dirs
@@ -512,23 +514,23 @@ function Show-UseVersionMenu {
     # bajarla otra vez. La regla (solo versiones instaladas) vive en Set-CvSetupVersionInUse.
     Clear-Host
     $names = @(Get-AppNames)
-    $app = Select-FromList -Title 'USAR UNA VERSION YA INSTALADA (no se descarga nada)' -Options $names -NoneLabel 'volver' -DefaultIndex 1
+    $app = Select-FromList -Title (Get-CvText -Key 'cli.usarver.tit') -Options $names -NoneLabel (Get-CvText -Key 'cli.volver') -DefaultIndex 1
     if ($app -eq '') { return }
     Clear-Host
     $inst = @(Get-CvInstalledVersions -Context $ctx -Name $app)
     if ($inst.Count -eq 0) {
-        Write-CvLog 'SETUP' ("No hay ninguna version de {0} instalada; instala una primero." -f $app)
+        Write-CvLog 'SETUP' (Get-CvText -Key 'cli.usarver.no' -Values @($app))
         Wait-Setup; return
     }
     $cur  = "$((Get-App $app).selected)"
     $opts = @($inst | ForEach-Object { if ("$_" -eq $cur) { "{0}   (en uso)" -f $_ } else { "$_" } })
-    $v = Select-FromList -Title ("Version de {0} que se usara" -f $app) -Options $opts -NoneLabel 'volver' -DefaultIndex 1
+    $v = Select-FromList -Title (Get-CvText -Key 'cli.usarver.cual' -Values @($app)) -Options $opts -NoneLabel (Get-CvText -Key 'cli.volver') -DefaultIndex 1
     if ($v -eq '') { return }
     Clear-Host
     $ver = ("$v" -split '\s+')[0]
     $r = Set-CvSetupVersionInUse -Context $ctx -CfgPath $CfgPath -Name $app -Version $ver
-    if ($r.Ok) { Write-CvLog 'SETUP' ("[OK] - {0}: {1} (no se ha descargado nada)." -f $CfgName, $r.Reason) }
-    else       { Write-CvLog 'SETUP' ("[ERR] - {0}" -f $r.Reason) }
+    if ($r.Ok) { Write-CvLog 'SETUP' (Get-CvText -Key 'cli.usarver.ok' -Values @($CfgName, $r.Reason)) }
+    else       { Write-CvLog 'SETUP' (Get-CvText -Key 'cli.err' -Values @($r.Reason)) }
     Wait-Setup
 }
 
@@ -537,23 +539,26 @@ function Show-ToolsMenu {
         Clear-Host
         $names = @(Get-AppNames)
         $opts  = @()
-        foreach ($n in $names) { $opts += ("Instalar / cambiar version de {0}" -f $n) }
-        $opts += 'Usar una version YA instalada (sin descargar)'
-        $opts += 'Reinstalar TODO (version por defecto de cada app)'
-        $sel = Select-FromList -Title 'HERRAMIENTAS (instalar / versiones)' -Options $opts -NoneLabel 'volver' -DefaultIndex 1
+        foreach ($n in $names) { $opts += (Get-CvText -Key 'cli.herr.instalar' -Values @($n)) }
+        $opts += (Get-CvText -Key 'cli.herr.usar')
+        $opts += (Get-CvText -Key 'cli.herr.reinst')
+        $sel = Select-FromList -Title (Get-CvText -Key 'cli.herr.tit') -Options $opts -NoneLabel (Get-CvText -Key 'cli.volver') -DefaultIndex 1
         if ($sel -eq '') { return }
         Clear-Host
-        if ($sel -like 'Usar una version*') {
+        # Igual que en el menu de limpieza: manda la POSICION. Las dos ultimas opciones son
+        # 'usar una ya instalada' y 'reinstalar todo'; las de delante, una por herramienta.
+        $iSel = [array]::IndexOf($opts, $sel)
+        if ($iSel -eq $names.Count) {
             Show-UseVersionMenu
             continue
         }
-        if ($sel -like 'Reinstalar TODO*') {
+        if ($iSel -eq ($names.Count + 1)) {
             foreach ($n in $names) { Invoke-InstallApp -Name $n -Version "$((Get-App $n).selected)" | Out-Null }
         } else {
-            $name = $names[[array]::IndexOf($opts, $sel)]
+            $name = $names[$iSel]
             $ver  = Select-CvToolVersion -Context $ctx -Name $name
             if ($ver -ne '') { Invoke-InstallApp -Name $name -Version $ver -Ask | Out-Null }
-            else { Write-CvLog 'SETUP' 'Cancelado.' }
+            else { Write-CvLog 'SETUP' (Get-CvText -Key 'cli.cancelado') }
         }
         Wait-Setup
     }
@@ -566,7 +571,7 @@ if ($Task -ne '') {
     switch ($Task) {
         'install' {
             if ($App -eq '' -or $Version -eq '') {
-                Write-CvLog 'SETUP' '[ERR] - -Task install necesita -App y -Version.'
+                Write-CvLog 'SETUP' (Get-CvText -Key 'cli.task.falta')
             } else {
                 [void](Invoke-InstallApp -Name $App -Version $Version -SetDefault:$SetDefault)
             }
@@ -591,43 +596,43 @@ while (-not $exit) {
     $opts    = @()
     $headers = @{}
 
-    $headers[$opts.Count] = 'Herramientas'
-    $opts += 'Instalar / gestionar herramientas (ffmpeg, aacgain, mkvtoolnix...)'
+    $headers[$opts.Count] = (Get-CvText -Key 'cli.men.herr')
+    $opts += (Get-CvText -Key 'cli.men.herr.op')
 
-    $headers[$opts.Count] = 'Estado'
-    $opts += 'Ver estado (directorios y herramientas)'
+    $headers[$opts.Count] = (Get-CvText -Key 'cli.men.estado')
+    $opts += (Get-CvText -Key 'cli.men.estado.op')
 
-    $headers[$opts.Count] = 'Compatibilidad'
-    $opts += 'Comprobar compatibilidad GPU (NVENC de ffmpeg)'
+    $headers[$opts.Count] = (Get-CvText -Key 'cli.men.compat')
+    $opts += (Get-CvText -Key 'cli.men.gpu.op')
 
-    $headers[$opts.Count] = 'Pruebas'
+    $headers[$opts.Count] = (Get-CvText -Key 'cli.men.pruebas')
     # Una entrada por bateria del catalogo (fuente unica Get-CvSetupTestSuites, compartida con la GUI).
     $testOpts = @{}
     foreach ($s in (Get-CvSetupTestSuites)) {
-        $lbl = ("Ejecutar {0} ({1})" -f "$($s.Text)".ToLower(), $s.Info)
+        $lbl = (Get-CvText -Key 'cli.men.suite.op' -Values @("$($s.Text)".ToLower(), $s.Info))
         $testOpts[$lbl] = $s.Value
         $opts += $lbl
     }
 
-    $headers[$opts.Count] = 'Configuracion'
-    $optEditCfg  = ("Editar configuracion ({0})" -f $CfgName)
-    $optProfiles = ("Perfiles ({0} propios guardados; los de serie se pueden duplicar)" -f @(Get-CvConfigProfiles -Path $CfgPath).Count)
-    $optResetCfg = ("Restablecer {0} (valores por defecto)" -f $CfgName)
+    $headers[$opts.Count] = (Get-CvText -Key 'cli.men.config')
+    $optEditCfg  = (Get-CvText -Key 'cli.men.config.op' -Values @($CfgName))
+    $optProfiles = (Get-CvText -Key 'cli.men.perfiles.op' -Values @(@(Get-CvConfigProfiles -Path $CfgPath).Count))
+    $optResetCfg = (Get-CvText -Key 'cli.men.reset.op' -Values @($CfgName))
     $opts += $optEditCfg
     $opts += $optProfiles
     $opts += $optResetCfg
 
-    $headers[$opts.Count] = 'Limpieza'
-    $opts += 'Limpiar (jobs, bloqueos, temporales, logs y caches)'
-    $opts += 'Limpiar Proceso fichero a fichero'
+    $headers[$opts.Count] = (Get-CvText -Key 'cli.men.limpieza')
+    $opts += (Get-CvText -Key 'cli.men.mant.op')
+    $opts += (Get-CvText -Key 'cli.men.proc.op')
 
     $choice = Select-FromList -Options $opts -NoneLabel 'salir' -DefaultIndex 0 -NoneKey 'S' -Headers $headers
     if ($choice -eq '') { $exit = $true; continue }
 
-    if ($choice -eq 'Instalar / gestionar herramientas (ffmpeg, aacgain, mkvtoolnix...)') {
+    if ($choice -eq (Get-CvText -Key 'cli.men.herr.op')) {
         Show-ToolsMenu                       # submenu con una entrada por app + reinstalar todo
     }
-    elseif ($choice -eq 'Ver estado (directorios y herramientas)') {
+    elseif ($choice -eq (Get-CvText -Key 'cli.men.estado.op')) {
         Clear-Host
         Show-Estado
         Wait-Setup
@@ -643,13 +648,13 @@ while (-not $exit) {
     elseif ($choice -eq $optResetCfg) {
         Reset-Config                         # limpia y pausa por su cuenta
     }
-    elseif ($choice -eq 'Limpiar (jobs, bloqueos, temporales, logs y caches)') {
+    elseif ($choice -eq (Get-CvText -Key 'cli.men.mant.op')) {
         Show-MaintenanceMenu                 # limpia y pausa por su cuenta
     }
-    elseif ($choice -eq 'Limpiar Proceso fichero a fichero') {
+    elseif ($choice -eq (Get-CvText -Key 'cli.men.proc.op')) {
         Show-CleanMenu                       # limpia y pausa por su cuenta
     }
-    elseif ($choice -eq 'Comprobar compatibilidad GPU (NVENC de ffmpeg)') {
+    elseif ($choice -eq (Get-CvText -Key 'cli.men.gpu.op')) {
         Show-NvencCheck                      # limpia y pausa por su cuenta
     }
     elseif ($testOpts.ContainsKey($choice)) {
@@ -658,7 +663,7 @@ while (-not $exit) {
 }
 
 Clear-Host
-Write-CvLog 'SETUP' 'Hecho.'
+Write-CvLog 'SETUP' (Get-CvText -Key 'cli.hecho')
 
 # Cerrar el log de la sesion.
 if ($logFile) { Stop-CvLog }

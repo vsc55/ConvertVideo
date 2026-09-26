@@ -33,14 +33,14 @@ function Get-CvEditorOptions {
     $items = {
         param($cat) @($cat | ForEach-Object {
             if ($_ -is [string]) { [pscustomobject]@{ Value = $_; Label = "$_"; Desc = '' } }
-            else { [pscustomobject]@{ Value = $_.Value; Label = $(if ("$($_.Value)" -eq '') { '(vacio)' } else { "$($_.Value)" }); Desc = "$($_.Text)" } }
+            else { [pscustomobject]@{ Value = $_.Value; Label = $(if ("$($_.Value)" -eq '') { (Get-CvText -Key 'ced.vacio') } else { "$($_.Value)" }); Desc = "$($_.Text)" } }
         })
     }
     $ret = { param($cat, [bool]$custom) [pscustomobject]@{ AllowCustom = $custom; Items = (& $items $cat) } }
     switch ($Key) {
         # --- contenedor / vídeo ---
         'outputExtension' { return (& $ret (Get-CvOutputContainers) $false) }
-        'videoEncoder'    { return [pscustomobject]@{ AllowCustom = $false; Items = ((& $items (Get-CvVideoEncoders)) + [pscustomobject]@{ Value = 'auto'; Label = 'auto'; Desc = 'mejor encoder del equipo (se resuelve al preparar)' }) } }
+        'videoEncoder'    { return [pscustomobject]@{ AllowCustom = $false; Items = ((& $items (Get-CvVideoEncoders)) + [pscustomobject]@{ Value = 'auto'; Label = 'auto'; Desc = (Get-CvText -Key 'ced.autoenc') }) } }
         'videoProfile'    { return (& $ret (Get-CvVideoProfileOptions) $true) }   # codec-dependiente -> permite custom
         'videoLevel'      { return (& $ret (Get-CvVideoLevelOptions)   $true) }
         'level'           { return (& $ret (Get-CvVideoLevelOptions)   $true) }
@@ -76,7 +76,7 @@ function Read-CvEditorPause {
     <# Pausa "ENTER para continuar" propia del editor (equivalente a la de setup), para poder leer un
        mensaje antes de que el siguiente Clear-Host lo borre. #>
     Write-Host ''
-    [void](Read-Host 'ENTER para continuar')
+    [void](Read-Host (Get-CvText -Key 'cli.enter'))
 }
 
 function Edit-Scalar {
@@ -96,18 +96,18 @@ function Edit-Scalar {
         $items  = @($spec.Items)
         $labels = @($items | ForEach-Object { $_.Label })
         $descs  = @($items | ForEach-Object { $_.Desc })
-        $custom = 'custom (escribir otro valor)'
+        $custom = (Get-CvText -Key 'ced.custom')
         # Índice por defecto: marca el DEFAULT de fábrica (o, si no está, el actual).
         $byVal = { param($v) $i = 0; for (; $i -lt $items.Count; $i++) { if ("$($items[$i].Value)" -eq "$v") { return $i } }; return -1 }
         $di = & $byVal $Default
         if ($di -lt 0) { $di = & $byVal $Current }
         if ($di -lt 0) { $di = 0 }
         $menuOpts  = if ($spec.AllowCustom) { $labels + $custom } else { $labels }
-        $menuDescs = if ($spec.AllowCustom) { $descs  + 'teclear un valor no listado' } else { $descs }
-        $p = Select-FromList -Title ("{0} (actual: {1})" -f $Key, $Current) -Options $menuOpts -Descriptions $menuDescs -NoneLabel 'cancelar (dejar actual)' -DefaultIndex ($di + 1)
+        $menuDescs = if ($spec.AllowCustom) { $descs  + (Get-CvText -Key 'ced.custom.d') } else { $descs }
+        $p = Select-FromList -Title (Get-CvText -Key 'ced.actual' -Values @($Key, $Current)) -Options $menuOpts -Descriptions $menuDescs -NoneLabel (Get-CvText -Key 'ced.cancelar') -DefaultIndex ($di + 1)
         if ($p -eq '') { return @{ changed = $false } }
         if ($spec.AllowCustom -and $p -eq $custom) {
-            $c = (Read-Host ("   {0}: nuevo valor [ENTER=cancelar]" -f $Key)).Trim()
+            $c = (Read-Host (Get-CvText -Key 'ced.nuevo' -Values @($Key))).Trim()
             if ($c -eq '') { return @{ changed = $false } }
             return @{ changed = $true; value = "$c" }
         }
@@ -121,7 +121,7 @@ function Edit-Scalar {
 
     if ($Kind -eq 'bool') {
         $def = if ($Default) { 1 } else { 2 }   # marca el DEFAULT de fabrica (no el actual)
-        $p = Select-FromList -Title ("{0} (actual: {1})" -f $Key, "$Current".ToLower()) -Options @('true','false') -NoneLabel 'cancelar (dejar actual)' -DefaultIndex $def
+        $p = Select-FromList -Title (Get-CvText -Key 'ced.actual' -Values @($Key, "$Current".ToLower())) -Options @('true','false') -NoneLabel (Get-CvText -Key 'ced.cancelar') -DefaultIndex $def
         if ($p -eq '') { return @{ changed = $false } }
         return @{
             changed = $true
@@ -131,7 +131,7 @@ function Edit-Scalar {
 
     # Numero / texto libre: sin menu; se muestra actual y default, ENTER = dejar actual.
     $defTxt = if ($null -ne $Default) { ", por defecto: $Default" } else { '' }
-    $ans = (Read-Host ("   {0}  (actual: {1}{2})  nuevo valor [ENTER=cancelar]" -f $Key, $Current, $defTxt)).Trim()
+    $ans = (Read-Host (Get-CvText -Key 'ced.nuevo2' -Values @($Key, $Current, $defTxt))).Trim()
     if ($ans -eq '') { return @{ changed = $false } }
     if ($Kind -eq 'number') {
         if ($ans -match '^-?\d+$') {
@@ -147,7 +147,7 @@ function Edit-Scalar {
                 value   = $d
             }
         }
-        Write-Host '   Numero no valido.' -ForegroundColor Yellow
+        Write-Host (Get-CvText -Key 'con.nonumero2') -ForegroundColor Yellow
         return @{ changed = $false }
     }
     return @{
@@ -165,26 +165,26 @@ function Edit-Array {
         Clear-Host
         $opts = @()
         for ($i = 0; $i -lt $items.Count; $i++) { $opts += ("[{0}] {1}" -f $i, $items[$i]) }
-        $opts += '(+) Anadir elemento'
-        if ($items.Count -gt 0) { $opts += '(-) Eliminar elemento' }
+        $opts += (Get-CvText -Key 'ced.anadir')
+        if ($items.Count -gt 0) { $opts += (Get-CvText -Key 'ced.quitar') }
         $sel = Select-FromList -Title ("Lista '{0}'  ({1} elementos)" -f $Key, $items.Count) -Options $opts -NoneLabel 'volver' -DefaultIndex 0
         if ($sel -eq '') { break }
-        if ($sel -eq '(+) Anadir elemento') {
-            $v = (Read-Host '   Nuevo valor').Trim()
+        if ($sel -eq (Get-CvText -Key 'ced.anadir')) {
+            $v = (Read-Host (Get-CvText -Key 'ced.nuevoval')).Trim()
             if ($v -ne '') { $items = @($items) + $v; $changed = $true }
         }
-        elseif ($sel -eq '(-) Eliminar elemento') {
-            $d = (Read-Host '   Indice a eliminar').Trim()
+        elseif ($sel -eq (Get-CvText -Key 'ced.quitar')) {
+            $d = (Read-Host (Get-CvText -Key 'ced.indice')).Trim()
             $n = 0
             if ([int]::TryParse($d, [ref]$n) -and $n -ge 0 -and $n -lt $items.Count) {
                 $tmp = New-Object System.Collections.ArrayList
                 for ($i = 0; $i -lt $items.Count; $i++) { if ($i -ne $n) { [void]$tmp.Add($items[$i]) } }
                 $items = @($tmp.ToArray()); $changed = $true
-            } else { Write-Host '   Indice no valido.' -ForegroundColor Yellow }
+            } else { Write-Host (Get-CvText -Key 'ced.indice.mal') -ForegroundColor Yellow }
         }
         elseif ($sel -match '^\[(\d+)\]') {
             $i  = [int]$Matches[1]
-            $nv = (Read-Host ("   Nuevo valor para [{0}] (actual: {1}) [ENTER=cancelar]" -f $i, $items[$i])).Trim()
+            $nv = (Read-Host (Get-CvText -Key 'ced.nuevoidx' -Values @($i, $items[$i]))).Trim()
             if ($nv -ne '') { $items[$i] = $nv; $changed = $true }
         }
     }
@@ -232,7 +232,7 @@ function Edit-Node {
             # Perfiles propios: array de objetos; el editor de listas (escalares) los corromperia.
             Clear-Host
             Write-CvLog 'SETUP' ("Los perfiles propios se editan a mano en {0} (seccion 'profiles')." -f $CfgName)
-            Write-CvLog 'SETUP' 'Se anaden al menu USAR PERFIL a continuacion de los de serie (14, 15, ...; ver docs/ref-perfiles.md).'
+            Write-CvLog 'SETUP' (Get-CvText -Key 'cfg.perfiles.2')
             Read-CvEditorPause
             continue
         }
@@ -262,24 +262,24 @@ function Edit-CvConfigFile {
     #>
     param([Parameter(Mandatory)][string]$Root, [Parameter(Mandatory)][string]$CfgPath, [string]$CfgName = 'config.json')
     Clear-Host
-    Write-CvLog 'SETUP' ("Editor de {0} (0 = volver en cada nivel)." -f $CfgName)
+    Write-CvLog 'SETUP' (Get-CvText -Key 'ced.tit' -Values @($CfgName))
     $cfg    = Get-CvConfig -Root $Root -Path $CfgPath
     $before = Get-CvConfig -Root $Root -Path $CfgPath
     $script:CvEditDirty = $false
     Edit-Node -Node $cfg -Path '' -CfgName $CfgName
     if ($script:CvEditDirty) {
-        if (Read-YesNo ("Guardar cambios en {0}?" -f $CfgName) $true) {
+        if (Read-YesNo (Get-CvText -Key 'ced.guardar' -Values @($CfgName)) $true) {
             # Aplicar SOLO lo editado sobre el fichero ACTUAL (crudo): lo que difiere del default se
             # guarda; lo que vuelve al default se elimina del fichero.
             $raw = if (Test-Path -LiteralPath $CfgPath) { Read-CvConfigFile -Path $CfgPath } else { [pscustomobject]@{} }
             Update-CvConfigEdits -Edited $cfg -Before $before -Default (Get-CvConfigDefaults) -Target $raw
             Save-CvConfigFile -Path $CfgPath -Config $raw
-            Write-CvLog 'SETUP' ("[OK] - {0} actualizado (solo los valores distintos del default)." -f $CfgName)
+            Write-CvLog 'SETUP' (Get-CvText -Key 'ced.guardado' -Values @($CfgName))
         } else {
-            Write-CvLog 'SETUP' 'Cambios descartados.'
+            Write-CvLog 'SETUP' (Get-CvText -Key 'ced.descartado')
         }
     } else {
-        Write-CvLog 'SETUP' 'Sin cambios.'
+        Write-CvLog 'SETUP' (Get-CvText -Key 'cli.cfg.sincambios2')
     }
 }
 
