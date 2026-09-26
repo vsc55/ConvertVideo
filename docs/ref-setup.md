@@ -45,7 +45,7 @@ Agrupado por bloques (**Herramientas / Estado / Compatibilidad / Pruebas / Confi
 flowchart TD
     CORE["lib/SetupCore.psm1<br/>DATOS (identidad, carpetas, herramientas,<br/>GPU, Proceso, trabajo, limpieza, baterias)"]
     CON["setup.ps1 (consola)<br/>render: marcas y badges de color"]
-    GUI["lib/GuiSetup.psm1 (ventana)<br/>render: botones y panel de salida<br/>(+ GuiConfig.psm1: editor de config)"]
+    GUI["lib/form/GuiSetupWindow.psm1 (ventana)<br/>render: botones y panel de salida<br/>(textos: lib/GuiSetup.psm1)<br/>(+ form/GuiConfigWindow.psm1: editor de config)"]
     CORE --> CON
     CORE --> GUI
     GUI -. "acciones largas" .-> TASK["setup.ps1 -Task install|tests<br/>(su propia consola)"]

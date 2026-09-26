@@ -36,13 +36,24 @@ $modules = @(
     'Gui'
     'GuiSetup'
     'GuiConfig'
-    'GuiProfile'
     'Exec'
     'Job'
     'Tools'
     'Profile'
     'ConfigEditor'
     'SetupCore'
+    # Las VENTANAS, una por formulario (lib\form\); la logica que se prueba sin abrir
+    # ninguna se queda en los modulos de arriba.
+    'form\GuiSetupWindow'
+    'form\GuiConfigChooser'
+    'form\GuiToolsWindow'
+    'form\GuiLogsWindow'
+    'form\GuiMaintenanceWindow'
+    'form\GuiCleanWindow'
+    'form\GuiConfigWindow'
+    'form\GuiJobProfileDialog'
+    'form\GuiProfileEditorWindow'
+    'form\GuiProfilesWindow'
 )
 foreach ($m in $modules) {
     Import-Module (Join-Path $Lib ("{0}.psm1" -f $m)) -Force

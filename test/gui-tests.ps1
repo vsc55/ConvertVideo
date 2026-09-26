@@ -15,7 +15,8 @@
     Los casos de VENTANA se SALTAN (SKIP, no FAIL) si el host no es STA o no hay entorno grafico, para
     que la bateria sirva igual en una sesion sin GUI.
 
-    REGLA al tocar GuiSetup.psm1: los caminos que ejercita esta bateria NO pueden sacar un dialogo
+    REGLA al tocar las ventanas de setup (lib\form\) o GuiSetup.psm1: los caminos que ejercita esta
+    bateria NO pueden sacar un dialogo
     MODAL (Show-CvGuiInfo / MessageBox). Un aviso modal deja la bateria colgada para siempre esperando
     a que una persona pulse Aceptar -deja de ser desatendida y de servir en CI-. Ya paso con el aviso
     de "config.json actualizado" al guardar: se quito (el llamador ya informa en su panel de salida).
@@ -41,13 +42,24 @@ $modules = @(
     'Gui'
     'GuiSetup'
     'GuiConfig'
-    'GuiProfile'
     'Exec'
     'Job'
     'Tools'
     'Profile'
     'ConfigEditor'
     'SetupCore'
+    # Las VENTANAS, una por formulario (lib\form\); la logica que se prueba sin abrir
+    # ninguna se queda en los modulos de arriba.
+    'form\GuiSetupWindow'
+    'form\GuiConfigChooser'
+    'form\GuiToolsWindow'
+    'form\GuiLogsWindow'
+    'form\GuiMaintenanceWindow'
+    'form\GuiCleanWindow'
+    'form\GuiConfigWindow'
+    'form\GuiJobProfileDialog'
+    'form\GuiProfileEditorWindow'
+    'form\GuiProfilesWindow'
 )
 foreach ($m in $modules) {
     Import-Module (Join-Path $Lib ("{0}.psm1" -f $m)) -Force
@@ -672,10 +684,10 @@ Assert-Eq   'Divisor: nunca bajo el minimo'     120 (Resolve-CvGuiSplitDistance 
 Assert-Eq   'Divisor: ventana minuscula'        100 (Resolve-CvGuiSplitDistance -Height 200 -Percent 52 -Min1 120 -Min2 140 -SplitterWidth 10)
 
 # ================================================================================================
-# PERFILES PROPIOS en ventana (GuiProfile): la lista sale del config y los botones estan.
+# PERFILES PROPIOS en ventana (form\GuiProfilesWindow): la lista sale del config y los botones estan.
 # No se pulsa 'Borrar' aqui: pide confirmacion MODAL y dejaria la bateria colgada (ver la regla de
 # la cabecera). El borrado se prueba en los tests unitarios, sobre la funcion.
-Write-Host "`nGuiProfile - perfiles propios en ventana" -ForegroundColor Cyan
+Write-Host "`nGuiProfilesWindow - perfiles propios en ventana" -ForegroundColor Cyan
 $cfgProf = Join-Path $tmpRoot 'config.perfiles.json'
 [void](Save-CvTextFile -Path $cfgProf -Text '{ "behavior": { "workers": 1 } }')
 [void](Save-CvConfigProfile -Path $cfgProf -Prof (New-CvProfile -VideoEncoder 'libx265' -Crf 22) -Label 'Series CPU')

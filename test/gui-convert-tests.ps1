@@ -14,7 +14,8 @@
 
     Los casos de VENTANA se SALTAN (SKIP, no FAIL) si el host no es STA o no hay entorno grafico.
 
-    REGLA al tocar GuiConvert.psm1 (la misma que en gui-tests.ps1): los caminos que ejercita esta
+    REGLA al tocar las ventanas (lib\form\) o GuiConvert.psm1 (la misma que en gui-tests.ps1): los
+    caminos que ejercita esta
     bateria NO pueden sacar un dialogo MODAL, o la bateria se queda colgada esperando a que una
     persona pulse Aceptar y deja de servir desatendida. Por eso aqui NO se pulsa 'Iniciar' ni
     'Cancelar ahora': ademas de confirmar, lanzarian o mataran procesos de verdad.
@@ -41,7 +42,6 @@ $modules = @(
     'GuiConfig'
     'GuiConvert'
     'GuiJob'
-    'GuiProfile'
     'Exec'
     'Job'
     'JobCore'
@@ -54,6 +54,23 @@ $modules = @(
     'Subtitle'
     'SubtitleSRT'
     'SetupCore'
+    # Las VENTANAS, una por formulario (lib\form\); la logica que se prueba sin abrir
+    # ninguna se queda en los modulos de arriba.
+    'form\GuiConvertWindow'
+    'form\GuiWorkerLogWindow'
+    'form\GuiJobWindow'
+    'form\GuiJobBulkWindow'
+    'form\GuiPrepareWindow'
+    'form\GuiSetupWindow'
+    'form\GuiConfigChooser'
+    'form\GuiToolsWindow'
+    'form\GuiLogsWindow'
+    'form\GuiMaintenanceWindow'
+    'form\GuiCleanWindow'
+    'form\GuiConfigWindow'
+    'form\GuiJobProfileDialog'
+    'form\GuiProfileEditorWindow'
+    'form\GuiProfilesWindow'
 )
 foreach ($m in $modules) {
     Import-Module (Join-Path $Lib ("{0}.psm1" -f $m)) -Force
@@ -1329,7 +1346,7 @@ if ($null -eq $jobInfo) {
         # ------------------------------------------------------------------------------------
         # GUARDAR el perfil ajustado como PERFIL PROPIO (config.json -> 'profiles'): con -CfgPath el
         # editor ensena el nombre y el boton de guardar, y lo guardado sale ya en el menu de perfiles.
-        Write-Host "`nGuiProfile - guardar un perfil propio desde la ventana" -ForegroundColor Cyan
+        Write-Host "`nGuiProfileEditorWindow - guardar un perfil propio desde la ventana" -ForegroundColor Cyan
         $tg = New-Object System.Windows.Forms.Timer
         $tg.Interval = 400
         $script:pgErr  = ''

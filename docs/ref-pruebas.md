@@ -143,7 +143,7 @@ powershell -ExecutionPolicy Bypass -Sta -File test\gui-convert-tests.ps1   # col
 
 **Regla al dirigir una ventana desde una batería**: el temporizador que la maneja **espera** a que esté montada (reintenta hasta encontrar su control y, en la cola, hasta que la lista tiene filas), con un tope de intentos. Un disparo único a los X ms parece que funciona y falla en cuanto la máquina está ocupada: ejecutar la batería de la cola justo detrás de otra la tiraba entera —43 casos de golpe, todos con valores vacíos—, y sola volvía a pasar, que es lo que la hacía parecer intermitente.
 
-**Regla al tocar `GuiSetup.psm1`/`GuiConfig.psm1`/`GuiConvert.psm1`**: los caminos que ejercitan estas baterías **no pueden sacar un diálogo modal**, o la batería se queda colgada esperando a que una persona pulse *Aceptar* (pasó con el aviso de "config.json actualizado"). Si una acción necesita confirmar, que lo haga el **llamador**. Por lo mismo, la batería de la cola **no pulsa** *Iniciar* ni *Cancelar ahora*: lanzarían o matarían procesos de verdad.
+**Regla al tocar una ventana (`lib\form\*.psm1`) o su lógica (`GuiSetup.psm1`/`GuiConfig.psm1`/`GuiConvert.psm1`)**: los caminos que ejercitan estas baterías **no pueden sacar un diálogo modal**, o la batería se queda colgada esperando a que una persona pulse *Aceptar* (pasó con el aviso de "config.json actualizado"). Si una acción necesita confirmar, que lo haga el **llamador**. Por lo mismo, la batería de la cola **no pulsa** *Iniciar* ni *Cancelar ahora*: lanzarían o matarían procesos de verdad.
 
 ## Fuentes y licencias de las muestras base
 

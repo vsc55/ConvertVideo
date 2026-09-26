@@ -22,12 +22,27 @@ ConvertVideo/
 │   ├── Context.psm1        Contexto de ejecución ($ctx) + helpers (idiomas, números, tiempo, listado de ficheros)
 │   ├── Console.psm1        Apariencia de consola, ventana nativa, menús y prompts
 │   ├── Gui.psm1            Común a TODAS las ventanas (WinForms): arranque, fuente, doble búfer, avisos, diálogo de N salidas, tamaños recordados, visor de texto, desplegable de catálogo, panel que sigue un log y abrir con Windows
-│   ├── GuiSetup.psm1       Ventana de setup (WinForms): acciones, panel de salida y sus diálogos (herramientas, logs, limpieza)
-│   ├── GuiConfig.psm1      Editor de config.json en ventana (árbol + ayuda por clave); lo abren setup y la cola
+│   ├── GuiSetup.psm1       Textos de los paneles de setup y lanzador de las acciones largas (setup.ps1 -Task …)
+│   ├── GuiConfig.psm1      Árbol del editor de config.json: nodos, resumen por clave y marcas de «cambiado»
 │   ├── SetupCore.psm1      DATOS de setup (estado, herramientas, limpieza, baterías); fuente única de consola y ventana
-│   ├── GuiConvert.psm1     Ventana de la cola de conversión (WinForms): lista de archivos, workers y log en vivo
-│   ├── GuiJob.psm1         Ventana del editor de jobs (PREPARAR con ratón: perfil, vídeo, audio, subtítulos)
-│   ├── GuiProfile.psm1     Ventanas de PERFILES: elegir, ajustar (y guardar en el config) y gestionar los propios
+│   ├── GuiConvert.psm1     Lógica de la cola que se prueba SIN ventana: filas, refresco, seguimiento y estado de los botones
+│   ├── GuiJob.psm1         Filas de audio y subtítulos de las ventanas del job, y el borrador que se acaba guardando
+│   ├── form/               Las VENTANAS (WinForms), UNA POR FORMULARIO; cada fichero se llama como la función que exporta:
+│   │   ├── GuiConvertWindow.psm1        Cola de conversión: lista de archivos, workers y log en vivo
+│   │   ├── GuiWorkerLogWindow.psm1      El log de un worker, en vivo
+│   │   ├── GuiJobWindow.psm1            Editor de UN job: vídeo, bordes, audio, subtítulos y perfil
+│   │   ├── GuiJobBulkWindow.psm1        Editar EN BLOQUE los jobs de varios archivos
+│   │   ├── GuiPrepareWindow.psm1        Preparar los pendientes (autodiscover, como en consola)
+│   │   ├── GuiSetupWindow.psm1          Setup con ratón: acciones y panel de salida
+│   │   ├── GuiConfigChooser.psm1        Con qué config*.json trabajar
+│   │   ├── GuiToolsWindow.psm1          Herramientas: qué versión hay y cuál instalar
+│   │   ├── GuiLogsWindow.psm1           Logs: cuáles hay y qué dicen
+│   │   ├── GuiMaintenanceWindow.psm1    Mantenimiento: bloqueos, jobs huérfanos, temporales y caché
+│   │   ├── GuiCleanWindow.psm1          Confirmar la limpieza, con la cuenta delante
+│   │   ├── GuiConfigWindow.psm1         Editor de config.json (árbol + ayuda por clave); lo abren setup y la cola
+│   │   ├── GuiJobProfileDialog.psm1     Elegir el perfil del lote
+│   │   ├── GuiProfileEditorWindow.psm1  Ajustar un perfil y guardarlo como propio
+│   │   └── GuiProfilesWindow.psm1       Gestionar los perfiles propios
 │   ├── WorkerCore.psm1     DATOS de la cola (estado de cada archivo, progreso que publica cada worker, parada ordenada)
 │   ├── JobCore.psm1        DATOS del job (opciones por archivo, borrador automático, forma del .job.json)
 │   ├── Exec.psm1           Ejecución de procesos externos (ffmpeg/ffprobe…)
@@ -55,6 +70,8 @@ ConvertVideo/
 Las carpetas de trabajo (`Original`, `Proceso`, `Convertido`, `logs`) se pueden reubicar en `config.json` (sección `paths`); ver [ref-configuracion.md](ref-configuracion.md).
 
 Las carpetas de trabajo (`Original`, `Proceso`, `Convertido`, `tools`) se crean automáticamente si faltan.
+
+**Una ventana, un fichero.** Cada formulario vive en `lib\form\` con el nombre de la función que exporta (`form\GuiConvertWindow.psm1` → `Show-CvConvertWindow`), y en `lib\` se queda lo que se puede probar **sin abrir ninguna**: las filas, los planes de refresco y de seguimiento, los estados de los botones, el árbol de la configuración. No se puede partir UNA ventana en varios ficheros —sus manejadores son *closures* sobre las variables locales del formulario y PowerShell no tiene clases parciales—, así que lo que encoge una ventana es sacarle la lógica pura o describir sus filas como un **catálogo** (`Get-CvJobBulkFields`). En las listas `$modules` las ventanas se escriben con su carpeta: `'form\GuiJobWindow'`.
 
 ## Módulos (`lib\`)
 

@@ -6,12 +6,12 @@
     su estado (sin preparar / en cola / codificando / hecho), el worker que lleva cada uno, su avance
     en vivo y el log; y desde ahi se arrancan, se paran o se cortan los workers.
 
-    No duplica nada: los DATOS salen de lib\WorkerCore.psm1 y la ventana de lib\GuiConvert.psm1. Los
+    No duplica nada: los DATOS salen de lib\WorkerCore.psm1 y la ventana de lib\form\GuiConvertWindow.psm1. Los
     workers son procesos aparte (Convert.ps1 -WorkerOnly -Unattended): la ventana no codifica, porque
     WinForms es de un solo hilo y se quedaria congelada (igual que setup-gui con 'setup.ps1 -Task').
 
     Los archivos SIN preparar se pueden preparar aqui mismo (doble clic: editor del job en ventana,
-    lib\GuiJob.psm1) o en la consola de siempre con el boton 'Preparar (consola)'.
+    lib\form\GuiJobWindow.psm1) o en la consola de siempre con el boton 'Preparar (consola)'.
 
     Lanzar:  Convert-gui.cmd   (o)   powershell -NoProfile -ExecutionPolicy Bypass -Sta -File Convert-gui.ps1
     Sin entorno grafico (o sin STA) se avisa y se remite a Convert.cmd.
@@ -42,7 +42,6 @@ $modules = @(
     'GuiConfig'
     'GuiConvert'
     'GuiJob'
-    'GuiProfile'
     'Exec'
     'Job'
     'JobCore'
@@ -55,6 +54,23 @@ $modules = @(
     'Subtitle'
     'SubtitleSRT'
     'SetupCore'
+    # Las VENTANAS, una por formulario (lib\form\); la logica que se prueba sin abrir
+    # ninguna se queda en los modulos de arriba.
+    'form\GuiConvertWindow'
+    'form\GuiWorkerLogWindow'
+    'form\GuiJobWindow'
+    'form\GuiJobBulkWindow'
+    'form\GuiPrepareWindow'
+    'form\GuiSetupWindow'
+    'form\GuiConfigChooser'
+    'form\GuiToolsWindow'
+    'form\GuiLogsWindow'
+    'form\GuiMaintenanceWindow'
+    'form\GuiCleanWindow'
+    'form\GuiConfigWindow'
+    'form\GuiJobProfileDialog'
+    'form\GuiProfileEditorWindow'
+    'form\GuiProfilesWindow'
 )
 foreach ($m in $modules) {
     Import-Module (Join-Path $Lib ("{0}.psm1" -f $m)) -Force

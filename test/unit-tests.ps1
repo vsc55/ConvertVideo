@@ -391,7 +391,7 @@ Assert-Eq   'all sin duplicados'       $all.Count ($all | Select-Object -Unique)
 # ================================================================================================
 Write-Host "`nFuentes unicas (Context / Profile)" -ForegroundColor Cyan
 Assert-Eq 'Get-CvAppName' 'ConvertVideo' (Get-CvAppName)
-Assert-Eq 'Get-CvVersion' '4.7.1'        (Get-CvVersion)
+Assert-Eq 'Get-CvVersion' '4.7.2'        (Get-CvVersion)
 Assert-Eq 'perfiles de serie = 13' 13 ((Get-CvProfiles | ForEach-Object { $_.Profiles } | Measure-Object).Count)
 # Los perfiles de serie con changeSize '1920:-2' (RESIZE fijo) deben ser solo-reduce (NoUpscale).
 $rzProfs = @(Get-CvProfiles | ForEach-Object { $_.Profiles } | Where-Object { "$($_.ChangeSize)" -ne '' })

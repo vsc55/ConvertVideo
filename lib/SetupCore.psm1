@@ -2,7 +2,7 @@
     SetupCore.psm1 - DATOS de las acciones de setup (sin interfaz).
 
     Fuente unica de "que se sabe / que se hace" en setup, para que las DOS interfaces -la consola
-    (setup.ps1) y la ventana (setup-gui.ps1 / GuiSetup.psm1)- pinten lo MISMO sin duplicar logica:
+    (setup.ps1) y la ventana (setup-gui.ps1 / form\GuiSetupWindow.psm1)- pinten lo MISMO sin duplicar logica:
     cada funcion devuelve DATOS (objetos), nunca texto con colores ni prompts, y cada UI decide como
     renderizarlos (marcas y badges en consola, iconos y listas en la ventana).
 

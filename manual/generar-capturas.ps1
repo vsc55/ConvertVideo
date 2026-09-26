@@ -48,7 +48,6 @@ $modules = @(
     'GuiConfig'
     'GuiConvert'
     'GuiJob'
-    'GuiProfile'
     'Exec'
     'Job'
     'JobCore'
@@ -62,6 +61,23 @@ $modules = @(
     'SubtitleSRT'
     'SetupCore'
     'ConfigEditor'
+    # Las VENTANAS, una por formulario (lib\form\); la logica que se prueba sin abrir
+    # ninguna se queda en los modulos de arriba.
+    'form\GuiConvertWindow'
+    'form\GuiWorkerLogWindow'
+    'form\GuiJobWindow'
+    'form\GuiJobBulkWindow'
+    'form\GuiPrepareWindow'
+    'form\GuiSetupWindow'
+    'form\GuiConfigChooser'
+    'form\GuiToolsWindow'
+    'form\GuiLogsWindow'
+    'form\GuiMaintenanceWindow'
+    'form\GuiCleanWindow'
+    'form\GuiConfigWindow'
+    'form\GuiJobProfileDialog'
+    'form\GuiProfileEditorWindow'
+    'form\GuiProfilesWindow'
 )
 foreach ($m in $modules) {
     $p = Join-Path $Lib ("{0}.psm1" -f $m)
