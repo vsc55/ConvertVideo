@@ -8,14 +8,14 @@
     temporales intermedios y dos arranques de ffmpeg.
 
     Solo aplica en un subconjunto de casos (Test-CvOnePassEligible); en el resto se usa el pipeline por
-    etapas. Activador beta con doble llave: test.betaOnePass (Context.BetaOnePass), off por defecto.
+    etapas. Interruptor: encode.onePass (Context.OnePass), ACTIVADO de serie (RC).
 #>
 
 function Test-CvOnePassEligible {
     <#
         Decide si un job puede convertirse en UNA sola pasada. Devuelve {Ok=[bool]; Reason=[string]}
         (Reason = por que NO, para el log). Requisitos:
-          - test.betaOnePass activo (doble llave beta).
+          - encode.onePass activo (de serie lo esta).
           - Video y audio se CODIFICAN (ni video.skip ni audio.skip: 'copy' va por etapas).
           - Sincronia por 'adelay' (el modo clasico genera un WAV intermedio -> 2 pasadas).
           - Volumen 'loudnorm' (una pasada) o 'peak' (mide con volumedetect en una pasada de analisis
@@ -28,7 +28,7 @@ function Test-CvOnePassEligible {
             (Invoke-CvVideoSwap). Ver Get-CvVideoSwapArgs.
     #>
     param([Parameter(Mandatory)]$Context, [Parameter(Mandatory)]$Job, [Parameter(Mandatory)]$Prof)
-    if (-not $Context.BetaOnePass) { return [pscustomobject]@{ Ok = $false; Reason = 'beta desactivada (test.betaOnePass)' } }
+    if (-not $Context.OnePass)     { return [pscustomobject]@{ Ok = $false; Reason = 'desactivada (encode.onePass)' } }
     if ([bool]$Job.video.skip)     { return [pscustomobject]@{ Ok = $false; Reason = 'video en modo copy' } }
     if ([bool]$Job.audio.skip)     { return [pscustomobject]@{ Ok = $false; Reason = 'audio en modo copy' } }
     if (-not $Context.SyncAdelay)  { return [pscustomobject]@{ Ok = $false; Reason = 'sincronia clasica (WAV), no adelay' } }

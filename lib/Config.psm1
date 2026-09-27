@@ -387,6 +387,13 @@ function Get-CvConfigDefaults {
         #   mas, ~0,06x = puede tardar horas), por eso viene desactivado por defecto. El resultado se
         #   registra ([QC]). No se mide en 'copy'. vmaf requiere que el ffmpeg tenga libvmaf; si no, avisa.
         encode    = [ordered]@{
+            # UNA SOLA PASADA (RC): funde audio+video+multiplexado en UNA ejecucion de ffmpeg, en vez
+            # de tres con temporales entre medias. No se aplica siempre: solo cuando el job es
+            # ELEGIBLE (Test-CvOnePassEligible: video y audio se codifican -no copy-, sincronia
+            # 'adelay', volumen 'loudnorm' o 'peak', y sin tone-mapping HDR). Lo que no encaja sigue
+            # yendo por el pipeline por etapas, sin que haya que decidir nada. Con $false, todo por
+            # etapas. RC: activado de serie y en observacion; el log lo marca [rc].
+            onePass         = $true
             outputExtension = 'mkv'
             extensions      = @(
                 'avi'
@@ -693,15 +700,10 @@ function Get-CvConfigDefaults {
         #   sea beta hay doble llave: encode.downmixMode='dialogue' fija el modo, pero SOLO refuerza la
         #   voz si betaDownmix=$true. Con $false (por defecto), aunque downmixMode sea 'dialogue' se usa
         #   el downmix estandar de ffmpeg. Al promocionar la mezcla se retira este flag.
-        #   betaOnePass (BETA): funde audio+video+multiplexado en UNA sola ejecucion de ffmpeg
-        #   (menos temporales y arranques). Solo aplica si video y audio se codifican (no copy),
-        #   sincronia 'adelay', volumen 'loudnorm' y sin tone-mapping HDR; en el resto se usa el
-        #   pipeline por etapas. Con $false (por defecto) SIEMPRE se usa el pipeline por etapas.
         test      = [ordered]@{
             enabled        = $false
             minutes        = 5
             betaDownmix    = $false
-            betaOnePass    = $false
         }
         console   = [ordered]@{
             background       = 'DarkBlue'
@@ -903,6 +905,7 @@ function Get-CvConfigHelp {
         'languages/subtitle' = (Get-CvText -Key 'cfg.help.languages.subtitle')
 
         'encode' = (Get-CvText -Key 'cfg.help.encode')
+        'encode/onePass' = (Get-CvText -Key 'cfg.help.encode.onePass')
         'encode/outputExtension' = (Get-CvText -Key 'cfg.help.encode.outputExtension')
         'encode/extensions' = (Get-CvText -Key 'cfg.help.encode.extensions')
         'encode/threads' = (Get-CvText -Key 'cfg.help.encode.threads')
@@ -1048,7 +1051,7 @@ function Get-CvConfigHelp {
         'test/enabled' = (Get-CvText -Key 'cfg.help.test.enabled')
         'test/minutes' = (Get-CvText -Key 'cfg.help.test.minutes')
         'test/betaDownmix' = (Get-CvText -Key 'cfg.help.test.betaDownmix')
-        'test/betaOnePass' = (Get-CvText -Key 'cfg.help.test.betaOnePass')
+
 
         'console' = (Get-CvText -Key 'cfg.help.console')
         'console/background' = (Get-CvText -Key 'cfg.help.console.background')

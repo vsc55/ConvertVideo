@@ -291,10 +291,11 @@ function New-CvContext {
         # fija el modo, pero solo refuerza la voz si BetaDownmix. Config test.betaDownmix; lo usa
         # Invoke-AudioRun junto con DownmixMode.
         BetaDownmix    = [bool]$cfg.test.betaDownmix
-        # BETA: ejecucion en UNA sola pasada de ffmpeg (audio+video+mux fundidos). Config test.betaOnePass;
-        # lo consumen Test-CvOnePassEligible/Invoke-CvOnePass (lib/OnePass.psm1) desde el worker. Off por
-        # defecto: solo aplica en encode+encode con sincronia adelay, volumen loudnorm y sin HDR.
-        BetaOnePass    = [bool]$cfg.test.betaOnePass
+        # RC: ejecucion en UNA sola pasada de ffmpeg (audio+video+mux fundidos). Config encode.onePass;
+        # lo consumen Test-CvOnePassEligible/Invoke-CvOnePass (lib/OnePass.psm1) desde el worker. ACTIVADO
+        # de serie, pero solo se aplica donde es elegible (encode+encode, adelay, loudnorm/peak, sin HDR):
+        # el resto sigue yendo por etapas. En observacion mientras el log lo marque [rc].
+        OnePass        = [bool]$cfg.encode.onePass
         # Multipista de audio (conservar varias pistas del idioma preferido + elegir la default).
         # Toggle encode.multiAudio ($true por defecto). Lo consumen Invoke-AudioAsk (seleccion) y el
         # worker/Multiplex (varias pistas). Con $false = monopista (elige una).

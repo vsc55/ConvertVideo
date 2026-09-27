@@ -450,8 +450,11 @@ Assert-Eq 'encode.multiAudio def true'    $true  (Get-CvConfigDefaultValue 'enco
 Assert-True 'help encode/audio/multiAudio'   ((Get-CvConfigHelp).Contains('encode/audio/multiAudio'))
 Assert-Eq 'test.betaMultiAudio ya no existe' $null (Get-CvConfigDefaultValue 'test/betaMultiAudio')
 Assert-Eq 'test.betaAv1 ya no existe'  $null (Get-CvConfigDefaultValue 'test/betaAv1')
-Assert-Eq 'test.betaOnePass def false' $false (Get-CvConfigDefaultValue 'test/betaOnePass')
-Assert-True 'help test/betaOnePass'    ((Get-CvConfigHelp).Contains('test/betaOnePass'))
+# Una pasada: promocionada de beta a RC (27/09/2026). Sale de 'test' -que es el modo de pruebas- y
+# pasa a encode.onePass, ACTIVADA de serie; el gate real sigue siendo Test-CvOnePassEligible.
+Assert-Eq 'test.betaOnePass ya no existe' $null (Get-CvConfigDefaultValue 'test/betaOnePass')
+Assert-Eq 'encode.onePass def true'    $true (Get-CvConfigDefaultValue 'encode/onePass')
+Assert-True 'help encode/onePass'      ((Get-CvConfigHelp).Contains('encode/onePass'))
 
 # Get-CvJobAudioTracks - formato nuevo (multipista): default primero, campos normalizados
 $jobNew = [pscustomobject]@{ skip = $false; tracks = @(
@@ -1416,7 +1419,7 @@ function New-OpCtx {
     param([bool]$Beta = $true, [bool]$SyncAdelay = $true, [string]$Volume = 'loudnorm', [string]$Tonemap = 'off',
           [string]$DownmixMode = 'default', [bool]$BetaDownmix = $false, $Attachments = $null)
     [pscustomobject]@{
-        BetaOnePass    = $Beta
+        OnePass        = $Beta
         SyncAdelay     = $SyncAdelay
         VolumeMethod   = $Volume
         TonemapHdr     = $Tonemap
@@ -1898,9 +1901,9 @@ Assert-Eq   'Marca: salida normal, nada'  '' (Get-CvOutputVideoSource -Info ([ps
 Assert-Eq   'Marca: sin tags, nada'       '' (Get-CvOutputVideoSource -Info ([pscustomobject]@{ format = [pscustomobject]@{} }))
 Assert-Eq   'Marca: sin info, nada'       '' (Get-CvOutputVideoSource -Info $null)
 
-# La beta de UNA PASADA sigue sirviendo con la opcion puesta: alli no hay un momento intermedio
+# La ruta de UNA PASADA sigue sirviendo con la opcion puesta: alli no hay un momento intermedio
 # donde mirar el video, asi que se compara el FICHERO ya hecho y se le cambia el video con un remux.
-$kpCtx1 = [pscustomobject]@{ BetaOnePass = $true; SyncAdelay = $true; VolumeMethod = 'loudnorm'; TonemapHdr = 'off'; KeepOriginal = $true }
+$kpCtx1 = [pscustomobject]@{ OnePass = $true; SyncAdelay = $true; VolumeMethod = 'loudnorm'; TonemapHdr = 'off'; KeepOriginal = $true }
 $kpJob1 = [pscustomobject]@{ video = [pscustomobject]@{ skip = $false; hdr = $false; keepOriginal = $true }; audio = [pscustomobject]@{ skip = $false } }
 Assert-True 'Una pasada: vale con keepOriginal' ([bool](Test-CvOnePassEligible -Context $kpCtx1 -Job $kpJob1 -Prof ([pscustomobject]@{ AudioCodec = 'aac' })).Ok)
 # El cambiazo: el video sale del ORIGINAL (input 1) y todo lo demas de la salida ya hecha (input 0),

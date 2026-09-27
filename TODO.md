@@ -10,13 +10,27 @@
 
 **Estado:** 🧪 BETA. `encode.audio.downmixMode = "dialogue"` baja 5.1 → estéreo con un filtro `pan` que sube el central (diálogos) y baja los surrounds. **Doble llave:** solo refuerza la voz si además `test.betaDownmix = true`; si no, `dialogue` cae al downmix estándar. El worker marca el modo reforzado con `[beta]`. Al promocionar, quitar el flag `test.betaDownmix` y el `[beta]`.
 
-**Qué falta:** los coeficientes son **provisionales** — `pan=stereo|c0=0.5*c2+0.35*c0+0.15*c4|c1=0.5*c2+0.35*c1+0.15*c5` (central 0,5 · frontal 0,35 · surround 0,15; LFE descartado). Validar de oído y con medidas sobre **varios tipos de mezcla** (cine de acción, diálogo, música) que:
+**Qué falta:** solo lo que no se puede medir — **escucharlo en material real** y decidir si los diálogos destacan sin que el resto quede demasiado bajo (el "karaoke" del punto 1). Las fixtures del repo no sirven: su pista 5.1 es `anullsrc` (silencio, −91 dBFS medido). Hace falta un 5.1 de verdad.
 
-1. Los diálogos destacan sin que el resto quede demasiado bajo (no "karaoke").
-2. No hay recorte: los coeficientes suman 1,0 por canal, así que el pico no debería superar al del origen; confirmarlo con `volumedetect` (pico downmix ≤ pico 5.1) en material con surrounds fuertes.
-3. Comparar contra el downmix `default` de ffmpeg en los mismos clips.
+**Ya hecho:**
 
-**Ya hecho:** los coeficientes son **configurables** en `encode.audio.downmixCoeffs` (`center`/`front`/`surround`), así que afinarlos no requiere tocar código.
+- Los coeficientes son **configurables** en `encode.audio.downmixCoeffs` (`center`/`front`/`surround`), así que afinarlos no requiere tocar código.
+- **Medido el 27/09/2026** (ffmpeg 8.1.2, señales sintéticas con cada canal a un nivel conocido, midiendo el `pan` que devuelve `Get-CvDownmixPan` con los coeficientes de fábrica — no una copia parecida):
+
+  | Mezcla (FL FR FC LFE BL BR) | pico 5.1 | pico voz reforzada | pico estándar | LUFS voz − LUFS estándar |
+  |---|---|---|---|---|
+  | diálogo (.25 .25 .70 .10 .10 .10) | −3,1 dB | −6,9 dB | −9,5 dB | −3,8 |
+  | acción (.45 .45 .35 .60 .55 .55) | −4,4 dB | −7,7 dB | −7,0 dB | −9,0 |
+  | música (.70 .70 .10 .20 .35 .35) | −3,1 dB | −9,2 dB | −7,5 dB | −9,6 |
+  | **todo a tope** (1 1 1 1 1 1, en fase) | **0,0 dB** | **0,0 dB** | 0,0 dB | −7,5 |
+  | solo central | 0,0 dB | −6,0 dB (=0,50) | −10,7 dB (=0,29) | −3,0 |
+  | solo surrounds | 0,0 dB | −16,5 dB (=0,15) | −10,7 dB (=0,29) | −13,5 |
+
+  1. **No recorta, confirmado** (punto 2): en el peor caso posible —los seis canales a fondo y en fase— el downmix sale a **0,0 dBFS exactos**, ni un dB por encima del origen, porque los coeficientes suman 1,0. En todas las mezclas `pico voz ≤ pico 5.1`, así que la normalización `peak` (que mide en el origen) sigue siendo válida.
+  2. **Cuánto destaca la voz** (punto 3, contra el downmix estándar de ffmpeg): el central sale **+4,7 dB** (0,50 frente a 0,29) y los surrounds **−5,8 dB** (0,15 frente a 0,29) → **+10,5 dB de contraste voz/ambiente** (la teoría dice 20·log10(0,5/0,15) = 10,46 dB). Es MUCHO: ahí está el riesgo de "karaoke", sobre todo en mezclas de acción.
+  3. **Baja el volumen general**: entre 3,8 y 9,6 LUFS por debajo del estándar según cuánto ambiente tenga la mezcla. Con `loudnorm` detrás se recupera solo; con volumen `peak` o sin normalizar, se nota.
+
+  Dos trampas de ffmpeg que salieron al montar la medida, por si se repite: el generador **`sine` sale a 1/8 de escala** (−18,1 dBFS medido en 8.1.2), así que para niveles exactos hay que usar `aevalsrc=sin(2*PI*f*t)`; y **`join` adivina el reparto de canales** si no se le da `map=` —con seis entradas mono coloca la tercera en FR, y la "voz sola" salía a 0,35 (el coeficiente frontal) en vez de a 0,50—.
 
 **Decisión:** si los coeficientes por defecto convencen → promocionar (quitar el flag `test.betaDownmix` y el `[beta]`); si no, ajustar los defaults.
 
@@ -47,7 +61,13 @@
 
 ## Sistema de ejecución única (todo en un solo ffmpeg)
 
-**Estado:** 🧪 BETA (implementado en v4.5.0). `test.betaOnePass` (off por defecto) activa el modo; `lib/OnePass.psm1` (`Test-CvOnePassEligible`/`Get-CvOnePassArgs`/`Invoke-CvOnePass`) funde audio+vídeo+multiplexado en un único ffmpeg con `-filter_complex` cuando el job es elegible (encode+encode, sincronía `adelay`, volumen `loudnorm`, sin HDR); en el resto, pipeline por etapas. Verificado con tests unitarios y **batería E2E** (`run-tests.ps1 -OnePass`, 15/15 con `libx264`). **Qué falta para promocionar:** validar en uso real (con recorte de bordes, subtítulos ASS + adjuntos de fuentes, capítulos, multipista y HDR→SDR excluido correctamente); comparar tamaño/tiempo frente al pipeline por etapas; decidir si se extiende a `peak`/`aacgain` (hoy fuera por diseño). Las decisiones de diseño de abajo quedan resueltas así: (1) **convive** con el pipeline actual (no lo sustituye); (2) **multipista** soportada (una rama de audio por pista); (3) **error** de una pasada = falla el archivo y reintenta según la política del worker; (4) modo pruebas (`-t`) soportado, `copy` va por etapas.
+**Estado:** 🚦 **RC desde el 27/09/2026** (implementada en v4.5.0 como beta). La clave sale del cajón de pruebas y pasa a **`encode.onePass`**, **activada de serie**; se retira `test.betaOnePass` sin alias. `lib/OnePass.psm1` (`Test-CvOnePassEligible`/`Get-CvOnePassArgs`/`Invoke-CvOnePass`) funde audio+vídeo+multiplexado en un único ffmpeg con `-filter_complex` cuando el job es **elegible** (encode+encode, sincronía `adelay`, volumen `loudnorm` **o `peak`**, sin HDR); lo que no encaja sigue yendo por etapas sin que haya que decidir nada. Mientras esté en RC, el log lo marca **`[rc]`**.
+
+**Por qué RC y no estable:** lleva tiempo en uso real (Javier, con la beta activada en su config) sin problemas, y la batería E2E pasa **16/16 con `libx265`** por ese camino. Lo que aún **no** ha pasado por una comprobación deliberada: subtítulos **ASS con fuentes adjuntas**, **capítulos**, **multipista** y que el **HDR→SDR** se excluya solo en material de verdad. Cuando eso se vea en uso, se quita el `[rc]` (log + ayuda de la clave) y se queda estable.
+
+**Ojo con la batería:** hasta el 27/09/2026 el config aislado de `run-tests.ps1` se construía sobre el config **del usuario**, así que con la beta activada en él la tanda "por etapas" iba en realidad **por una pasada** y los dos modos probaban lo mismo. Ya se fija `encode.onePass` en los dos sentidos (`-OnePass` = `true`, sin él = `false`). Mismo error que el de `paths`: lo que decide el comportamiento se pone, no se hereda.
+
+Las decisiones de diseño de abajo quedan resueltas así: (1) **convive** con el pipeline por etapas (no lo sustituye); (2) **multipista** soportada (una rama de audio por pista); (3) **error** de una pasada = falla el archivo y reintenta según la política del worker; (4) modo pruebas (`-t`) soportado, `copy` va por etapas; (5) **`peak` SÍ** entra (pasada de análisis previa barata, como el pipeline por etapas); solo **`aacgain`** queda fuera por diseño (aplica ReplayGain sobre el `.m4a` intermedio, que en una pasada no existe).
 
 **Historial (idea validada antes de implementar):**
 

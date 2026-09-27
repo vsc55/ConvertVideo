@@ -598,7 +598,7 @@ while ($didAny) {
                 if (-not $ok) { $failReason = (Get-CvText -Key 'cv.1pass.mal') }
             }
             else {
-            if ($jctx.Debug -and $jctx.BetaOnePass) { Write-CvLog 'WORKER' (Get-CvText -Key 'cv.1pass.no' -Values @($onePass.Reason)) }
+            if ($jctx.Debug -and $jctx.OnePass) { Write-CvLog 'WORKER' (Get-CvText -Key 'cv.1pass.no' -Values @($onePass.Reason)) }
 
             # ---------- AUDIO ----------
             if ($jctx.Debug) { Write-Host '' }

@@ -21,7 +21,7 @@ param(
     [ValidateSet('hevc_nvenc','h264_nvenc','libx265','libx264','copy')]
     [string]$Encoder = 'hevc_nvenc',
     [switch]$Keep,
-    # Ejecuta la bateria por la ruta de UNA SOLA PASADA (BETA): activa test.betaOnePass en el config
+    # Ejecuta la bateria por la ruta de UNA SOLA PASADA: pone encode.onePass en el config
     # aislado (el volumen por defecto, 'loudnorm', ya es elegible). Misma verificacion de salidas.
     [switch]$OnePass
 )
@@ -191,7 +191,7 @@ $tempRoot = Join-Path $env:TEMP ('cv-test-' + [guid]::NewGuid().ToString('N'))
 $results = @()
 
 Write-Host ''
-Write-Host ('=== BATERIA DE TESTS (encoder={0}{1}) ===' -f $Encoder, $(if ($OnePass) { ', UNA SOLA PASADA [beta]' } else { '' })) -ForegroundColor Cyan
+Write-Host ('=== BATERIA DE TESTS (encoder={0}{1}) ===' -f $Encoder, $(if ($OnePass) { ', UNA SOLA PASADA [rc]' } else { ', POR ETAPAS' })) -ForegroundColor Cyan
 Write-Host ('Root aislado: {0}' -f $tempRoot)
 
 # --- Root AISLADO: no se toca NADA del proyecto real (ni config.json ni carpetas de trabajo).
@@ -210,12 +210,14 @@ try {
     $cfg['behavior']['separateWindow']  = $false   # codificar inline (no ventanas aparte)
     $cfg['behavior']['lockCloseButton'] = $false   # no tocar el boton X de la ventana
     $cfg['behavior']['log']             = $false   # sin transcript
-    if ($OnePass) {
-        # Ruta de una sola pasada (BETA): activar el flag. Se usa el volumen POR DEFECTO ('loudnorm'),
-        # que es elegible y va en el propio filtergraph (sin pasada de analisis previa, que solo hace
-        # falta con 'peak'); asi el E2E ejercita el camino real de serie. syncAdelay ya es true.
-        $cfg['test']['betaOnePass'] = $true
-    }
+    # La ruta -una sola pasada o por etapas- se FIJA aqui en los dos sentidos, no se hereda. El
+    # config base sale del config del USUARIO (Get-CvConfig), asi que si quien lanza la bateria tiene
+    # encode.onePass a su gusto, la tanda "por etapas" se iba en realidad por una pasada y nadie se
+    # enteraba: los dos caminos pasan los mismos casos. Paso de verdad (27/09/2026), y es el mismo
+    # error que ya se arreglo con 'paths': lo que decide el comportamiento se pone, no se hereda.
+    # Con -OnePass se usa ademas el volumen POR DEFECTO ('loudnorm'), elegible y resuelto en el propio
+    # filtergraph (sin pasada de analisis previa, que solo hace falta con 'peak'). syncAdelay ya es true.
+    $cfg['encode']['onePass'] = [bool]$OnePass
     # Y las CARPETAS DE TRABAJO, siempre bajo el root aislado. Sin esto se heredan las del config
     # del usuario ('paths.base' o cualquiera de las cuatro) y la bateria escribe en SU material:
     # paso de verdad -una corrida dejo las fixtures y sus salidas en la carpeta buena-. Las claves

@@ -36,7 +36,7 @@ Esquema completo (tras la fusión con los defaults):
 {
   "downloads":   { "ffmpeg": {...}, "aacgain": {...}, "sevenzip": {...}, "mkvtoolnix": {...} },
   "languages":   { "audio": [...], "subtitle": [...] },
-  "encode":      { "outputExtension": "mkv", "extensions": ["avi","flv","mp4","mov","mkv"], "threads": 0,
+  "encode":      { "onePass": true, "outputExtension": "mkv", "extensions": ["avi","flv","mp4","mov","mkv"], "threads": 0,
                    "video": { "videoEncoder": "hevc_nvenc", "videoProfile": "main10", "videoLevel": "5.0", "fps": "23.976", "forceFps": true, "multipass": "off", "tonemapHdr": "auto", "tonemapCurve": "bt.2390", "anamorphic": "square", "qualityCheck": "off",
                               "auto": { "gpuOnly": false, "maxCodec": "", "crf": 23, "crfAv1": 30, "qmin": 1, "qmax": 23, "level": "5.0" },
                               "tuning": { "presetNvenc": "slow", "presetX26x": "slow", "presetSvtav1": "6", "presetAv1Nvenc": "p6", "rcLookahead": 32, "refs": 4, "tier": "high" },
@@ -51,7 +51,7 @@ Esquema completo (tras la fusión con los defaults):
   "postprocess": { "stripTags": true, "mkvpropedit": "", "attachments": { "keep": false, "fonts": true, "covers": false, "other": false } },
   "behavior":    { "cleanTemps": true, "separateWindow": true, "lockCloseButton": true, "log": true, "workers": 2, "retries": 2, "progress": true, "promptTimeout": { "default": 0, "sync": 5, "border": 10, "animation": 10, "anamorphic": 10, "audioSync": 15, "video": -1, "audio": -1, "subtitle": -1, "subtitleLang": 15 }, "promptTimeoutStopOnType": true },
   "debug":       { "enabled": false, "pausePerCommand": true },
-  "test":        { "enabled": false, "minutes": 5, "betaDownmix": false, "betaOnePass": false },
+  "test":        { "enabled": false, "minutes": 5, "betaDownmix": false },
   "console":     { "background": "DarkBlue", "foreground": "Yellow", "font": "Cascadia Code", "fontSize": 18, "windowWidth": 150, "windowHeight": 40, "sepWidth": 64, "progressBarWidth": 20, "asciiMarks": false },
   "ui":          { "language": "auto" },
   "gui":         { "theme": "system", "rememberLayout": true, "confirmCloseWithWorkers": true, "queueWidth": 1320, "queueHeight": 760, "queueSplitPercent": 52, "setupWidth": 1040, "setupHeight": 800 },
@@ -105,6 +105,7 @@ Los textos no están en el código: están en `lang\<idioma>.json`, una clave po
 
 | Clave | Ejemplo | Uso |
 |---|---|---|
+| `onePass` | `true` | **🚦 RC.** Funde audio + vídeo + multiplexado en **una sola ejecución de ffmpeg**, en vez de tres con temporales entre medias. **Activado de serie**, pero solo se aplica donde encaja: la **elegibilidad** (códec/sincronía/volumen/HDR) y el flujo están en [ref-flujo.md](ref-flujo.md) (fuente única), y lo que no encaja sigue yendo por etapas sin que haya que decidir nada. Con `false`, todo por etapas. Mientras esté en RC el log lo marca `[rc]`. |
 | `outputExtension` | `"mkv"` | Extensión del contenedor de salida. |
 | `extensions` | `["avi","flv","mp4","mov","mkv"]` | Extensiones de **entrada** que se procesan de `Original\` (sin punto; se tolera `.ext`/`*.ext`). Añade aquí `ts`, `webm`, `m4v`… si las necesitas. |
 | `threads` | `0` | `-threads` de ffmpeg. **`0` = auto**: el encoder decide y, en la práctica, usa **todos los núcleos** de CPU. Pon un número `N` para limitarlo a N hilos. |
@@ -312,7 +313,6 @@ Codifica solo un tramo del principio de cada archivo, para validar un perfil/aju
 | `enabled` | `false` | Activa el modo pruebas: codifica solo los **primeros `minutes` minutos** de cada archivo (el resto se descarta). Se avisa al arrancar y en el resumen (la salida es un **recorte**, no el archivo completo). Funciona con todos los perfiles, incluido `copy` (recorta también el vídeo copiado del original y los subtítulos/capítulos al mismo tramo). | `test_on` |
 | `minutes` | `5` | Minutos que se codifican por archivo cuando `enabled` está activo (mínimo 1). | — |
 | `betaDownmix` | `false` | **🧪 BETA.** Activador del downmix `dialogue` (voz reforzada). **Doble llave**: `encode.audio.downmixMode = "dialogue"` fija el modo, pero solo refuerza la voz si además `betaDownmix = true`. Con `false`, `dialogue` cae al downmix **estándar** de ffmpeg (el worker lo avisa). Ver [explica-audio.md](explica-audio.md). | — |
-| `betaOnePass` | `false` | **🧪 BETA.** Funde audio + vídeo + multiplexado en **una sola ejecución de ffmpeg** (evita los temporales intermedios y dos arranques). `false` (por defecto) = **siempre** por etapas. La **elegibilidad** (códec/sincronía/volumen/HDR) y el flujo están en [ref-flujo.md](ref-flujo.md) (fuente única). | — |
 
 Se aplica con `-t` en la codificación de vídeo, en la de audio (incluidos el wav de sincronía y la medición de pico) y en el multiplex final. `TestLimit` (segundos) en el contexto.
 
