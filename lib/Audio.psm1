@@ -233,13 +233,17 @@ function Show-AudioPreview {
         principio y sin limite; inicio/duracion configurables en preview.start/seconds).
         -AudioPos: posicion 0-based entre las pistas de AUDIO (se selecciona con '-ast a:N').
         -AudioOnly: sin ventana de video ('-nodisp'); si no, muestra el video con esa pista.
+        -Delay (s, > 0): la pista COMO VA A QUEDAR, retrasada con el MISMO filtro que aplica el
+        worker (Get-CvAdelayFilter), para poder comparar con la pista tal cual; sin el, se oye el
+        original. Un retardo <= 0 no anade filtro: no hay nada que corregir.
     #>
     param(
         [Parameter(Mandatory)]$Context, [Parameter(Mandatory)][string]$File,
-        [int]$AudioPos, [string]$Label = 'AUDIO', [switch]$AudioOnly, [int]$Start = -1, [int]$Seconds = -1, [double]$Duration = 0
+        [int]$AudioPos, [string]$Label = 'AUDIO', [switch]$AudioOnly, [int]$Start = -1, [int]$Seconds = -1, [double]$Duration = 0, [double]$Delay = 0
     )
     $extra = @('-ast', ("a:{0}" -f $AudioPos))
     if ($AudioOnly) { $extra += '-nodisp' }
+    if ($Delay -gt 0) { $extra += @('-af', (Get-CvAdelayFilter -Sync $Delay)) }
     $modo = if ($AudioOnly) { (Get-CvText -Key 'au.solo') } else { (Get-CvText -Key 'au.video') }
     Write-CvLog 'AUDIO' (Get-CvText -Key 'au.repro' -Values @($Label, $modo)) -Indent 3
     Invoke-CvPreview -Context $Context -File $File -ExtraArgs $extra -Label $Label -Start $Start -Seconds $Seconds -Duration $Duration

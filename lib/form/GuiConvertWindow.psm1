@@ -272,6 +272,36 @@ function Show-CvConvertWindow {
     $optFlow.Controls.Add($lblKHelp)
     [void](Set-CvGuiWrapLabel -Label $lblKHelp -Container $optFlow)
 
+    # Minimizar al AREA DE NOTIFICACION en vez de a la barra de tareas.
+    $chkTray = New-Object System.Windows.Forms.CheckBox
+    $chkTray.Text     = (Get-CvText -Key 'cola.opt.tray')
+    $chkTray.AutoSize = $true
+    $chkTray.Checked  = [bool]$Context.GuiMinToTray
+    $chkTray.Margin   = New-Object System.Windows.Forms.Padding(0, 12, 0, 0)
+    $chkTray.Name     = 'cvMinToTray'
+    $optFlow.Controls.Add($chkTray)
+
+    $lblTHelp = New-Object System.Windows.Forms.Label
+    $lblTHelp.Text      = (Get-CvText -Key 'cola.opt.tray.h')
+    $lblTHelp.Name      = 'cvTrayHelp'
+    $lblTHelp.ForeColor = (Get-CvGuiCurrentPalette).Muted
+    $lblTHelp.Margin    = New-Object System.Windows.Forms.Padding(2, 0, 0, 0)
+    $optFlow.Controls.Add($lblTHelp)
+    [void](Set-CvGuiWrapLabel -Label $lblTHelp -Container $optFlow)
+
+    $chkTray.Add_CheckedChanged({
+        try { $Context.GuiMinToTray = [bool]$chkTray.Checked } catch { }
+        if ("$CfgPath" -ne '') {
+            $r = Set-CvConfigValue -Path $CfgPath -Key 'gui/minimizeToTray' -Value ([bool]$chkTray.Checked)
+            if (-not $r.Ok) { Show-CvGuiInfo -Title (Get-CvText -Key 'cola.tab.opciones') -Message (Get-CvText -Key 'cola.opt.noguardado' -Values @($CfgName, $r.Error)) }
+        }
+    })
+
+    # El icono de la barra se monta SIEMPRE (no cuesta nada y no se ve hasta que hace falta): lo que
+    # manda es la casilla, que se consulta en cada minimizado, asi que marcarla vale al momento.
+    $tray = Add-CvGuiTrayIcon -Form $form -Text "$($form.Text)" -BalloonMs ([int]$Context.GuiTrayBalloonMs) `
+        -Enabled { [bool]$chkTray.Checked }
+
     $chkKeep.Add_CheckedChanged({
         # Al config (para los jobs que se preparen despues) y al contexto vivo de esta ventana, que
         # es el que usa el editor de jobs que se abra desde aqui.
@@ -740,6 +770,9 @@ function Show-CvConvertWindow {
         # puesta y mata la siguiente ejecucion sin que se sepa por que.
         if ($stopping -and $live.Count -eq 0) { Clear-CvWorkerStop -Context $Context; $stopping = $false; $st.Stopping = $false }
         $lblTot.Text = Get-CvQueueSummaryLine -Totals (Get-CvQueueTotals -Rows $rows) -Workers $live.Count -Stopping $stopping
+        # Escondida en la barra, el rotulo del icono es lo unico que se ve: que diga lo mismo que el
+        # pie (cuantos hay, cuantos se estan codificando), recortado a lo que admite.
+        [void](Set-CvGuiTrayText -Icon $tray -Text $lblTot.Text)
 
         # El plazo de gracia del arranque se acaba en cuanto se ve el primer worker.
         if ($live.Count -gt 0) { $st.StartedAt = 0 }
@@ -1188,6 +1221,9 @@ function Show-CvConvertWindow {
         & $refresh
         & $fitCols
         $timer.Start()
+        # Y AHORA al frente, con la lista ya pintada. Lanzada desde un acceso directo MINIMIZADO,
+        # esta ventana se abria DETRAS de lo que estuvieras usando (ver Set-CvGuiForeground).
+        if ([bool]$Context.GuiBringToFront) { [void](Set-CvGuiForeground -Form $form) }
     })
     $form.Add_FormClosing({
         param($sender, $e)
@@ -1249,7 +1285,13 @@ function Show-CvConvertWindow {
     # Tema de la SESION (lo fija el lanzador con lo que diga la config, y lo cambia el boton
     # "Tema" de la cola): asi una ventana que se abre DESPUES de cambiarlo sale ya con el nuevo.
     [void](Set-CvGuiTheme -Form $form)
-    [void]$form.ShowDialog()
+    # Application.Run y NO ShowDialog: esta es la ventana PRINCIPAL y tiene que poder ESCONDERSE
+    # (en el area de notificacion) sin cerrarse. Sobre un dialogo modal, tanto Hide() como tocar
+    # ShowInTaskbar TERMINAN su bucle -medido con la cola de verdad: minimizarla cerraba el
+    # programa-. Con Run, el bucle vive hasta que la ventana se CIERRA, que es lo que queremos.
+    # Si ya hubiera un bucle en marcha (ventana abierta desde otra), Run no vale y se usa el modal.
+    if ([System.Windows.Forms.Application]::MessageLoop) { [void]$form.ShowDialog() }
+    else { [System.Windows.Forms.Application]::Run($form) }
     $timer.Dispose()
     $form.Dispose()
     return $true

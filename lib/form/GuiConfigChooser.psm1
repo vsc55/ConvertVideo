@@ -91,6 +91,10 @@ function Show-CvSetupConfigChooser {
     $btnCancel.Add_Click({ $st.Path = ''; $form.Close() })
 
     [void](Set-CvGuiTheme -Form $form)   # tema de la sesion
+    # Es la PRIMERA ventana del programa y aqui todavia no hay contexto (ni configuracion: es lo
+    # que se esta eligiendo), asi que se pone delante siempre: detras no se veria nada y pareceria
+    # que el lanzador no ha hecho nada.
+    $form.Add_Shown({ [void](Set-CvGuiForeground -Form $form) })
     [void]$form.ShowDialog()
     $form.Dispose()
     return $st.Path

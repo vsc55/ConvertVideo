@@ -264,6 +264,17 @@ function Resolve-CvCropAutoDecision {
     }
 }
 
+function Get-CvCropSampleWindow {
+    <#
+        Los segundos que escanea CADA punto de la deteccion de bordes. Tiene suelo: por debajo de 5 s
+        cropdetect no ve lo suficiente (un fundido a negro o un plano oscuro mandarian el voto), asi
+        que una duracion menor se trata como 5. Esta aparte porque la VENTANA tambien lo necesita:
+        el campo del escaneo ensena lo que se va a usar de verdad y no lo que se teclee.
+    #>
+    param([int]$Duration)
+    return [int][Math]::Max(5, [int]$Duration)
+}
+
 function Find-CropDetectSamples {
     <#
         Escanea bordes en VARIOS puntos repartidos del video y agrupa los recortes por "votos".
@@ -297,7 +308,7 @@ function Find-CropDetectSamples {
         }
     }
 
-    $win = [Math]::Max(5, [int]$Duration)                       # cada punto escanea $Duration (no se reparte)
+    $win = Get-CvCropSampleWindow -Duration $Duration           # cada punto escanea $Duration (no se reparte)
     $lastStart = [Math]::Max($Start, [int]($VideoDuration - $win - 1))
     $crops = @()
     for ($i = 0; $i -lt $Samples; $i++) {

@@ -848,6 +848,18 @@ Add-Type -Namespace CvGui -Name Native -MemberDefinition @'
     public static extern int SetWindowTheme(System.IntPtr hwnd, string app, string idlist);
     [DllImport("user32.dll")]
     public static extern bool SetWindowPos(System.IntPtr hwnd, System.IntPtr after, int x, int y, int cx, int cy, uint flags);
+    [DllImport("user32.dll")]
+    public static extern System.IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")]
+    public static extern bool SetForegroundWindow(System.IntPtr hwnd);
+    [DllImport("user32.dll")]
+    public static extern bool BringWindowToTop(System.IntPtr hwnd);
+    [DllImport("user32.dll")]
+    public static extern uint GetWindowThreadProcessId(System.IntPtr hwnd, System.IntPtr pid);
+    [DllImport("user32.dll")]
+    public static extern bool AttachThreadInput(uint hiloA, uint hiloB, bool enganchar);
+    [DllImport("kernel32.dll")]
+    public static extern uint GetCurrentThreadId();
 '@ -ErrorAction SilentlyContinue
 
 $script:CvGuiTheme   = ''     # tema RESUELTO de esta sesion ('light' / 'dark')
@@ -1761,6 +1773,166 @@ function Set-CvGuiTheme {
     return $pal
 }
 
+function Set-CvGuiForeground {
+    <#
+        Trae una ventana AL FRENTE y le da el foco DE VERDAD. Suena a una linea y no lo es: Windows
+        no deja que un proceso que no esta en primer plano se ponga delante por las buenas -Activate
+        y BringToFront se quedan en parpadear el boton de la barra de tareas-, y eso es justo lo que
+        pasa al arrancar desde un acceso directo MINIMIZADO: el proceso nace sin derecho de primer
+        plano y su ventana sale DETRAS de lo que estuvieras usando.
+
+        Escalera, parando en cuanto la ventana ya esta delante:
+          1) restaurarla si esta minimizada, Activate + BringToFront (basta si tenemos el derecho);
+          2) engancharse a la cola de entrada del hilo que TIENE el primer plano (AttachThreadInput):
+             mientras dura, SetForegroundWindow si funciona. Se suelta siempre, incluso si falla;
+          3) TopMost un instante y quitarlo, que es lo unico que queda cuando lo demas no cuela.
+
+        Fail-soft: nunca lanza (una ventana detras es un incordio, no un motivo para no abrirla) y
+        devuelve si lo ha conseguido. Es para la ventana PRINCIPAL que abre un lanzador, no para los
+        dialogos: uno modal ya sale sobre su padre.
+    #>
+    param([Parameter(Mandatory)]$Form)
+    try {
+        if ($null -eq $Form -or -not $Form.IsHandleCreated) { return $false }
+        $h = $Form.Handle
+        if ($Form.WindowState -eq [System.Windows.Forms.FormWindowState]::Minimized) { $Form.WindowState = 'Normal' }
+        $Form.Activate()
+        $Form.BringToFront()
+        if ([CvGui.Native]::GetForegroundWindow() -eq $h) { return $true }
+
+        $fg = [CvGui.Native]::GetForegroundWindow()
+        $hiloFg = 0
+        if ($fg -ne [System.IntPtr]::Zero) { $hiloFg = [CvGui.Native]::GetWindowThreadProcessId($fg, [System.IntPtr]::Zero) }
+        $mio = [CvGui.Native]::GetCurrentThreadId()
+        $pegado = $false
+        if ($hiloFg -ne 0 -and $hiloFg -ne $mio) { $pegado = [CvGui.Native]::AttachThreadInput($hiloFg, $mio, $true) }
+        try {
+            [void][CvGui.Native]::BringWindowToTop($h)
+            [void][CvGui.Native]::SetForegroundWindow($h)
+        } finally {
+            if ($pegado) { [void][CvGui.Native]::AttachThreadInput($hiloFg, $mio, $false) }
+        }
+        if ([CvGui.Native]::GetForegroundWindow() -eq $h) { return $true }
+
+        $Form.TopMost = $true
+        [System.Windows.Forms.Application]::DoEvents()
+        $Form.TopMost = $false
+        $Form.Activate()
+        return ([CvGui.Native]::GetForegroundWindow() -eq $h)
+    } catch { return $false }
+}
+
+function Set-CvGuiTrayText {
+    <#
+        El rotulo del icono del area de notificacion. Va aparte por un detalle que revienta:
+        NotifyIcon.Text no admite mas de 63 caracteres y pasarse LANZA, asi que se recorta.
+    #>
+    param($Icon, [string]$Text = '')
+    if ($null -eq $Icon) { return $Icon }
+    try {
+        $t = "$Text"
+        if ($t.Length -gt 63) { $t = $t.Substring(0, 60) + '...' }
+        $Icon.Text = $t
+    } catch { }
+    return $Icon
+}
+
+function Add-CvGuiTrayIcon {
+    <#
+        Al MINIMIZAR, la ventana se va al AREA DE NOTIFICACION (junto al reloj) en vez de quedarse en
+        la barra de tareas: se queda minimizada pero SIN boton en la barra, y deja su icono. Vuelve
+        con doble clic o con 'Abrir' en su menu, y vuelve DELANTE (Set-CvGuiForeground: una ventana
+        restaurada detras no se ve).
+
+        OJO: la ventana que lo use tiene que abrirse con Application.Run, NO con ShowDialog. Sobre
+        un dialogo modal, tanto Hide() como tocar ShowInTaskbar TERMINAN su bucle: la ventana se
+        cierra al minimizarla -medido con la cola de verdad, que por eso abre con Run-.
+
+        -Enabled se consulta EN CADA minimizado, asi que la casilla que lo manda se puede cambiar sin
+        volver a montar nada. -BalloonMs (0 = nunca) ensena UNA vez por sesion el aviso de donde se
+        ha metido la ventana: sin el, la primera vez parece que se ha cerrado.
+
+        Los manejadores se cierran sobre las variables de aqui con GetNewClosure() a proposito: esta
+        funcion RETORNA y sus locales se irian, que es como pierde su temporizador quien lo crea
+        dentro de un manejador (ver ref-gotchas.md).
+
+        Devuelve el NotifyIcon: hace falta para ponerle el estado (Set-CvGuiTrayText) y, sobre todo,
+        para apagarlo al cerrar -un NotifyIcon sin Dispose deja el icono FANTASMA en la barra hasta
+        que pasas el raton por encima-, cosa que ya hace solo al cerrarse la ventana.
+    #>
+    param(
+        [Parameter(Mandatory)]$Form,
+        [string]$Text = '',
+        [scriptblock]$Enabled = $null,
+        [int]$BalloonMs = 0
+    )
+    $ni = $null
+    try {
+        $ni = New-Object System.Windows.Forms.NotifyIcon
+        $ico = Get-CvGuiAppIcon
+        if ($null -ne $ico) { $ni.Icon = $ico }
+        [void](Set-CvGuiTrayText -Icon $ni -Text $Text)
+
+        $menu = New-Object System.Windows.Forms.ContextMenuStrip
+        $miAbrir  = $menu.Items.Add((Get-CvText -Key 'comun.abrir'))
+        $miCerrar = $menu.Items.Add((Get-CvText -Key 'comun.cerrar'))
+        $ni.ContextMenuStrip = $menu
+        [void](Set-CvGuiMenuTheme -Menu $menu -Palette (Get-CvGuiCurrentPalette))
+
+        # Ultimo = como estaba la ventana ANTES de minimizarla. Sin esto, volver la dejaba siempre
+        # en 'Normal': una ventana maximizada volvia pequena, y ademas cerrar desde el icono habria
+        # guardado en el layout que NO estaba maximizada.
+        $est = @{
+            Avisado = $false
+            Ultimo  = [System.Windows.Forms.FormWindowState]::Normal
+        }
+        $volver = {
+            try {
+                $Form.Show()
+                $Form.WindowState = $est.Ultimo
+                $ni.Visible = $false
+                [void](Set-CvGuiForeground -Form $Form)
+            } catch { }
+        }.GetNewClosure()
+        $ni.Add_DoubleClick($volver)
+        $miAbrir.Add_Click($volver)
+        # Cerrar desde el menu pasa por el cierre NORMAL de la ventana (con su confirmacion si hay
+        # workers), no por un Dispose a traicion.
+        $miCerrar.Add_Click({
+            try {
+                # Se devuelve a como estaba antes de cerrar: quien guarde su tamano al cerrarse
+                # (la cola lo hace) apuntaria 'no maximizada' si se cerrara escondida.
+                $Form.Show()
+                $Form.WindowState = $est.Ultimo
+                $Form.Close()
+            } catch { }
+        }.GetNewClosure())
+
+        $Form.Add_Resize({
+            try {
+                if ($Form.WindowState -ne [System.Windows.Forms.FormWindowState]::Minimized) {
+                    # Maximizada o normal: se apunta, que es a lo que hay que volver.
+                    $est.Ultimo = $Form.WindowState
+                    return
+                }
+                if ($null -ne $Enabled -and -not (& $Enabled)) { return }
+                $ni.Visible = $true
+                $Form.Hide()
+                if ($BalloonMs -gt 0 -and -not $est.Avisado) {
+                    $est.Avisado = $true
+                    $ni.BalloonTipTitle = "$($ni.Text)"
+                    $ni.BalloonTipText  = (Get-CvText -Key 'gui.tray.oculta')
+                    $ni.ShowBalloonTip($BalloonMs)
+                }
+            } catch { }
+        }.GetNewClosure())
+        $Form.Add_FormClosed({
+            try { $ni.Visible = $false; $ni.Dispose() } catch { }
+        }.GetNewClosure())
+    } catch { $ni = $null }
+    return $ni
+}
+
 function New-CvGuiProgressPanel {
     <#
         Barra de progreso PINTADA a mano. La del sistema ignora los colores (la dibuja Windows), asi
@@ -2059,6 +2231,10 @@ function New-CvGuiCatalogControl {
         Campos que entiende: Kind, Name, Text, Width, Height, Gap (margen por la izquierda) y Fill
         ($true = Dock Fill, lo normal dentro de una rejilla). Un Kind que no conozca es un error y
         no un control en blanco: un hueco silencioso en una ventana no se ve hasta que falta algo.
+
+        'flow' es una celda con VARIOS controles pequenos dentro (etiqueta + campo + etiqueta +
+        campo...), en su campo Items y con el mismo formato: una celda de una rejilla solo admite un
+        control, y partirla en columnas sueltas descuadraria las demas filas.
     #>
     param(
         [Parameter(Mandatory = $true)]$Item,
@@ -2101,6 +2277,15 @@ function New-CvGuiCatalogControl {
                 $c.Margin = New-Object System.Windows.Forms.Padding($gap, 3, 3, 3)
             }
         }
+        'flow' {
+            $c = New-Object System.Windows.Forms.FlowLayoutPanel
+            $c.FlowDirection = 'LeftToRight'
+            $c.WrapContents  = $false
+            $c.AutoSize      = $true
+            $c.Margin        = New-Object System.Windows.Forms.Padding($gap, 0, 3, 0)
+            if ($fill) { $c.Dock = 'Fill' }
+            foreach ($sub in @($Item.Items | Where-Object { $null -ne $_ })) { $c.Controls.Add((New-CvGuiCatalogControl -Item $sub -FontSize $FontSize)) }
+        }
         'combo' {
             $c = New-Object System.Windows.Forms.ComboBox
             $c.DropDownStyle = 'DropDownList'
@@ -2129,6 +2314,7 @@ function Add-CvGuiBarItems {
         $c = New-CvGuiCatalogControl -Item $it -FontSize $FontSize
         $Bar.Controls.Add($c)
         if ("$($it.Name)" -ne '') { $out["$($it.Name)"] = $c }
+        foreach ($sub in @($c.Controls)) { if ("$($sub.Name)" -ne '') { $out["$($sub.Name)"] = $sub } }
     }
     return $out
 }
@@ -2140,7 +2326,9 @@ function Add-CvGuiFormRows {
 
         Cada fila: @{ Label = 'Recorte:'; Cells = @(...) }, y cada celda una entrada de catalogo
         (ver New-CvGuiCatalogControl) con Span opcional. Las celdas se van colocando a partir de la
-        columna 1, cada una detras de la anterior. Devuelve la tabla Nombre -> control.
+        columna 1, cada una detras de la anterior. Devuelve la tabla Nombre -> control, y los
+        controles de dentro de una celda 'flow' salen en ella igual que los de primer nivel: la
+        ventana los coge por su nombre sin saber que estan anidados.
     #>
     param(
         [Parameter(Mandatory = $true)]$Grid,
@@ -2162,6 +2350,7 @@ function Add-CvGuiFormRows {
             if ($null -ne $cell.Span) { $span = [int]$cell.Span }
             if ($span -gt 1) { $Grid.SetColumnSpan($c, $span) }
             if ("$($cell.Name)" -ne '') { $out["$($cell.Name)"] = $c }
+            foreach ($sub in @($c.Controls)) { if ("$($sub.Name)" -ne '') { $out["$($sub.Name)"] = $sub } }
             $x += $span
         }
         $y++

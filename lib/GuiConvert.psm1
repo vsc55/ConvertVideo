@@ -462,4 +462,35 @@ function Get-CvConvertLogChoices {
     return @($out)
 }
 
+function Get-CvPrepareEndState {
+    <#
+        PURO. Como queda la ventana de PREPARAR PENDIENTES cuando el recorrido TERMINA: el resumen
+        que se escribe abajo, con que rol de color se pinta y si la ventana se cierra sola.
+
+        Que se cierre sola es la casilla 'Cerrar al terminar' (gui.prepareAutoClose), y solo vale
+        cuando ha ido todo bien: si algo ha FALLADO o se ha CANCELADO a medias, la ventana se queda,
+        porque ese resumen es el unico sitio donde se cuenta lo que ha pasado -cerrarla sola seria
+        tirar el aviso-. Omitir un archivo (cerrar su editor sin guardar) SI es un final normal: lo
+        ha decidido quien estaba mirando.
+
+        Devuelve @{ Text; Role; Close }.
+    #>
+    param(
+        [int]$Done = 0,
+        [int]$Manual = 0,
+        [int]$Skipped = 0,
+        [int]$Failed = 0,
+        [switch]$Cancelled,
+        [switch]$AutoClose
+    )
+    $bien = ((-not $Cancelled) -and ($Failed -le 0))
+    return [pscustomobject]@{
+        Text  = (Get-CvText -Key 'prep.hecho' -Values @(
+                    $Done, $Manual, $Skipped, $Failed,
+                    $(if ($Cancelled) { (Get-CvText -Key 'prep.cancelado') } else { '' })))
+        Role  = $(if ($bien) { 'ok' } else { 'warn' })
+        Close = [bool]($AutoClose -and $bien)
+    }
+}
+
 Export-ModuleMember -Function *

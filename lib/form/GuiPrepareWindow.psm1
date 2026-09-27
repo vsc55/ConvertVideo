@@ -46,6 +46,7 @@ function Show-CvPrepareWindow {
         Failed  = 0
         Cancel  = $false
         Running = $true
+        CloseAt = $null       # cuando cerrarse sola (casilla 'Cerrar al terminar')
     }
 
     $form = New-Object System.Windows.Forms.Form
@@ -103,10 +104,16 @@ function Show-CvPrepareWindow {
 
     $foot = New-Object System.Windows.Forms.TableLayoutPanel
     $foot.Dock        = 'Fill'
-    $foot.ColumnCount = 2
+    $foot.ColumnCount = 3
     $foot.RowCount    = 1
     [void]$foot.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 100)))
+    [void]$foot.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Absolute, 170)))
     [void]$foot.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Absolute, 130)))
+    # La FILA tambien lleva estilo. Sin el, un TableLayoutPanel la da por AutoSize y la hace tan
+    # alta como el mayor de sus controles (aqui salian 116 px dentro de un pie de 38): el boton se
+    # estiraba por debajo de lo que se ve y su ROTULO, centrado en esa altura, quedaba FUERA. Por
+    # eso la ventana parecia no tener boton -ni 'Cancelar' ni 'Cerrar'- y no avisaba de nada.
+    [void]$foot.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 100)))
     $grid.Controls.Add($foot, 0, 3)
 
     # Barra pintada, por lo mismo que la del editor: la del sistema no se puede oscurecer.
@@ -115,13 +122,26 @@ function Show-CvPrepareWindow {
     $prog.Margin = New-Object System.Windows.Forms.Padding(3, 8, 12, 8)
     $foot.Controls.Add($prog, 0, 0)
 
+    # Cerrarse sola al acabar: arranca con lo que diga la configuracion (gui.prepareAutoClose) y
+    # lo que se marque aqui se guarda alli, que es lo que se espera de una casilla que se ve cada
+    # vez que preparas. Solo se cierra si ha ido todo bien (ver Get-CvPrepareEndState).
+    $chkAuto = New-Object System.Windows.Forms.CheckBox
+    $chkAuto.Text     = (Get-CvText -Key 'prep.autocerrar')
+    $chkAuto.AutoSize = $true
+    $chkAuto.Anchor   = 'Left'
+    $chkAuto.Margin   = New-Object System.Windows.Forms.Padding(3, 12, 3, 3)
+    $chkAuto.Checked  = [bool]$Context.GuiPrepareAutoClose
+    $chkAuto.Name     = 'cvPrepAutoClose'
+    $foot.Controls.Add($chkAuto, 1, 0)
+    $tip = New-Object System.Windows.Forms.ToolTip
+    $tip.SetToolTip($chkAuto, (Get-CvText -Key 'prep.autocerrar.tip'))
+
     $btnClose = New-Object System.Windows.Forms.Button
     $btnClose.Text   = (Get-CvText -Key 'comun.cancelar')
-    $btnClose.Height = 30
     $btnClose.Dock   = 'Fill'
     $btnClose.Margin = New-Object System.Windows.Forms.Padding(3, 7, 3, 7)
     $btnClose.Name   = 'cvPrepClose'
-    $foot.Controls.Add($btnClose, 1, 0)
+    $foot.Controls.Add($btnClose, 2, 0)
 
     $setRow = {
         param([int]$i, [string]$Estado, [string]$Detalle, [string]$Bordes = $null)
@@ -150,6 +170,20 @@ function Show-CvPrepareWindow {
         [System.Windows.Forms.Application]::DoEvents()
     }
 
+    $chkAuto.Add_CheckedChanged({
+        # Al contexto vivo y al fichero, como hace la cola con sus opciones. Si no se puede escribir
+        # se dice y ya esta: la casilla sigue valiendo para ESTA vuelta.
+        try { $Context.GuiPrepareAutoClose = [bool]$chkAuto.Checked } catch { }
+        $cfgPath = "$($Context.ConfigPath)"
+        if ($cfgPath -ne '') {
+            $r = Set-CvConfigValue -Path $cfgPath -Key 'gui/prepareAutoClose' -Value ([bool]$chkAuto.Checked)
+            if (-not $r.Ok) {
+                [void](Set-CvGuiRole -Control $lblSt -Role 'warn')
+                $lblSt.Text = (Get-CvText -Key 'prep.autocerrar.no' -Values @($r.Error))
+            }
+        }
+    })
+
     $btnClose.Add_Click({
         if ($st.Running) { $st.Cancel = $true; $lblSt.Text = (Get-CvText -Key 'prep.cancelando') }
         else { $form.Close() }
@@ -161,66 +195,102 @@ function Show-CvPrepareWindow {
     $timer = New-Object System.Windows.Forms.Timer
     $timer.Interval = 60
     $timer.Add_Tick({
-        $timer.Stop()
-        if ($st.Cancel -or $st.Index -ge $items.Count) {
-            $st.Running = $false
-            $btnClose.Text = (Get-CvText -Key 'comun.cerrar')
-            [void](Set-CvGuiProgressValue -Bar $prog -Percent 100)
-            $lblSt.Text = (Get-CvText -Key 'prep.hecho' -Values @(
-                $st.Done, $st.Manual, $st.Skipped, $st.Failed, $(if ($st.Cancel) { (Get-CvText -Key 'prep.cancelado') } else { '' })))
-            return
-        }
-
-        $i = $st.Index
-        $f = $items[$i]
-        & $setRow $i (Get-CvText -Key 'prep.est.analizando') ''
-        & $say (Get-CvText -Key 'prep.paso.leer' -Values @(($i + 1), $items.Count, $f.Name))
-
+        # TODO el tick va dentro de un try. Una excepcion en el manejador de un Timer no la
+        # recoge nadie: WinForms la saca como excepcion NO CONTROLADA -el dialogo de .NET con
+        # el volcado- y la ventana se queda colgada, a cerrar a mano. Aqui se cuenta abajo y
+        # el recorrido para, que es lo que se puede hacer sin fingir que no ha pasado nada.
         try {
-            $info = Get-MediaInfo -Context $Context -File $f.Path
-            if ($null -eq $info) {
-                $st.Failed++
-                & $setRow $i (Get-CvText -Key 'prep.est.error') (Get-CvText -Key 'prep.det.noleido')
-            } else {
-                # Regla del prefijo '_': fuerza la deteccion de bordes, igual que en consola.
-                $force = "$($f.Name)".StartsWith('_')
-                $plan = Get-CvJobAutoPlan -Context $Context -Prof $prof -Info $info -File $f.Path -ForceBorder $force -OnStep {
-                    param($t)
-                    & $say (Get-CvText -Key 'prep.paso' -Values @(($i + 1), $items.Count, $f.Name, $t))
+            $timer.Stop()
+            # Cierre diferido: ya ha terminado y la casilla pedia cerrarse sola; solo queda esperar a
+            # que se vea el resumen.
+            if ($null -ne $st.CloseAt) {
+                if ((Get-Date) -ge $st.CloseAt) { $form.Close() } else { $timer.Start() }
+                return
+            }
+            if ($st.Cancel -or $st.Index -ge $items.Count) {
+                # TERMINADO, y que se note: el resumen en verde (o en naranja si algo ha fallado o se ha
+                # cancelado), el titulo lo dice -para verlo desde la barra de tareas sin traer la ventana
+                # delante- y el boton pasa a 'Cerrar', que ademas responde a Intro.
+                $st.Running = $false
+                $fin = Get-CvPrepareEndState -Done $st.Done -Manual $st.Manual -Skipped $st.Skipped -Failed $st.Failed `
+                    -Cancelled:([bool]$st.Cancel) -AutoClose:([bool]$chkAuto.Checked)
+                $btnClose.Text = (Get-CvText -Key 'comun.cerrar')
+                $form.AcceptButton = $btnClose
+                $form.Text = (Get-CvText -Key 'prep.tit.hecho')
+                [void](Set-CvGuiProgressValue -Bar $prog -Percent 100)
+                [void](Set-CvGuiRole -Control $lblSt -Role "$($fin.Role)")
+                $lblSt.Text = "$($fin.Text)"
+                if ($fin.Close) {
+                    # Un respiro antes de cerrar: si se cierra en el mismo tick no se llega a ver ni el
+                    # 100% ni el resumen, y parece que la ventana se ha ido sin hacer nada. La espera se
+                    # apunta en $st y la cuenta ESTE mismo temporizador: uno nuevo creado aqui dentro no
+                    # sirve -cuando salta, su manejador ya no ve la variable donde se guardo, asi que
+                    # peta con 'metodo en una expresion nula' (ver ref-gotchas.md)-.
+                    $st.CloseAt = (Get-Date).AddMilliseconds([Math]::Max(0, [int]$Context.GuiPrepareAutoCloseMs))
+                    $timer.Start()
                 }
-                if (-not $plan.Manual) {
-                    [void](Save-CvJobDraft -Context $Context -Draft $plan.Draft -Info $info)
-                    $st.Done++
-                    # 'Notes' = lo que se ha decidido solo y conviene contar (p. ej. el retardo de
-                    # audio detectado); no obliga a revisar, pero tiene que verse.
-                    $det = (Get-CvText -Key 'prep.det.auto')
-                    if (@($plan.Notes).Count -gt 0) { $det = (Get-CvText -Key 'prep.det.auto.notas' -Values @((@($plan.Notes) -join ' | '))) }
-                    & $setRow $i (Get-CvText -Key 'prep.est.preparado') $det (& $borderCell $plan.Draft $info)
+                return
+            }
+
+            $i = $st.Index
+            $f = $items[$i]
+            & $setRow $i (Get-CvText -Key 'prep.est.analizando') ''
+            & $say (Get-CvText -Key 'prep.paso.leer' -Values @(($i + 1), $items.Count, $f.Name))
+
+            try {
+                $info = Get-MediaInfo -Context $Context -File $f.Path
+                if ($null -eq $info) {
+                    $st.Failed++
+                    & $setRow $i (Get-CvText -Key 'prep.est.error') (Get-CvText -Key 'prep.det.noleido')
                 } else {
-                    & $setRow $i (Get-CvText -Key 'prep.est.revisar') (@($plan.Reasons) -join ' | ') (& $borderCell $plan.Draft $info)
-                    & $say (Get-CvText -Key 'prep.paso.decision' -Values @(($i + 1), $items.Count, $f.Name))
-                    $saved = Show-CvJobWindow -Context $Context -Name $f.Name -File $f.Path -Draft $plan.Draft -Info $info -Reasons $plan.Reasons
-                    if ($saved) {
-                        $st.Done++; $st.Manual++
-                        # Lo que se haya guardado MANDA sobre lo que proponia el borrador: en la
-                        # ventana se puede cambiar el recorte, quitarlo o poner otro escalado.
-                        $final = $plan.Draft
-                        try { $final = Read-CvJobDraft -Context $Context -Name $f.Name } catch { }
-                        & $setRow $i (Get-CvText -Key 'prep.est.preparado') (Get-CvText -Key 'prep.det.revisado') (& $borderCell $final $info)
+                    # Regla del prefijo '_': fuerza la deteccion de bordes, igual que en consola.
+                    $force = "$($f.Name)".StartsWith('_')
+                    $plan = Get-CvJobAutoPlan -Context $Context -Prof $prof -Info $info -File $f.Path -ForceBorder $force -OnStep {
+                        param($t)
+                        & $say (Get-CvText -Key 'prep.paso' -Values @(($i + 1), $items.Count, $f.Name, $t))
+                    }
+                    if (-not $plan.Manual) {
+                        [void](Save-CvJobDraft -Context $Context -Draft $plan.Draft -Info $info)
+                        $st.Done++
+                        # 'Notes' = lo que se ha decidido solo y conviene contar (p. ej. el retardo de
+                        # audio detectado); no obliga a revisar, pero tiene que verse.
+                        $det = (Get-CvText -Key 'prep.det.auto')
+                        if (@($plan.Notes).Count -gt 0) { $det = (Get-CvText -Key 'prep.det.auto.notas' -Values @((@($plan.Notes) -join ' | '))) }
+                        & $setRow $i (Get-CvText -Key 'prep.est.preparado') $det (& $borderCell $plan.Draft $info)
                     } else {
-                        $st.Skipped++
-                        & $setRow $i (Get-CvText -Key 'prep.est.omitido') (@($plan.Reasons) -join ' | ')
+                        & $setRow $i (Get-CvText -Key 'prep.est.revisar') (@($plan.Reasons) -join ' | ') (& $borderCell $plan.Draft $info)
+                        & $say (Get-CvText -Key 'prep.paso.decision' -Values @(($i + 1), $items.Count, $f.Name))
+                        $saved = Show-CvJobWindow -Context $Context -Name $f.Name -File $f.Path -Draft $plan.Draft -Info $info -Reasons $plan.Reasons
+                        if ($saved) {
+                            $st.Done++; $st.Manual++
+                            # Lo que se haya guardado MANDA sobre lo que proponia el borrador: en la
+                            # ventana se puede cambiar el recorte, quitarlo o poner otro escalado.
+                            $final = $plan.Draft
+                            try { $final = Read-CvJobDraft -Context $Context -Name $f.Name } catch { }
+                            & $setRow $i (Get-CvText -Key 'prep.est.preparado') (Get-CvText -Key 'prep.det.revisado') (& $borderCell $final $info)
+                        } else {
+                            $st.Skipped++
+                            & $setRow $i (Get-CvText -Key 'prep.est.omitido') (@($plan.Reasons) -join ' | ')
+                        }
                     }
                 }
+            } catch {
+                $st.Failed++
+                & $setRow $i (Get-CvText -Key 'prep.est.error') "$($_.Exception.Message)"
             }
-        } catch {
-            $st.Failed++
-            & $setRow $i (Get-CvText -Key 'prep.est.error') "$($_.Exception.Message)"
-        }
 
-        $st.Index++
-        [void](Set-CvGuiProgressValue -Bar $prog -Percent $(if ($items.Count -gt 0) { [int](100 * [Math]::Min($items.Count, $st.Index) / $items.Count) } else { 0 }))
-        $timer.Start()
+            $st.Index++
+            [void](Set-CvGuiProgressValue -Bar $prog -Percent $(if ($items.Count -gt 0) { [int](100 * [Math]::Min($items.Count, $st.Index) / $items.Count) } else { 0 }))
+            $timer.Start()
+
+        } catch {
+            $timer.Stop()
+            $st.Running = $false
+            $st.CloseAt = $null
+            $btnClose.Text = (Get-CvText -Key 'comun.cerrar')
+            try { [void](Set-CvGuiRole -Control $lblSt -Role 'error') } catch { }
+            $lblSt.Text = (Get-CvText -Key 'prep.fallo' -Values @("$($_.Exception.Message)"))
+        }
     })
 
     $form.Add_Shown({ $timer.Start() })

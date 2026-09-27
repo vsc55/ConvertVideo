@@ -116,6 +116,8 @@ La línea con los puntitos que separa la lista de las pestañas **se arrastra**:
 |---|---|
 | **Workers en paralelo** | Cuántas conversiones a la vez al pulsar `Iniciar`. Arranca con lo que diga `behavior.workers` del config; lo que pongas aquí vale para esta sesión. |
 | **Ver las consolas de los workers** | Marcado, cada worker abre su ventana negra. Desmarcado van ocultos y se siguen desde la pestaña *Log*. |
+| **Si el vídeo recodificado engorda, quedarse con el original** | Valor de partida para los jobs **nuevos**; cada archivo se lo lleva congelado en el suyo y ahí se puede cambiar. |
+| **Al minimizar, esconder en el área de notificación** | La ventana se va junto al reloj en vez de quedarse en la barra de tareas. Vuelve con **doble clic** en su icono, o con *Abrir* en el menú del botón derecho; desde ahí también se puede *Cerrar*. La primera vez de cada sesión avisa de dónde se ha metido. Las conversiones **siguen igual**: los workers son procesos aparte y no dependen de esta ventana. Se recuerda (`gui.minimizeToTray`). |
 
 ¿Cuántos workers? Cada uno es un proceso aparte con su propio ffmpeg, y todos comparten la misma GPU y el mismo disco, así que subir el número no multiplica la velocidad: a partir de cierto punto solo se estorban. Lo sensato es probar con dos y mirar la velocidad (`1.8x` y compañía) en la columna de progreso antes de subir más.
 

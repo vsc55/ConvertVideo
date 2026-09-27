@@ -5,7 +5,7 @@
 
 function Get-CvVersion {
     <# Version del proyecto (fuente unica; la usan Convert.ps1 y setup.ps1). #>
-    '4.7.2'
+    '4.7.3'
 }
 
 function Get-CvAppName {
@@ -317,6 +317,14 @@ function New-CvContext {
         GuiQueueRefreshMs = $(if ([int]$cfg.gui.queueRefreshMs -ge 200) { [int]$cfg.gui.queueRefreshMs } else { [int]$def.gui.queueRefreshMs })
         GuiQueueIdleMs    = [Math]::Max(0, [int]$cfg.gui.queueIdleRefreshMs)
         GuiQueueOnActivate = [bool]$cfg.gui.queueRefreshOnActivate
+        # Minimizar al area de notificacion, y el aviso de la primera vez (ver gui.minimizeToTray).
+        GuiMinToTray      = [bool]$cfg.gui.minimizeToTray
+        GuiTrayBalloonMs  = $(if ([int]$cfg.gui.trayBalloonMs -ge 0) { [int]$cfg.gui.trayBalloonMs } else { [int]$def.gui.trayBalloonMs })
+        # La ventana principal se pone delante al abrirse (ver gui.bringToFront).
+        GuiBringToFront   = [bool]$cfg.gui.bringToFront
+        # La ventana de PREPARAR se cierra sola al terminar (ver gui.prepareAutoClose).
+        GuiPrepareAutoClose = [bool]$cfg.gui.prepareAutoClose
+        GuiPrepareAutoCloseMs = $(if ([int]$cfg.gui.prepareAutoCloseMs -ge 0) { [int]$cfg.gui.prepareAutoCloseMs } else { [int]$def.gui.prepareAutoCloseMs })
         # La lista persigue al archivo en curso (ver gui.queueFollowWorker).
         GuiQueueFollow     = [bool]$cfg.gui.queueFollowWorker
         # Plazo de gracia al arrancar workers (ver gui.queueStartGraceSec).

@@ -392,7 +392,7 @@ Assert-Eq   'all sin duplicados'       $all.Count ($all | Select-Object -Unique)
 # ================================================================================================
 Write-Host "`nFuentes unicas (Context / Profile)" -ForegroundColor Cyan
 Assert-Eq 'Get-CvAppName' 'ConvertVideo' (Get-CvAppName)
-Assert-Eq 'Get-CvVersion' '4.7.2'        (Get-CvVersion)
+Assert-Eq 'Get-CvVersion' '4.7.3'        (Get-CvVersion)
 Assert-Eq 'perfiles de serie = 13' 13 ((Get-CvProfiles | ForEach-Object { $_.Profiles } | Measure-Object).Count)
 # Los perfiles de serie con changeSize '1920:-2' (RESIZE fijo) deben ser solo-reduce (NoUpscale).
 $rzProfs = @(Get-CvProfiles | ForEach-Object { $_.Profiles } | Where-Object { "$($_.ChangeSize)" -ne '' })
@@ -1220,6 +1220,15 @@ Assert-Eq   'Config: parada, no relee sola'   0    ([int](Get-CvConfigDefaults).
 Assert-Eq   'Config: relee al volver a la ventana' $true ([bool](Get-CvConfigDefaults).gui.queueRefreshOnActivate)
 Assert-Eq   'Config: la lista sigue al que se codifica' $true ([bool](Get-CvConfigDefaults).gui.queueFollowWorker)
 Assert-Eq   'Config: plazo para que el worker aparezca' 20 ([int](Get-CvConfigDefaults).gui.queueStartGraceSec)
+# La ventana principal se pone delante al abrirse (lanzada desde un acceso directo minimizado,
+# Windows la dejaria detras).
+Assert-Eq   'Config: la ventana se pone delante'       $true ([bool](Get-CvConfigDefaults).gui.bringToFront)
+# Esconderse en el area de notificacion es opt-in: cambia donde APARECE la ventana.
+Assert-Eq   'Config: no se esconde en la barra de serie' $false ([bool](Get-CvConfigDefaults).gui.minimizeToTray)
+Assert-Eq   'Config: pero avisa la primera vez'          3000 ([int](Get-CvConfigDefaults).gui.trayBalloonMs)
+# La ventana de PREPARAR no se cierra sola de serie: el resumen del final hay que poder leerlo.
+Assert-Eq   'Config: preparar no se cierra sola'        $false ([bool](Get-CvConfigDefaults).gui.prepareAutoClose)
+Assert-Eq   'Config: y cuando lo hace, se ve un momento' 1200 ([int](Get-CvConfigDefaults).gui.prepareAutoCloseMs)
 Assert-Eq   'Config: la lista quieta mientras la usas'  3 ([int](Get-CvConfigDefaults).gui.queueFollowHoldSec)
 $w1 = @([pscustomobject]@{ Pid = 10; File = 'Serie_1x01'; Status = 'working' })
 $w2 = @([pscustomobject]@{ Pid = 10; File = 'Serie_1x01'; Status = 'working' })

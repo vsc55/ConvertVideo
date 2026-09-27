@@ -878,6 +878,106 @@ if (-not $sta) {
 }
 
 # ================================================================================================
+# PONER UNA VENTANA DELANTE (Set-CvGuiForeground). Lo que se comprueba aqui no es que lo consiga
+# -eso depende de quien tenga el primer plano en la maquina, y no se puede exigir en una bateria-,
+# sino que no rompe nada y que NO DEJA RASTRO: si la escalera acaba en el ultimo recurso (TopMost
+# un instante), la ventana no puede quedarse "siempre encima", que seria peor que el problema.
+Write-Host "`nGui - traer una ventana al frente" -ForegroundColor Cyan
+if (-not $sta) {
+    Write-Skip 'Ventana al frente' 'el host no es STA (usa -Sta)'
+} elseif (-not (Initialize-CvGui)) {
+    Write-Skip 'Ventana al frente' 'sin entorno grafico'
+} else {
+    $fF = New-Object System.Windows.Forms.Form
+    $fF.Text = 'cv-front'
+    $fF.Show()
+    [System.Windows.Forms.Application]::DoEvents()
+    $rF = Set-CvGuiForeground -Form $fF
+    Assert-True 'Frente: contesta si lo ha conseguido o no' ($rF -is [bool])
+    Assert-True 'Frente: no deja la ventana siempre encima' (-not $fF.TopMost)
+    # Minimizada se restaura: una ventana "al frente" pero minimizada no se ve.
+    $fF.WindowState = 'Minimized'
+    [void](Set-CvGuiForeground -Form $fF)
+    Assert-Eq   'Frente: una minimizada se restaura' 'Normal' "$($fF.WindowState)"
+    Assert-True 'Frente: y sigue sin quedarse encima' (-not $fF.TopMost)
+    $fF.Close()
+    $fF.Dispose()
+    # Sin ventana con handle no hay nada que traer, y no es motivo para reventar: contesta $false.
+    $fSin = New-Object System.Windows.Forms.Form
+    Assert-Eq   'Frente: sin ventana dibujada, $false' $false (Set-CvGuiForeground -Form $fSin)
+    $fSin.Dispose()
+}
+
+# ================================================================================================
+# MINIMIZAR AL AREA DE NOTIFICACION (Add-CvGuiTrayIcon), con una ventana de verdad: que al
+# minimizar se esconda y aparezca el icono, que se vuelva desde su menu, que la casilla mande (si
+# esta apagada, minimizar es minimizar de siempre) y que el rotulo se recorte -NotifyIcon.Text
+# LANZA por encima de 63 caracteres-.
+Write-Host "`nGui - esconder la ventana en la barra" -ForegroundColor Cyan
+if (-not $sta) {
+    Write-Skip 'Icono de la barra' 'el host no es STA (usa -Sta)'
+} elseif (-not (Initialize-CvGui)) {
+    Write-Skip 'Icono de la barra' 'sin entorno grafico'
+} else {
+    $fB = New-Object System.Windows.Forms.Form
+    $fB.Text = 'cv-tray'
+    $script:trayOn = $true
+    $niB = Add-CvGuiTrayIcon -Form $fB -Text 'cv-tray' -BalloonMs 0 -Enabled { $script:trayOn }
+    Assert-True 'Barra: monta el icono'          ($null -ne $niB)
+    Assert-True 'Barra: no se ve hasta que hace falta' (-not $niB.Visible)
+    Assert-Eq   'Barra: su menu tiene abrir y cerrar' 2 $niB.ContextMenuStrip.Items.Count
+
+    $fB.Show()
+    [System.Windows.Forms.Application]::DoEvents()
+    $fB.WindowState = 'Minimized'
+    [System.Windows.Forms.Application]::DoEvents()
+    # La ventana se ESCONDE del todo (Hide). Por eso la cola se abre con Application.Run y no con
+    # ShowDialog: sobre un modal, Hide termina su bucle y minimizar cerraria el programa (medido).
+    Assert-True 'Barra: al minimizar, la ventana se esconde' (-not $fB.Visible)
+    Assert-True 'Barra: aparece el icono'                    $niB.Visible
+
+    # 'Abrir' (la primera del menu) la trae de vuelta, entera y sin icono.
+    $niB.ContextMenuStrip.Items[0].PerformClick()
+    [System.Windows.Forms.Application]::DoEvents()
+    Assert-True 'Barra: se vuelve desde el menu'   $fB.Visible
+    Assert-Eq   'Barra: y restaurada'              'Normal' "$($fB.WindowState)"
+    Assert-True 'Barra: el icono se quita'         (-not $niB.Visible)
+
+    # MAXIMIZADA: al volver tiene que quedarse maximizada, no 'normal'. Volvia siempre pequena.
+    $fB.WindowState = 'Maximized'
+    [System.Windows.Forms.Application]::DoEvents()
+    $fB.WindowState = 'Minimized'
+    [System.Windows.Forms.Application]::DoEvents()
+    Assert-True 'Barra: maximizada tambien se esconde' (-not $fB.Visible)
+    $niB.ContextMenuStrip.Items[0].PerformClick()
+    [System.Windows.Forms.Application]::DoEvents()
+    Assert-Eq   'Barra: y vuelve MAXIMIZADA'  'Maximized' "$($fB.WindowState)"
+    $fB.WindowState = 'Normal'
+    [System.Windows.Forms.Application]::DoEvents()
+
+    # Con la casilla apagada, minimizar es minimizar: ni se esconde ni sale icono.
+    $script:trayOn = $false
+    $fB.WindowState = 'Minimized'
+    [System.Windows.Forms.Application]::DoEvents()
+    Assert-True 'Barra: apagada, la ventana NO se esconde' $fB.Visible
+    Assert-True 'Barra: ni aparece el icono'               (-not $niB.Visible)
+    $fB.WindowState = 'Normal'
+
+    # El rotulo: 63 caracteres es el tope del sistema, pasarse LANZA.
+    [void](Set-CvGuiTrayText -Icon $niB -Text ('x' * 200))
+    Assert-True 'Barra: el rotulo se recorta a lo que cabe' ($niB.Text.Length -le 63)
+    Assert-Eq   'Barra: sin icono no pasa nada'  $null (Set-CvGuiTrayText -Icon $null -Text 'nada')
+
+    # Al cerrar la ventana el icono se apaga solo: si no, se queda el fantasma en la barra.
+    $fB.Close()
+    [System.Windows.Forms.Application]::DoEvents()
+    $vivo = $true
+    try { $vivo = [bool]$niB.Visible } catch { $vivo = $false }   # tras Dispose, lanza
+    Assert-True 'Barra: al cerrar, no queda icono fantasma' (-not $vivo)
+    $fB.Dispose()
+}
+
+# ================================================================================================
 # EL TEMA aplicado a una ventana de verdad: que cada tipo de control coja sus colores, que un aviso
 # conserve SU color (rojo sigue rojo) y que al volver a claro se deshaga.
 Write-Host "`nGui - tema oscuro sobre una ventana" -ForegroundColor Cyan

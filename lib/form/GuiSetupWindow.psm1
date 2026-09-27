@@ -244,6 +244,9 @@ function Show-CvSetupWindow {
     # Tema de la SESION (lo fija el lanzador con lo que diga la config, y lo cambia el boton
     # "Tema" de la cola): asi una ventana que se abre DESPUES de cambiarlo sale ya con el nuevo.
     [void](Set-CvGuiTheme -Form $form)
+    # Al frente en cuanto se dibuje: lanzada desde un acceso directo MINIMIZADO, Windows la dejaria
+    # detras de lo que estuvieras usando (ver Set-CvGuiForeground).
+    if ([bool]$Context.GuiBringToFront) { $form.Add_Shown({ [void](Set-CvGuiForeground -Form $form) }) }
     [void]$form.ShowDialog()
     $form.Dispose()
     return $true

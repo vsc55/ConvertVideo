@@ -558,20 +558,39 @@ Assert-True 'Logs: lo marca en el texto' ($choices[0].Text -match 'en curso')
 # la ventana engancharia el manejador al que no es) o una columna sin ancho.
 Write-Host "`nCatalogos de layout (filas y columnas)" -ForegroundColor Cyan
 
-$kinds = @('label', 'text', 'check', 'button', 'combo')
+$kinds = @('label', 'text', 'check', 'button', 'combo', 'flow')
+
+# Una celda 'flow' lleva controles DENTRO (Items): cuentan como los demas, porque la ventana los
+# coge por su nombre igual que a los de primer nivel.
+function Expand-CatalogCells {
+    param($Rows)
+    $out = @()
+    foreach ($r in @($Rows)) {
+        foreach ($c in @($r.Cells)) {
+            $out += $c
+            foreach ($sub in @($c.Items | Where-Object { $null -ne $_ })) { $out += $sub }
+        }
+    }
+    return ,$out
+}
 
 $vRows = Get-CvJobVideoRows
-Assert-Eq   'Video: cuatro filas'            4 $vRows.Count
-$vCells = @()
-foreach ($r in $vRows) { foreach ($c in @($r.Cells)) { $vCells += $c } }
+Assert-Eq   'Video: cinco filas'             5 $vRows.Count
+$vCells = Expand-CatalogCells -Rows $vRows
 Assert-True 'Video: todas las celdas son de un tipo conocido' (@($vCells | Where-Object { $kinds -notcontains "$($_.Kind)" }).Count -eq 0)
 $vNames = @($vCells | ForEach-Object { "$($_.Name)" } | Where-Object { $_ -ne '' })
-Assert-Eq   'Video: nueve controles con nombre' 9 $vNames.Count
+Assert-Eq   'Video: catorce controles con nombre' 14 $vNames.Count
 Assert-Eq   'Video: ningun nombre repetido'  $vNames.Count @($vNames | Sort-Object -Unique).Count
 Assert-True 'Video: todos se llaman cvJob*'  (@($vNames | Where-Object { -not $_.StartsWith('cvJob') }).Count -eq 0)
 # La fila de 'quedarse con el original' ocupa el ancho entero: si no, el texto sale cortado.
 $keep = @($vCells | Where-Object { "$($_.Name)" -eq 'cvJobKeepOriginal' })[0]
-Assert-Eq   'Video: la de quedarse con el original ocupa tres columnas' 3 ([int]$keep.Span)
+Assert-Eq   'Video: la de quedarse con el original ocupa cuatro columnas' 4 ([int]$keep.Span)
+
+# Los tres campos del escaneo de bordes van DENTRO de una celda, no en columnas sueltas: si se
+# pusieran como celdas, cada una se comeria una columna y descuadraria las demas filas.
+$scan = @(@($vRows | ForEach-Object { $_.Cells } ) | Where-Object { "$($_.Kind)" -eq 'flow' })
+Assert-Eq   'Video: una sola celda con controles dentro' 1 $scan.Count
+Assert-Eq   'Video: la del escaneo lleva tres campos' 3 (@($scan[0].Items | Where-Object { "$($_.Kind)" -eq 'text' }).Count)
 
 foreach ($par in @(
     @{ N = 'audio'; C = (Get-CvJobAudioColumns); T = 6 }
@@ -602,6 +621,67 @@ foreach ($par in @(
     # Lo que no es etiqueta tiene que poder engancharse a un manejador, asi que necesita nombre.
     Assert-True ("Barra {0}: todo lo que no es etiqueta tiene nombre" -f $par.N) (@($items | Where-Object { "$($_.Kind)" -ne 'label' -and "$($_.Name)" -eq '' }).Count -eq 0)
 }
+
+
+# ================================================================================================
+Write-Host "`nFinal del recorrido de preparar" -ForegroundColor Cyan
+
+# Todo bien: en verde, y si la casilla lo pedia, la ventana se cierra sola.
+$fin = Get-CvPrepareEndState -Done 3 -Manual 1 -Skipped 0 -Failed 0 -AutoClose
+Assert-Eq   'Final: rol del resumen cuando ha ido bien' 'ok' "$($fin.Role)"
+Assert-True 'Final: con la casilla marcada, se cierra sola' $fin.Close
+Assert-True 'Final: el resumen cuenta lo que ha hecho'      ("$($fin.Text)" -match '3')
+# Sin la casilla no se cierra nunca sola, haya ido como haya ido.
+Assert-True 'Final: sin la casilla, no se cierra' (-not (Get-CvPrepareEndState -Done 3).Close)
+# Con un error o cancelado, el aviso manda: se queda abierta aunque la casilla este marcada, porque
+# ese resumen es el unico sitio donde se cuenta lo que ha pasado.
+$fin = Get-CvPrepareEndState -Done 2 -Failed 1 -AutoClose
+Assert-Eq   'Final: con un error, el resumen avisa'  'warn' "$($fin.Role)"
+Assert-True 'Final: y la ventana NO se cierra sola'  (-not $fin.Close)
+$fin = Get-CvPrepareEndState -Done 1 -Cancelled -AutoClose
+Assert-Eq   'Final: cancelado tambien avisa'         'warn' "$($fin.Role)"
+Assert-True 'Final: y tampoco se cierra sola'        (-not $fin.Close)
+Assert-True 'Final: el resumen dice que se cancelo'  ("$($fin.Text)" -match (Get-CvText -Key 'prep.cancelado').Trim())
+# Omitir un archivo (cerrar su editor sin guardar) es un final normal: lo ha decidido quien miraba.
+$fin = Get-CvPrepareEndState -Done 1 -Skipped 2 -AutoClose
+Assert-Eq   'Final: omitir no es un fallo'           'ok' "$($fin.Role)"
+Assert-True 'Final: con omitidos si se cierra sola'  $fin.Close
+
+
+# ================================================================================================
+Write-Host "`nEditar la fila marcada: idioma y parametros del escaneo" -ForegroundColor Cyan
+
+# El idioma se guarda como lo escribe la consola: minusculas y sin espacios. Un ' es' con un espacio
+# delante no casaria con ningun filtro de idioma y la pista se quedaria fuera sin decir por que.
+Assert-Eq 'Idioma: se quitan los espacios y baja a minusculas' 'es'  (ConvertTo-CvJobLangCode '  ES ')
+Assert-Eq 'Idioma: tambien los de dentro'                      'spa' (ConvertTo-CvJobLangCode 'sp a')
+Assert-Eq 'Idioma: vacio se queda vacio'                       ''    (ConvertTo-CvJobLangCode '   ')
+
+# Los tres parametros del escaneo de bordes: lo tecleado manda, y lo que no vale cae en el valor de
+# la configuracion (o en el minimo) en vez de dejar el escaneo mirando 0 puntos.
+$ctxScan = [pscustomobject]@{
+    BorderStart   = 300
+    BorderDur     = 90
+    BorderSamples = 6
+}
+$sv = Get-CvJobScanValues -Context $ctxScan -Start '120' -Duration '30' -Samples '9'
+Assert-Eq 'Escaneo: se usa lo tecleado (inicio)'    120 $sv.Start
+Assert-Eq 'Escaneo: se usa lo tecleado (duracion)'  30  $sv.Duration
+Assert-Eq 'Escaneo: se usa lo tecleado (muestras)'  9   $sv.Samples
+Assert-Eq 'Escaneo: nada que corregir'              0   @($sv.Fixed).Count
+$sv = Get-CvJobScanValues -Context $ctxScan
+Assert-Eq 'Escaneo: vacio = lo de la configuracion (inicio)'   300 $sv.Start
+Assert-Eq 'Escaneo: vacio = lo de la configuracion (duracion)' 90  $sv.Duration
+Assert-Eq 'Escaneo: vacio = lo de la configuracion (muestras)' 6   $sv.Samples
+$sv = Get-CvJobScanValues -Context $ctxScan -Start 'hola' -Duration '0' -Samples '-4'
+Assert-Eq 'Escaneo: lo que no es un numero cae en la configuracion' 300 $sv.Start
+# El campo ensena los segundos que se van a escanear DE VERDAD: por debajo de 5 s el propio escaneo
+# sube la ventana (Get-CvCropSampleWindow), asi que tecleando 0 se ven 5 y no un 0 que no seria.
+Assert-Eq 'Escaneo: la muestra tiene el suelo del escaneo'          5   $sv.Duration
+Assert-Eq 'Escaneo: y ese suelo es el mismo que usa el escaneo'     ([int](Get-CvCropSampleWindow -Duration 0)) $sv.Duration
+Assert-Eq 'Escaneo: 0 muestras no mira nada: minimo 1'              1   $sv.Samples
+Assert-Eq 'Escaneo: se dice que los tres se han corregido'          3   @($sv.Fixed).Count
+Assert-Eq 'Escaneo: el inicio SI puede ser 0 (desde el principio)'  0   (Get-CvJobScanValues -Context $ctxScan -Start '0').Start
 
 
 # ================================================================================================
@@ -1270,7 +1350,7 @@ if ($null -eq $jobInfo) {
                 # mal escrito en el catalogo no da error, deja un $null que revienta al pulsar-.
                 $script:jobFaltan = @()
                 $catNames = @()
-                foreach ($r in (Get-CvJobVideoRows)) { foreach ($c in @($r.Cells)) { $catNames += "$($c.Name)" } }
+                foreach ($c in (Expand-CatalogCells -Rows (Get-CvJobVideoRows))) { $catNames += "$($c.Name)" }
                 foreach ($i in (Get-CvJobAudioBarItems)) { $catNames += "$($i.Name)" }
                 foreach ($i in (Get-CvJobSubBarItems))   { $catNames += "$($i.Name)" }
                 foreach ($n in @($catNames | Where-Object { $_ -ne '' })) {
@@ -1284,13 +1364,41 @@ if ($null -eq $jobInfo) {
                 $script:jobSubRows   = $lvSu.Items.Count
                 $script:jobChecked   = @($lvAu.Items | Where-Object { $_.Checked }).Count
                 $script:jobProfs     = $cmbP.Items.Count
+                # El escaneo de bordes arranca con lo que diga la configuracion, y se puede cambiar
+                # para este archivo sin tocarla (en consola se preguntaba; la ventana no dejaba).
+                $script:jobScan = '{0}/{1}/{2}' -f `
+                    $f.Controls.Find('cvJobScanStart',   $true)[0].Text, `
+                    $f.Controls.Find('cvJobScanDur',     $true)[0].Text, `
+                    $f.Controls.Find('cvJobScanSamples', $true)[0].Text
+                # El original se puede ver SIEMPRE (aqui el perfil es copy, asi que no hay recorte
+                # que ver: ese boton se apaga y el del original no).
+                $script:jobOrigOn = [bool]$f.Controls.Find('cvJobVideoOrig',   $true)[0].Enabled
+                $script:jobCropOn = [bool]$f.Controls.Find('cvJobCropPreview', $true)[0].Enabled
                 # Marcar la 2a pista de audio (eng), ponerle idioma a mano y hacerla predeterminada.
                 $lvAu.Items[1].Checked  = $true
                 $lvAu.Items[1].Selected = $true
-                $txL.Text = 'eng'
+                # INTRO confirma lo tecleado: lo normaliza y entera a la lista en el sitio. Se lanza
+                # el evento de teclado de verdad (OnKeyDown) para probar el manejador, no el modelo.
+                $txL.Text = '  ENG '
+                $onKey = $txL.GetType().GetMethod('OnKeyDown', [System.Reflection.BindingFlags]'Instance, NonPublic')
+                # El argumento va en un object[] YA TIPADO: metido con @(...) llega envuelto en un
+                # PSObject y la reflexion no lo sabe convertir a KeyEventArgs.
+                $keyArgs = New-Object object[] 1
+                $keyArgs[0] = (New-Object System.Windows.Forms.KeyEventArgs([System.Windows.Forms.Keys]::Enter)).psobject.BaseObject
+                [void]$onKey.Invoke($txL, $keyArgs)
+                $script:jobLangBox = "$($txL.Text)"
+                $script:jobLangRow = "$($lvAu.Items[1].SubItems[1].Text)"
                 $bDf.PerformClick()
-                # Conservar tambien el 3er subtitulo (el ingles), que no entraba solo.
-                $lvSu.Items[2].Checked = $true
+                # Conservar tambien el 3er subtitulo (el ingles), que no entraba solo. Y el mismo
+                # Intro en SU barra, que es donde se noto: escribir el idioma y que no se enterara.
+                $lvSu.Items[2].Checked  = $true
+                $lvSu.Items[2].Selected = $true
+                $txS = $f.Controls.Find('cvJobSubLang', $true)[0]
+                $txS.Text = 'ENG'
+                $keyArgs2 = New-Object object[] 1
+                $keyArgs2[0] = (New-Object System.Windows.Forms.KeyEventArgs([System.Windows.Forms.Keys]::Enter)).psobject.BaseObject
+                [void]$txS.GetType().GetMethod('OnKeyDown', [System.Reflection.BindingFlags]'Instance, NonPublic').Invoke($txS, $keyArgs2)
+                $script:jobSubLangRow = "$($lvSu.Items[2].SubItems[1].Text)"
                 $bSv.PerformClick()
             } catch {
                 $tj.Stop()
@@ -1309,6 +1417,13 @@ if ($null -eq $jobInfo) {
         Assert-Eq   'Editor: arranca con la spa marcada'  1 $script:jobChecked
         Assert-True 'Editor: ofrece perfiles'    ($script:jobProfs -ge 2)
         Assert-True 'Editor: se puede reproducir un subtitulo' $script:jobHasSubPlay
+        Assert-Eq   'Editor: el escaneo arranca con lo de la configuracion' `
+            ('{0}/{1}/{2}' -f [int]$ctxJob.BorderStart, [int]$ctxJob.BorderDur, [int]$ctxJob.BorderSamples) $script:jobScan
+        Assert-True 'Editor: el original se puede ver aunque el video se copie' $script:jobOrigOn
+        Assert-True 'Editor: sin recorte no hay nada que ver recortado'   (-not $script:jobCropOn)
+        Assert-Eq   'Editor: Intro deja el idioma como se guarda'    'eng' $script:jobLangBox
+        Assert-Eq   'Editor: y la lista se entera sin salir del campo' 'eng' $script:jobLangRow
+        Assert-Eq   'Editor: Intro tambien en la barra de subtitulos'  'eng' $script:jobSubLangRow
     Assert-Eq   'Editor: estan todos los controles del catalogo' '' (@($script:jobFaltan) -join ', ')
         $saved = Read-CvJobDraft -Context $ctxJob -Name 'Serie_2x01'
         Assert-Eq   'Editor: dos pistas de audio' 2 @($saved.Audio).Count
@@ -1584,6 +1699,13 @@ if ($null -eq $jobInfo) {
                         if ($script:wizWaits -gt 200) { $tw.Stop(); $script:wizErr = 'el recorrido no termino'; $f.Close() }
                         return
                     }
+                    # El pie, MEDIDO: el boton salia con 116 px de alto dentro de un pie de 38
+                    # (la fila del TableLayoutPanel no tenia estilo y se daba por AutoSize), asi que
+                    # su rotulo -centrado en esa altura- caia FUERA de lo que se ve: la ventana
+                    # parecia no tener boton. Se comprueba que cabe, no que exista.
+                    $script:wizBtnText = "$($cl[0].Text)"
+                    $script:wizBtnFits = ([int]$cl[0].Height -le [int]$cl[0].Parent.Height)
+                    $script:wizAuto    = ($f.Controls.Find('cvPrepAutoClose', $true).Count -eq 1)
                     $lst = $f.Controls.Find('cvPrepList', $true)[0]
                     $script:wizRows = (@($lst.Items | ForEach-Object { "{0}={1}" -f $_.Text, $_.SubItems[1].Text }) -join ',')
                     $script:wizCols = (@($lst.Columns | ForEach-Object { "$($_.Text)" }) -join '|')
@@ -1604,6 +1726,9 @@ if ($null -eq $jobInfo) {
         Assert-Eq   'Recorrido sin excepciones'  '' $script:wizErr
         Assert-True 'Recorrido: el dialogo lista perfiles' ($script:wizProfs -ge 2)
         Assert-Eq   'Recorrido: un job preparado' 1 $nPrep
+        Assert-Eq   'Recorrido: el boton del pie dice Cerrar al terminar' (Get-CvText -Key 'comun.cerrar') $script:wizBtnText
+        Assert-True 'Recorrido: y CABE en el pie (si no, su rotulo no se ve)' $script:wizBtnFits
+        Assert-True 'Recorrido: esta la casilla de cerrar al terminar'       $script:wizAuto
         Assert-Eq   'Recorrido: estado de la fila' 'Serie_3x01=preparado' $script:wizRows
         # Columna de bordes: se ve de un vistazo si ha entrado el recorte. El perfil del recorrido es
         # 'copy' (no se toca la imagen), asi que la celda queda vacia; el texto lo fija su test unitario.

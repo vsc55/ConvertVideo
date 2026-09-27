@@ -33,13 +33,38 @@ function Get-CvJobVideoRows {
                 @{ Kind = 'text';   Name = 'cvJobCrop';        Fill = $true }
                 @{ Kind = 'button'; Name = 'cvJobCropDetect';  Text = (Get-CvText -Key 'job.detectar');   Fill = $true }
                 @{ Kind = 'button'; Name = 'cvJobCropPreview'; Text = (Get-CvText -Key 'job.verrecorte'); Fill = $true }
+                # Ver el ORIGINAL (sin el recorte) es la otra mitad de la comprobacion: lo que la
+                # consola hacia reproduciendo el archivo tal cual antes de aceptar unos bordes.
+                @{ Kind = 'button'; Name = 'cvJobVideoOrig';   Text = (Get-CvText -Key 'job.veroriginal'); Fill = $true }
+            )
+        }
+        @{
+            # Los parametros del escaneo de bordes. Vienen de la configuracion (encode.video.border.*)
+            # y aqui se pueden cambiar PARA ESTE ARCHIVO sin tocarla: un video con logos o con un
+            # tramo oscuro al principio pide empezar mas tarde, o mirar mas puntos. Es lo que la
+            # consola preguntaba y la ventana se habia dejado por el camino.
+            Label = (Get-CvText -Key 'job.fila.escaneo')
+            Cells = @(
+                @{
+                    Kind  = 'flow'
+                    Name  = 'cvJobScan'
+                    Span  = 4
+                    Items = @(
+                        @{ Kind = 'label'; Text = (Get-CvText -Key 'job.escaneo.inicio');   Gap = 0  }
+                        @{ Kind = 'text';  Name = 'cvJobScanStart';   Width = 55 }
+                        @{ Kind = 'label'; Text = (Get-CvText -Key 'job.escaneo.duracion'); Gap = 12 }
+                        @{ Kind = 'text';  Name = 'cvJobScanDur';     Width = 55 }
+                        @{ Kind = 'label'; Text = (Get-CvText -Key 'job.escaneo.muestras'); Gap = 12 }
+                        @{ Kind = 'text';  Name = 'cvJobScanSamples'; Width = 45 }
+                    )
+                }
             )
         }
         @{
             Label = (Get-CvText -Key 'job.fila.escalado')
             Cells = @(
                 @{ Kind = 'text';  Name = 'cvJobResize';    Fill = $true }
-                @{ Kind = 'label'; Name = 'cvJobVideoInfo'; Text = ''; Span = 2 }
+                @{ Kind = 'label'; Name = 'cvJobVideoInfo'; Text = ''; Span = 3 }
             )
         }
         @{
@@ -48,7 +73,7 @@ function Get-CvJobVideoRows {
             # encode.video, y aqui se decide para ESTE archivo (se congela en su job).
             Label = ''
             Cells = @(
-                @{ Kind = 'check'; Name = 'cvJobKeepOriginal'; Text = (Get-CvText -Key 'job.keeporiginal'); Gap = 6; Top = 6; Span = 3 }
+                @{ Kind = 'check'; Name = 'cvJobKeepOriginal'; Text = (Get-CvText -Key 'job.keeporiginal'); Gap = 6; Top = 6; Span = 4 }
             )
         }
     )
@@ -88,7 +113,11 @@ function Get-CvJobAudioBarItems {
         @{ Kind = 'label';  Text = (Get-CvText -Key 'job.sync') }
         @{ Kind = 'text';   Name = 'cvJobAudioSync';    Width = 70 }
         @{ Kind = 'button'; Name = 'cvJobAudioDefault'; Text = (Get-CvText -Key 'job.marcardef'); Width = 210; Gap = 12 }
-        @{ Kind = 'button'; Name = 'cvJobAudioPlay';    Text = (Get-CvText -Key 'job.escuchar');  Width = 100; Gap = 8  }
+        # Dos botones y no uno porque son dos cosas distintas: la pista TAL CUAL (con su desfase, si
+        # lo tiene) y la pista COMO VA A QUEDAR, con el mismo filtro de retardo que aplica el worker.
+        # Es la comparacion que la consola ofrecia al detectar un desfase (Show-CvSyncPreview).
+        @{ Kind = 'button'; Name = 'cvJobAudioPlay';     Text = (Get-CvText -Key 'job.escuchar');      Width = 130; Gap = 8 }
+        @{ Kind = 'button'; Name = 'cvJobAudioPlaySync'; Text = (Get-CvText -Key 'job.escuchar.sync'); Width = 150; Gap = 6 }
     )
     return ,$items
 }
@@ -230,6 +259,80 @@ function ConvertTo-CvJobDraftFromRows {
         AudioSkip  = [bool]$Draft.AudioSkip
         Audio      = @($tracks)
         Subtitles  = @($subs)
+    }
+}
+
+function ConvertTo-CvJobLangCode {
+    <#
+        El idioma tal y como se teclea en la ventana -> como se guarda en el job: en minusculas y
+        sin espacios, ni alrededor ni dentro ('  ES ' -> 'es'). Es lo mismo que escribe la consola,
+        y lo que comparan los filtros de idioma: un ' es' con un espacio delante no casaria con
+        ninguno y la pista se quedaria fuera sin que nadie dijera por que.
+
+        Vacio se queda vacio: una pista puede no declarar idioma.
+    #>
+    param([string]$Text = '')
+    return (("$Text" -replace '\s', '').ToLowerInvariant())
+}
+
+function Get-CvJobScanNumber {
+    <#
+        UN campo del escaneo de bordes: entero >= $Min, y si no lo es, el valor de la configuracion.
+        Devuelve @{ Value; Ok }; Ok = $false cuando ha habido que corregirlo (para poder devolverle
+        al usuario el numero que se va a usar de verdad en vez de escanear con otra cosa a su
+        espalda).
+    #>
+    param([string]$Text = '', [int]$Default = 0, [int]$Min = 0)
+    $t = "$Text".Trim()
+    $n = 0
+    if ($t -eq '' -or -not [int]::TryParse($t, [ref]$n)) {
+        return [pscustomobject]@{
+            Value = [int]$Default
+            Ok    = $false
+        }
+    }
+    if ($n -lt $Min) {
+        return [pscustomobject]@{
+            Value = [int]$Min
+            Ok    = $false
+        }
+    }
+    return [pscustomobject]@{
+        Value = [int]$n
+        Ok    = $true
+    }
+}
+
+function Get-CvJobScanValues {
+    <#
+        Los tres parametros con los que escanear bordes EN ESTE ARCHIVO, a partir de lo que haya en
+        los campos de la ventana y con los de la configuracion (encode.video.border.*) de red: un
+        campo vacio o con algo que no es un numero vuelve a su valor de config, que es mejor que
+        dejar el escaneo sin arrancar o mirar 0 puntos.
+
+        Los minimos no son una preferencia: el inicio no puede ser negativo, las muestras no bajan de
+        1 (0 muestras no mira nada) y la duracion de cada una tiene el suelo del propio escaneo
+        (Get-CvCropSampleWindow), asi que el campo ensena los segundos que se van a escanear de
+        verdad y no los que se hayan tecleado. Fixed dice cuales se han corregido, para avisarlo.
+    #>
+    param(
+        [Parameter(Mandatory)]$Context,
+        [string]$Start = '',
+        [string]$Duration = '',
+        [string]$Samples = ''
+    )
+    $s = Get-CvJobScanNumber -Text $Start    -Default ([int]$Context.BorderStart)   -Min 0
+    $d = Get-CvJobScanNumber -Text $Duration -Default ([int]$Context.BorderDur)     -Min (Get-CvCropSampleWindow -Duration 0)
+    $m = Get-CvJobScanNumber -Text $Samples  -Default ([int]$Context.BorderSamples) -Min 1
+    $fixed = @()
+    if (-not $s.Ok) { $fixed += 'start' }
+    if (-not $d.Ok) { $fixed += 'duration' }
+    if (-not $m.Ok) { $fixed += 'samples' }
+    return [pscustomobject]@{
+        Start    = [int]$s.Value
+        Duration = [int]$d.Value
+        Samples  = [int]$m.Value
+        Fixed    = @($fixed)
     }
 }
 

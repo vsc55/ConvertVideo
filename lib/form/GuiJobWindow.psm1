@@ -67,6 +67,8 @@ function Show-CvJobWindow {
         CropKind = ''         # con que parametros se escaneo: 'auto' (pre-escaneo) o 'full'
         CropNote = ''         # que se decidio con esos bordes, para contarlo abajo
         SyncNotes = @()       # retardos de audio detectados (se aplican y se cuentan, como en consola)
+        EditA    = $null      # la fila de audio que estan editando los campos de su barra
+        EditS    = $null      # idem en subtitulos (ver los manejadores de los campos de texto)
         Loading  = $true      # arranca cargando: los manejadores no tocan nada hasta que se llene
         Closing  = $false
         Ready    = $false
@@ -75,8 +77,8 @@ function Show-CvJobWindow {
     $form = New-Object System.Windows.Forms.Form
     $form.Text          = (Get-CvText -Key 'job.tit' -Values @($Name))
     $form.StartPosition = 'CenterParent'
-    $form.Size          = New-Object System.Drawing.Size(1000, 820)
-    $form.MinimumSize   = New-Object System.Drawing.Size(820, 640)
+    $form.Size          = New-Object System.Drawing.Size(1000, 856)
+    $form.MinimumSize   = New-Object System.Drawing.Size(820, 676)
 
     $grid = New-Object System.Windows.Forms.TableLayoutPanel
     $grid.Dock        = 'Fill'
@@ -86,7 +88,7 @@ function Show-CvJobWindow {
     [void]$grid.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 100)))
     [void]$grid.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute, 44)))   # estado / motivos
     [void]$grid.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute, 36)))   # perfil
-    [void]$grid.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute, 158)))  # video
+    [void]$grid.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute, 192)))  # video
     [void]$grid.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 50)))    # audio
     [void]$grid.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 50)))    # subtitulos
     [void]$grid.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute, 26)))   # mensaje
@@ -161,11 +163,12 @@ function Show-CvJobWindow {
     $vGrid = New-Object System.Windows.Forms.TableLayoutPanel
     $vGrid.Dock        = 'Fill'
     $vGrid.Padding     = New-Object System.Windows.Forms.Padding(8, 4, 8, 4)
-    $vGrid.ColumnCount = 4
-    $vGrid.RowCount    = 4
+    $vGrid.ColumnCount = 5
+    $vGrid.RowCount    = 5
     [void]$vGrid.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Absolute, 70)))
     [void]$vGrid.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 100)))
     [void]$vGrid.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Absolute, 150)))
+    [void]$vGrid.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Absolute, 120)))
     [void]$vGrid.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Absolute, 120)))
     $gbV.Controls.Add($vGrid)
 
@@ -178,9 +181,19 @@ function Show-CvJobWindow {
     $txtCrop   = $vc['cvJobCrop']
     $btnCrop   = $vc['cvJobCropDetect']
     $btnPrev   = $vc['cvJobCropPreview']
+    $btnPrevOrg = $vc['cvJobVideoOrig']
     $txtResize = $vc['cvJobResize']
     $lblVInfo  = $vc['cvJobVideoInfo']
     $chkKeep   = $vc['cvJobKeepOriginal']
+    # Los tres parametros del escaneo de bordes arrancan con lo que diga la configuracion
+    # (encode.video.border.*) y se pueden cambiar para ESTE archivo: lo que se teclee aqui no toca
+    # la configuracion, solo el escaneo que se lance con 'Detectar bordes'.
+    $txtScanIni = $vc['cvJobScanStart']
+    $txtScanDur = $vc['cvJobScanDur']
+    $txtScanNum = $vc['cvJobScanSamples']
+    $txtScanIni.Text = "$([int]$Context.BorderStart)"
+    $txtScanDur.Text = "$([int]$Context.BorderDur)"
+    $txtScanNum.Text = "$([int]$Context.BorderSamples)"
 
     # ---------- Audio ----------
     $gbA = New-Object System.Windows.Forms.GroupBox
@@ -226,6 +239,7 @@ function Show-CvJobWindow {
     $txtSync = $ac['cvJobAudioSync']
     $btnDef  = $ac['cvJobAudioDefault']
     $btnPlay = $ac['cvJobAudioPlay']
+    $btnPlaySync = $ac['cvJobAudioPlaySync']
 
     # ---------- Subtitulos ----------
     $gbS = New-Object System.Windows.Forms.GroupBox
@@ -374,6 +388,53 @@ function Show-CvJobWindow {
     $curA = { if ($lvA.SelectedIndices.Count -eq 0) { return $null }; $i = $lvA.SelectedIndices[0]; if ($i -lt 0 -or $i -ge @($st.Audio).Count) { return $null }; return @($st.Audio)[$i] }
     $curS = { if ($lvS.SelectedIndices.Count -eq 0) { return $null }; $i = $lvS.SelectedIndices[0]; if ($i -lt 0 -or $i -ge @($st.Subs).Count)  { return $null }; return @($st.Subs)[$i] }
 
+    # ---------- Editar la fila marcada (idioma, retardo, banderas) ----------
+    # Los campos de una barra escriben en la fila que se estaba EDITANDO ($st.EditA / $st.EditS), no
+    # en "la que este marcada ahora": al pulsar Intro o al salir del campo la marca puede haberse
+    # movido o no haber ninguna, y entonces lo tecleado se perdia sin decir nada. La fila se apunta
+    # al marcarla, y sin fila los campos se apagan: asi no se puede escribir en el vacio.
+    $armAudio = {
+        $r = & $curA
+        $st.EditA = $r
+        $on = ($null -ne $r)
+        foreach ($c in @($txtLang, $txtSync, $btnDef, $btnPlay)) { $c.Enabled = $on }
+        # Sin retardo, oirlo "con el retardo" seria oir el original: el boton no promete nada.
+        $btnPlaySync.Enabled = $(if ($on) { ([double]$r.Sync -gt 0) } else { $false })
+    }
+    $armSubs = {
+        $r = & $curS
+        $st.EditS = $r
+        $on = ($null -ne $r)
+        foreach ($c in @($txtSubLang, $chkForced, $chkSubDef, $btnSubView, $btnSubPlay)) { $c.Enabled = $on }
+    }
+    # Lo que hay tecleado -> la fila, ya normalizado, y la lista al dia. Se llama al pulsar Intro y
+    # al salir del campo; escribir ya habia ido guardando, asi que esto es sobre todo enterar a la
+    # lista y devolver al campo lo que ha quedado de verdad (' ES ' -> 'es').
+    $commitAudio = {
+        $r = $st.EditA
+        if ($null -eq $r) { return }
+        $r.Lang = (ConvertTo-CvJobLangCode $txtLang.Text)
+        $v = ConvertTo-InvDouble (($txtSync.Text.Trim()) -replace ',', '.')
+        if ($null -ne $v) { $r.Sync = [double]$v }
+        $st.Loading = $true
+        try {
+            $txtLang.Text = "$($r.Lang)"
+            $txtSync.Text = (Format-CvNumber $r.Sync)
+        } finally { $st.Loading = $false }
+        & $renderAudio
+        & $armAudio
+        & $validate
+    }
+    $commitSubs = {
+        $r = $st.EditS
+        if ($null -eq $r) { return }
+        $r.Lang = (ConvertTo-CvJobLangCode $txtSubLang.Text)
+        $st.Loading = $true
+        try { $txtSubLang.Text = "$($r.Lang)" } finally { $st.Loading = $false }
+        & $renderSubs
+        & $validate
+    }
+
     # Deja en el pie lo que dice la validacion. Nunca modal: un dialogo aqui dejaria la bateria de
     # tests colgada esperando un clic (misma regla que en gui-tests.ps1).
     $validate = {
@@ -415,6 +476,12 @@ function Show-CvJobWindow {
             $txtResize.Enabled = $canEdit
             $chkAnim.Enabled   = $canEdit
             $btnCrop.Enabled   = $canEdit
+            $txtScanIni.Enabled = $canEdit
+            $txtScanDur.Enabled = $canEdit
+            $txtScanNum.Enabled = $canEdit
+            # Sin recorte no hay nada que ver recortado (seria el original otra vez): el boton de al
+            # lado, que reproduce el original, funciona siempre -tambien con el video en copy-.
+            $btnPrev.Enabled = ($canEdit -and "$($st.Draft.Crop)".Trim() -ne '')
         } finally { $st.Loading = $false }
     }
 
@@ -501,7 +568,12 @@ function Show-CvJobWindow {
     })
     $chkAnim.Add_CheckedChanged({ if (-not ($st.Loading -or $st.Closing)) { $st.Draft.Anim = $chkAnim.Checked } })
     $chkKeep.Add_CheckedChanged({ if (-not ($st.Loading -or $st.Closing)) { $st.Draft.KeepOriginal = $chkKeep.Checked } })
-    $txtCrop.Add_TextChanged({   if (-not ($st.Loading -or $st.Closing)) { $st.Draft.Crop = $txtCrop.Text.Trim(); & $validate } })
+    $txtCrop.Add_TextChanged({
+        if ($st.Loading -or $st.Closing) { return }
+        $st.Draft.Crop = $txtCrop.Text.Trim()
+        $btnPrev.Enabled = ((-not [bool]$st.Draft.VideoSkip) -and $st.Draft.Crop -ne '')
+        & $validate
+    })
     $txtResize.Add_TextChanged({ if (-not ($st.Loading -or $st.Closing)) { $st.Draft.Resize = $txtResize.Text.Trim() } })
 
     $btnCrop.Add_Click({
@@ -513,10 +585,22 @@ function Show-CvJobWindow {
         $form.Enabled = $false
         [System.Windows.Forms.Application]::DoEvents()
         try {
-            $c = Get-CvJobCropCandidates -Context $Context -Info $st.Info -Index ([int]$st.Draft.VideoIndex)
+            # Con los parametros que haya en la fila 'Escaneo' -los de la configuracion si no se han
+            # tocado-. Se devuelven a los campos ya normalizados: si se ha tecleado algo que no es un
+            # numero se ve con que se ha escaneado de verdad, en vez de usar otra cosa a su espalda.
+            $sv = Get-CvJobScanValues -Context $Context -Start $txtScanIni.Text -Duration $txtScanDur.Text -Samples $txtScanNum.Text
+            $txtScanIni.Text = "$($sv.Start)"
+            $txtScanDur.Text = "$($sv.Duration)"
+            $txtScanNum.Text = "$($sv.Samples)"
+            $c = Get-CvJobCropCandidates -Context $Context -Info $st.Info -Index ([int]$st.Draft.VideoIndex) `
+                -Start $sv.Start -Duration $sv.Duration -Samples $sv.Samples
+            # Este escaneo es a medida, asi que NO se guarda como el del perfil: si luego se cambia
+            # de perfil y vuelve a hacer falta, se escanea con lo que diga la configuracion.
+            $st.CropScan = $c
+            $st.CropKind = 'manual'
             if (@($c.Groups).Count -eq 0) {
                 $lblMsg.ForeColor = (Get-CvGuiCurrentPalette).Warn
-                $lblMsg.Text = (Get-CvText -Key 'job.recorte.sinbordes')
+                $lblMsg.Text = (Get-CvText -Key 'job.recorte.sinbordes.pts' -Values @($sv.Samples, $sv.Duration, $sv.Start))
             } else {
                 $st.Draft.Crop = "$($c.Top)"
                 $txtCrop.Text  = "$($c.Top)"
@@ -535,15 +619,30 @@ function Show-CvJobWindow {
             $lblHead.Text = (Get-CvText -Key 'job.preparando' -Values @($Name))
         }
     })
-    $btnPrev.Add_Click({
+    # Al cerrarse ffplay, Windows NO devuelve el foco a quien lo lanzo: la ventana se queda DEBAJO
+    # de otras aplicaciones y hay que ir a buscarla a la barra de tareas. Se recupera con la misma
+    # escalera que usa la cola al abrirse desde un acceso directo minimizado, y se respeta la misma
+    # opcion (gui.bringToFront): quien no quiera que el programa pelee por el foco, no lo tendra.
+    $volverAlFrente = {
+        if ([bool]$Context.GuiBringToFront) { [void](Set-CvGuiForeground -Form $form) }
+    }
+
+    # Los dos botones de video llaman a lo MISMO y solo se diferencian en el recorte: con el, se ve
+    # como va a quedar; sin el (Show-Preview sin -Crop), el archivo tal cual. Verlos uno detras de
+    # otro es la forma de decidir si el recorte se pasa o se queda corto, que es lo que se hacia en
+    # consola y esta ventana no dejaba hacer.
+    $playVideo = {
+        param([string]$Crop)
         $vo = @($st.VidOpts)
         $pos = 0
         for ($k = 0; $k -lt $vo.Count; $k++) { if ([int]$vo[$k].Index -eq [int]$st.Draft.VideoIndex) { $pos = [int]$vo[$k].Pos } }
         $form.Enabled = $false
-        try { Show-Preview -Context $Context -File $File -Crop "$($st.Draft.Crop)" -VideoPos $pos -Duration (Get-MediaDuration $st.Info) }
-        catch { $lblMsg.Text = ("No se pudo reproducir: {0}" -f $_.Exception.Message) }
-        finally { $form.Enabled = $true }
-    })
+        try { Show-Preview -Context $Context -File $File -Crop $Crop -VideoPos $pos -Duration (Get-MediaDuration $st.Info) }
+        catch { $lblMsg.Text = (Get-CvText -Key 'job.noreproducir' -Values @($_.Exception.Message)) }
+        finally { $form.Enabled = $true; & $volverAlFrente }
+    }
+    $btnPrev.Add_Click({    & $playVideo "$($st.Draft.Crop)" })
+    $btnPrevOrg.Add_Click({ & $playVideo '' })
 
     $lvA.Add_ItemChecked({
         if ($st.Loading -or $st.Closing) { return }
@@ -559,31 +658,36 @@ function Show-CvJobWindow {
     })
     $lvA.Add_SelectedIndexChanged({
         if ($st.Loading -or $st.Closing) { return }
-        $r = & $curA
+        & $armAudio
+        $r = $st.EditA
         if ($null -eq $r) { return }
         $st.Loading = $true
         try { $txtLang.Text = "$($r.Lang)"; $txtSync.Text = (Format-CvNumber $r.Sync) } finally { $st.Loading = $false }
     })
     # Los campos de texto actualizan el MODELO al teclear (asi lo que se guarda esta siempre al dia,
-    # sin depender de salir del campo) y la lista se repinta al SALIR, para no reconstruirla en cada tecla.
+    # sin depender de salir del campo) y la lista se repinta al confirmar: con INTRO o al salir del
+    # campo. Sin el Intro, Windows solo hacia sonar el pitido del sistema y el valor parecia no
+    # haberse cogido -y si mientras tanto se habia perdido la marca de la fila, no se cogia-.
     $txtLang.Add_TextChanged({
         if ($st.Loading -or $st.Closing) { return }
-        $r = & $curA
+        $r = $st.EditA
         if ($null -eq $r) { return }
-        $r.Lang = $txtLang.Text.Trim().ToLower()
+        $r.Lang = (ConvertTo-CvJobLangCode $txtLang.Text)
         & $validate
     })
-    $txtLang.Add_Leave({ if (-not ($st.Loading -or $st.Closing)) { & $renderAudio } })
+    $txtLang.Add_KeyDown({ if ($_.KeyCode -eq [System.Windows.Forms.Keys]::Enter) { $_.SuppressKeyPress = $true; & $commitAudio } })
+    $txtLang.Add_Leave({ if (-not ($st.Loading -or $st.Closing)) { & $commitAudio } })
     $txtSync.Add_TextChanged({
         if ($st.Loading -or $st.Closing) { return }
-        $r = & $curA
+        $r = $st.EditA
         if ($null -eq $r) { return }
         # Decimal independiente del locale: se admite coma (lo natural al teclear en es-ES) y se
         # guarda como numero; al job llega ya numerico, no como texto con coma.
         $v = ConvertTo-InvDouble (($txtSync.Text.Trim()) -replace ',', '.')
         if ($null -ne $v) { $r.Sync = [double]$v }
     })
-    $txtSync.Add_Leave({ if (-not ($st.Loading -or $st.Closing)) { & $renderAudio } })
+    $txtSync.Add_KeyDown({ if ($_.KeyCode -eq [System.Windows.Forms.Keys]::Enter) { $_.SuppressKeyPress = $true; & $commitAudio } })
+    $txtSync.Add_Leave({ if (-not ($st.Loading -or $st.Closing)) { & $commitAudio } })
     $btnDef.Add_Click({
         $r = & $curA
         if ($null -eq $r) { return }
@@ -593,13 +697,30 @@ function Show-CvJobWindow {
         & $renderAudio
         & $validate
     })
-    $btnPlay.Add_Click({
+    # Igual que en video: la pista TAL CUAL y la pista COMO VA A QUEDAR. La segunda aplica el mismo
+    # filtro de retardo que el worker, asi que sirve para dar por bueno un desfase sin convertir.
+    $playAudio = {
+        param([double]$Delay)
         $r = & $curA
         if ($null -eq $r) { return }
         $form.Enabled = $false
-        try { Show-AudioPreview -Context $Context -File $File -AudioPos ([int]$r.Pos) -Label (Get-CvText -Key 'jw.lbl.audio' -Values @($r.Index, $r.Lang)) -Duration (Get-MediaDuration $st.Info) }
-        catch { $lblMsg.Text = ("No se pudo reproducir: {0}" -f $_.Exception.Message) }
-        finally { $form.Enabled = $true }
+        try {
+            Show-AudioPreview -Context $Context -File $File -AudioPos ([int]$r.Pos) -Delay $Delay `
+                -Label (Get-CvText -Key 'jw.lbl.audio' -Values @($r.Index, $r.Lang)) -Duration (Get-MediaDuration $st.Info)
+        }
+        catch { $lblMsg.Text = (Get-CvText -Key 'job.noreproducir' -Values @($_.Exception.Message)) }
+        finally { $form.Enabled = $true; & $volverAlFrente }
+    }
+    $btnPlay.Add_Click({ & $playAudio 0 })
+    $btnPlaySync.Add_Click({
+        $r = & $curA
+        if ($null -eq $r) { return }
+        if ([double]$r.Sync -le 0) {
+            $lblMsg.ForeColor = (Get-CvGuiCurrentPalette).Muted
+            $lblMsg.Text = (Get-CvText -Key 'job.sync.sinretardo')
+            return
+        }
+        & $playAudio ([double]$r.Sync)
     })
 
     $lvS.Add_ItemChecked({
@@ -627,7 +748,8 @@ function Show-CvJobWindow {
     })
     $lvS.Add_SelectedIndexChanged({
         if ($st.Loading -or $st.Closing) { return }
-        $r = & $curS
+        & $armSubs
+        $r = $st.EditS
         if ($null -eq $r) { return }
         $st.Loading = $true
         try {
@@ -661,18 +783,19 @@ function Show-CvJobWindow {
     })
     $txtSubLang.Add_TextChanged({
         if ($st.Loading -or $st.Closing) { return }
-        $r = & $curS
+        $r = $st.EditS
         if ($null -eq $r) { return }
-        $r.Lang = $txtSubLang.Text.Trim().ToLower()
+        $r.Lang = (ConvertTo-CvJobLangCode $txtSubLang.Text)
     })
-    $txtSubLang.Add_Leave({ if (-not ($st.Loading -or $st.Closing)) { & $renderSubs } })
+    $txtSubLang.Add_KeyDown({ if ($_.KeyCode -eq [System.Windows.Forms.Keys]::Enter) { $_.SuppressKeyPress = $true; & $commitSubs } })
+    $txtSubLang.Add_Leave({ if (-not ($st.Loading -or $st.Closing)) { & $commitSubs } })
     $btnSubPlay.Add_Click({
         $r = & $curS
         if ($null -eq $r) { return }
         $form.Enabled = $false
         try { Show-SubtitlePreview -Context $Context -File $File -SubPos ([int]$r.Pos) -Label (Get-CvText -Key 'jw.lbl.sub' -Values @($r.Index, $r.Lang)) -Duration (Get-MediaDuration $st.Info) }
-        catch { $lblMsg.Text = ("No se pudo reproducir: {0}" -f $_.Exception.Message) }
-        finally { $form.Enabled = $true }
+        catch { $lblMsg.Text = (Get-CvText -Key 'job.noreproducir' -Values @($_.Exception.Message)) }
+        finally { $form.Enabled = $true; & $volverAlFrente }
     })
     $btnSubView.Add_Click({
         $r = & $curS
@@ -874,6 +997,9 @@ function Show-CvJobWindow {
             & $syncVideoControls
             & $buildAudio
             & $buildSubs
+            # Sin fila marcada todavia: los campos de las dos barras arrancan apagados (ver $armAudio).
+            & $armAudio
+            & $armSubs
             $st.Ready = $true
             & $validate
             # Lo que se ha decidido solo -bordes y sincronia- manda sobre el 'listo para guardar' de

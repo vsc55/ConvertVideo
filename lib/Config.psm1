@@ -745,6 +745,25 @@ function Get-CvConfigDefaults {
             # redondeos a tamano PAR del escalado (un pixel en 1080 es un 0,09%); por encima, los
             # recortes de verdad (quitar 140px de barras cambia la proporcion un 15%).
             queueDoneTolerance = 0.01
+            # La ventana de PREPARAR PENDIENTES se cierra sola al acabar el recorrido. Es el valor
+            # de partida de su casilla 'Cerrar al terminar', que la recuerda aqui al cambiarla. Solo
+            # se cierra si ha ido TODO bien: con algun error, o cancelado, se queda abierta, porque
+            # su resumen es el unico sitio donde se cuenta lo que ha pasado.
+            # Traer la ventana al frente al abrirla. Hace falta cuando el programa se lanza desde
+            # un acceso directo MINIMIZADO: el proceso nace sin derecho de primer plano y Windows
+            # deja la ventana detras de lo que estuvieras usando (solo parpadea en la barra de
+            # tareas). Con $false se abre y se queda donde Windows la ponga.
+            bringToFront       = $true
+            # Al MINIMIZAR la ventana de la cola, esconderla en el area de notificacion (junto al
+            # reloj) en vez de dejarla en la barra de tareas. Vuelve con doble clic en su icono.
+            minimizeToTray     = $false
+            # Aviso de "sigo aqui" la primera vez que se esconde en una sesion (ms; 0 = nunca). Sin
+            # el, la primera vez parece que la ventana se ha cerrado sola.
+            trayBalloonMs      = 3000
+            prepareAutoClose   = $false
+            # Cuanto se ve el resumen antes de que la ventana se cierre sola (ms). Cerrar en el
+            # mismo momento en que acaba no deja leer ni el 100% ni lo que se ha preparado.
+            prepareAutoCloseMs = 1200
         }
         # Carpetas de trabajo: vacio = junto al programa; admite ruta absoluta o relativa.
         paths     = [ordered]@{
@@ -1011,6 +1030,11 @@ function Get-CvConfigHelp {
         'gui/queueFollowHoldSec' = (Get-CvText -Key 'cfg.help.gui.queueFollowHoldSec')
         'gui/queueDoneProbe' = (Get-CvText -Key 'cfg.help.gui.queueDoneProbe')
         'gui/queueDoneTolerance' = (Get-CvText -Key 'cfg.help.gui.queueDoneTolerance')
+        'gui/bringToFront' = (Get-CvText -Key 'cfg.help.gui.bringToFront')
+        'gui/minimizeToTray' = (Get-CvText -Key 'cfg.help.gui.minimizeToTray')
+        'gui/trayBalloonMs' = (Get-CvText -Key 'cfg.help.gui.trayBalloonMs')
+        'gui/prepareAutoClose' = (Get-CvText -Key 'cfg.help.gui.prepareAutoClose')
+        'gui/prepareAutoCloseMs' = (Get-CvText -Key 'cfg.help.gui.prepareAutoCloseMs')
         'gui/setupWidth' = (Get-CvText -Key 'cfg.help.gui.setupWidth')
         'gui/setupHeight' = (Get-CvText -Key 'cfg.help.gui.setupHeight')
         'gui/queueSplitPercent' = (Get-CvText -Key 'cfg.help.gui.queueSplitPercent')
