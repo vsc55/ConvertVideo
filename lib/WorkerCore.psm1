@@ -917,7 +917,7 @@ function Get-CvConvertWorkerArgs {
         [string]$CfgPath = '',
         [string[]]$Only = @()
     )
-    $script = Join-Path $Root 'Convert.ps1'
+    $script = Get-CvScriptPath -Root $Root -Name 'Convert.ps1'
     $argv = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"{0}"' -f $script), '-WorkerOnly', '-Unattended')
     if (-not [string]::IsNullOrWhiteSpace($CfgPath)) { $argv += @('-Config', ('"{0}"' -f $CfgPath)) }
     $names = @(@($Only) | Where-Object { -not [string]::IsNullOrWhiteSpace("$_") })

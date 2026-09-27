@@ -6,11 +6,12 @@
 ConvertVideo/
 ├── Convert.cmd                 Lanzador del conversor (ExecutionPolicy Bypass + UTF-8)
 ├── setup.cmd               Lanzador de la utilidad de gestión
-├── Convert.ps1        Orquestador: clasificar / preparar / worker
-├── setup.ps1               Utilidad: herramientas + editor de config + limpieza (menú de consola; también `-Task` no interactivo)
-├── setup-gui.ps1           La MISMA utilidad en VENTANA (WinForms); comparte los datos con setup.ps1 vía lib\SetupCore.psm1
-├── Convert-gui.ps1         La COLA de conversión en VENTANA: estado de cada archivo, workers y progreso (lib\WorkerCore.psm1)
-├── FixSyncSub.ps1          Utilidad aparte: corregir/re-sincronizar subtítulos .srt (usa lib\SubtitleSRT.psm1)
+├── bin/                    Los scripts del programa (el raíz solo tiene los lanzadores .cmd)
+│   ├── Convert.ps1         Orquestador: clasificar / preparar / worker
+│   ├── setup.ps1           Utilidad: herramientas + editor de config + limpieza (menú de consola; también `-Task` no interactivo)
+│   ├── setup-gui.ps1       La MISMA utilidad en VENTANA (WinForms); comparte los datos con setup.ps1 vía lib\SetupCore.psm1
+│   ├── Convert-gui.ps1     La COLA de conversión en VENTANA: estado de cada archivo, workers y progreso (lib\WorkerCore.psm1)
+│   └── FixSyncSub.ps1      Utilidad aparte: corregir/re-sincronizar subtítulos .srt (usa lib\SubtitleSRT.psm1)
 ├── *.cmd                   Lanzadores por doble clic (Bypass): Convert.cmd / setup.cmd / Convert-gui.cmd / setup-gui.cmd / FixSyncSub.cmd (arrastrar y soltar) + Convert-Debug.cmd / setup-Debug.cmd (cargan config.debug.json) + Convert-gui-Config.cmd (la cola en ventana preguntando el config)
 ├── config.json             Toda la configuración (se carga al arrancar)
 ├── config.debug.json       Config alterna para los lanzadores -Debug (-Config)

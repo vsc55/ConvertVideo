@@ -35,7 +35,9 @@ param(
 $ErrorActionPreference = 'Stop'
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 
-$Root = $PSScriptRoot
+# La raiz del PROYECTO es la carpeta de arriba: los scripts viven en bin\ y todo lo demas
+# -lib\, lang\, tools\, Original\...- cuelga de la raiz, no de aqui.
+$Root = Split-Path -Parent $PSScriptRoot
 $Lib  = Join-Path $Root 'lib'
 # setup no usa el pipeline completo (Job = patrones de limpieza de Proceso; ConfigEditor = editor de
 # config.json; Profile = catálogos de opciones que el editor lista en los menús -Get-CvEditorOptions-).

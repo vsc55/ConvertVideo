@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-ConvertVideo: batch video converter/recoder for Windows, written in **Windows PowerShell 5.1** with **FFmpeg** as the engine. Modular (`lib\*.psm1`), all configuration in `config.json`. Code comments, docs, on-screen text and commit messages are **in Spanish** — match the surrounding language.
+ConvertVideo: batch video converter/recoder for Windows, written in **Windows PowerShell 5.1** with **FFmpeg** as the engine. Modular (`lib\*.psm1`), the entry scripts in `bin\` (the root only holds the `.cmd` launchers), all configuration in `config\config.json` (the folder is the home for every `config*.json`; a legacy one in the root still works, see `Get-CvDefaultConfigPath`). Code comments, docs, on-screen text and commit messages are **in Spanish** — match the surrounding language.
 
 ## Commands
 
@@ -25,13 +25,13 @@ Target runtime is **Windows PowerShell 5.1**, not PowerShell 7 — avoid 7-only 
   - `... -Encoder libx265` — CPU/portable (no NVENC)
   - `... -OnePass` — exercise the one-pass path
   - `... -Keep` — don't delete the isolated temp work area
-- **Run the app**: `Convert.cmd` (convert), `Convert-gui.cmd` (the conversion **queue in a window**: state per file, workers, live progress; goes straight to `config.json`), `Convert-gui-Config.cmd` (same window, but asks which `config*.json` to use), `setup.cmd` (tools + config editor), `setup-gui.cmd` (the same setup in a window), `FixSyncSub.cmd` (`.srt` fixer). `*-Debug.cmd` variants use `config.debug.json`. Launchers accept `-Config <path>`. `setup.ps1` also runs one action headless: `-Task install -App <app> -Version <v> [-SetDefault]` / `-Task tests -Suite unit|features|gui|cola`. `Convert.ps1 -WorkerOnly -Unattended` is the headless worker the queue window spawns: it never prompts and never pauses; add `-Only <names>` to encode just those files (the window passes the rows you picked).
+- **Run the app**: `Convert.cmd` (convert), `Convert-gui.cmd` (the conversion **queue in a window**: state per file, workers, live progress; goes straight to `config.json`), `Convert-gui-Config.cmd` (same window, but asks which `config*.json` to use), `setup.cmd` (tools + config editor), `setup-gui.cmd` (the same setup in a window), `FixSyncSub.cmd` (`.srt` fixer). `*-Debug.cmd` variants use `config.debug.json`. Launchers accept `-Config <path>`. `setup.ps1` also runs one action headless: `-Task install -App <app> -Version <v> [-SetDefault]` / `-Task tests -Suite unit|features|gui|cola`. `bin\Convert.ps1 -WorkerOnly -Unattended` is the headless worker the queue window spawns: it never prompts and never pauses; add `-Only <names>` to encode just those files (the window passes the rows you picked).
 
 Consider a change done only after verifying empirically: **AST-parse + unit-tests + the E2E battery for the path you touched** (staged and/or `-OnePass`). The batteries are the real safety net.
 
 ## Architecture
 
-- **Model: PREPARE → WORKER** (`Convert.ps1`). Inputs come from `Original\`. PREPARE asks/detects per file (video track, black borders, resize, anamorphic, audio + language, sync, subtitles) and **freezes** it in `Proceso\<name>.job.json`. WORKER encodes unattended → `Convertido\<name>_fix.mkv`. When everything has a job, several `Convert.cmd` windows run in parallel, each claiming files via an atomic lock.
+- **Model: PREPARE → WORKER** (`bin\Convert.ps1`; the five entry scripts live in `bin\` and get the project root with `Split-Path -Parent $PSScriptRoot`. Whoever spawns one of them asks `Get-CvScriptPath` instead of writing `bin` again). Inputs come from `Original\`. PREPARE asks/detects per file (video track, black borders, resize, anamorphic, audio + language, sync, subtitles) and **freezes** it in `Proceso\<name>.job.json`. WORKER encodes unattended → `Convertido\<name>_fix.mkv`. When everything has a job, several `Convert.cmd` windows run in parallel, each claiming files via an atomic lock.
 
 - **Two encode paths, one decision source.** The *staged* pipeline (audio → video → multiplex: 3 ffmpeg processes + temporals) and the *one-pass* beta (`test.betaOnePass`: a single ffmpeg with `-filter_complex`) both derive every decision from the SAME render spec — `Resolve-CvRenderSpec` (`Render.psm1`) — and only the EMISSION differs. The command builders are **pure and golden-tested**: `Get-CvOnePassArgs` (`OnePass.psm1`), `Get-CvMultiplexArgs`/`Get-CvSubtitleMapArgs` (`Multiplex.psm1`), `Get-CvVideoRunArgs` (`Video.psm1`), `Get-CvAudioEncodeArgs` (`Audio.psm1`). Put "what to do" in the spec, not in each emitter, and keep the two paths in sync — the golden tests (exact ffmpeg arg-string match) enforce it, so update them deliberately when args change.
 

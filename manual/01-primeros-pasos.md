@@ -95,6 +95,8 @@ En **`ui` → `language`** eliges en qué idioma te habla: **`auto`** (el de Win
 
 Los textos no están en el código, viven en `lang\<idioma>.json`. **Añadir un idioma es dejar un `.json` ahí** y nada más: la lista sale de los ficheros que haya.
 
+El fichero vive en **`config\config.json`** (si vienes de una versión anterior y lo tienes suelto arriba, se sigue usando ese). Al lado hay un **`config.json.example`** con lo básico, por si prefieres partir de él.
+
 La referencia completa de cada clave está en [ref-configuracion.md](../docs/ref-configuracion.md).
 
 ---

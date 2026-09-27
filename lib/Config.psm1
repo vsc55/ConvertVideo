@@ -1143,13 +1143,37 @@ function ConvertTo-CvPromptTimeouts {
     return $map
 }
 
+function Get-CvConfigDir {
+    <# La carpeta de las configuraciones: <raiz>\config (ahi van config.json, config.debug.json...). #>
+    param([Parameter(Mandatory)][string]$Root)
+    return (Join-Path $Root 'config')
+}
+
+function Get-CvDefaultConfigPath {
+    <#
+        El config que se usa cuando no se dice otra cosa: <raiz>\config\config.json.
+
+        Con RESPALDO al de la raiz: hasta la 4.7.3 vivia arriba, asi que si alguien actualiza el
+        programa y no ha movido su fichero, se sigue usando el suyo en vez de arrancar con los
+        valores de fabrica y dejarle la sensacion de que ha perdido la configuracion. Si no existe
+        ninguno de los dos, se devuelve el nuevo: es donde se creara al guardar.
+    #>
+    param([Parameter(Mandatory)][string]$Root)
+    $nuevo = Join-Path (Get-CvConfigDir -Root $Root) 'config.json'
+    if (Test-Path -LiteralPath $nuevo) { return $nuevo }
+    $viejo = Join-Path $Root 'config.json'
+    if (Test-Path -LiteralPath $viejo) { return $viejo }
+    return $nuevo
+}
+
 function Resolve-CvConfigPathArg {
     <#
-        Resuelve el argumento -Config de Convert.ps1/setup.ps1 a una ruta completa:
-        vacio = <Root>\config.json; relativo = respecto al directorio actual; absoluto = tal cual.
+        Resuelve el argumento -Config de bin\Convert.ps1 / bin\setup.ps1 a una ruta completa:
+        vacio = el de por defecto (Get-CvDefaultConfigPath); relativo = respecto al directorio
+        actual; absoluto = tal cual.
     #>
     param([Parameter(Mandatory)][string]$Root, [string]$Config = '')
-    if ([string]::IsNullOrWhiteSpace($Config)) { return (Join-Path $Root 'config.json') }
+    if ([string]::IsNullOrWhiteSpace($Config)) { return (Get-CvDefaultConfigPath -Root $Root) }
     if ([System.IO.Path]::IsPathRooted($Config)) { return $Config }
     return (Join-Path (Get-Location).Path $Config)
 }
@@ -1165,7 +1189,7 @@ function Get-CvConfig {
         [string]$Path = ''
     )
     $cfg = Get-CvConfigDefaults
-    $path = if ([string]::IsNullOrWhiteSpace($Path)) { Join-Path $Root 'config.json' } else { $Path }
+    $path = if ([string]::IsNullOrWhiteSpace($Path)) { Get-CvDefaultConfigPath -Root $Root } else { $Path }
     if (Test-Path $path) {
         try {
             $json = Get-Content -Raw -Path $path | ConvertFrom-Json

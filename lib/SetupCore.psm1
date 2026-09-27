@@ -536,14 +536,17 @@ function Get-CvSetupLogText {
 function Get-CvSetupConfigCandidates {
     <#
         Ficheros de configuracion que se ofrecen al arrancar la VENTANA sin -Config: los 'config*.json'
-        que haya junto al programa. 'config.json' va SIEMPRE el primero y aunque NO exista (sin fichero
-        se usan los valores por defecto, que es justo lo que hace el conversor); el resto, por nombre.
+        de la carpeta config\. 'config.json' va SIEMPRE el primero y aunque NO exista (sin fichero se
+        usan los valores por defecto, que es justo lo que hace el conversor); el resto, por nombre.
+
+        Tambien se miran los que hubiera en la RAIZ: hasta la 4.7.3 vivian ahi, y quien actualice sin
+        mover sus ficheros tiene que seguir viendolos en la lista.
 
         Devuelve @{ Path; Name; Exists; IsDefault; Text }, donde Text es la etiqueta para la UI
         ('por defecto', 'depuracion', o vacia) - la UI no vuelve a decidir nada.
     #>
     param([Parameter(Mandatory)][string]$Root)
-    $def  = Join-Path $Root 'config.json'
+    $def  = Get-CvDefaultConfigPath -Root $Root
     $out  = @()
     $seen = @{}
     $make = {
@@ -560,7 +563,8 @@ function Get-CvSetupConfigCandidates {
     }
     $out += (& $make $def)
     $seen[$def.ToLower()] = $true
-    foreach ($f in @(Get-ChildItem -LiteralPath $Root -Filter 'config*.json' -File -ErrorAction SilentlyContinue | Sort-Object Name)) {
+    $dirs = @((Get-CvConfigDir -Root $Root), $Root)   # el sitio nuevo primero, la raiz por compatibilidad
+    foreach ($f in @($dirs | ForEach-Object { Get-ChildItem -LiteralPath $_ -Filter 'config*.json' -File -ErrorAction SilentlyContinue } | Sort-Object Name)) {
         if ($seen.ContainsKey($f.FullName.ToLower())) { continue }
         $seen[$f.FullName.ToLower()] = $true
         $out += (& $make $f.FullName)

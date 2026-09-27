@@ -124,7 +124,7 @@ function Start-CvSetupTask {
         [Parameter(Mandatory)][string[]]$TaskArgs,
         [switch]$Wait
     )
-    $script = Join-Path $Root 'setup.ps1'
+    $script = Get-CvScriptPath -Root $Root -Name 'setup.ps1'
     $argv = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"{0}"' -f $script), '-Config', ('"{0}"' -f $CfgPath)) + $TaskArgs
     $p = Start-Process -FilePath 'powershell.exe' -ArgumentList $argv -PassThru
     if ($Wait -and $p) { $p.WaitForExit() }

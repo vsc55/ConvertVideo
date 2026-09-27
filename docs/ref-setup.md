@@ -3,9 +3,9 @@
 `setup.ps1` (lanzado con `setup.cmd`) es la utilidad de gestión del conversor: instalar/actualizar herramientas (ffmpeg, aacgain, MKVToolNix, 7zr), editar `config.json` con un editor navegable, ver el estado del entorno, comprobar la compatibilidad GPU, ejecutar los tests unitarios y limpiar `Proceso\`/`logs\`. No ejecuta el pipeline de conversión (eso es `Convert.ps1`).
 
 ```powershell
-setup.cmd                       # normal (config.json junto al programa)
+setup.cmd                       # normal (config\config.json)
 setup.cmd -Config otra.json     # usar/editar un config alterno (ver "Config alterno")
-powershell -ExecutionPolicy Bypass -File setup.ps1
+powershell -ExecutionPolicy Bypass -File bin\setup.ps1
 
 setup-gui.cmd                   # LO MISMO, en ventana (ver "Setup en ventana")
 setup-gui.cmd -Config otra.json # admite los mismos parametros
@@ -58,7 +58,7 @@ flowchart TD
 
 ### Qué configuración se gestiona (en vez de un `setup-gui-Debug.cmd`)
 
-Al abrir **sin `-Config`**, la ventana **pregunta** qué configuración gestionar: lista los `config*.json` que encuentre junto al programa (con `config.json` preseleccionado y `config.debug.json` marcado como *depuración*) más **`Otro...`** para buscar uno en disco. Cancelar = no abrir nada.
+Al abrir **sin `-Config`**, la ventana **pregunta** qué configuración gestionar: lista los `config*.json` que encuentre en `config\` —y, por compatibilidad, los que queden sueltos en el raíz de una versión anterior— (con `config.json` preseleccionado y `config.debug.json` marcado como *depuración*) más **`Otro...`** para buscar uno en disco. Cancelar = no abrir nada.
 
 Así se cubre lo que en consola hacen los dos lanzadores (`setup.cmd` / `setup-Debug.cmd`) sin duplicar un `.cmd`, y además se puede abrir un config que esté en cualquier carpeta. Con **`-Config <ruta>` explícito no pregunta** (`setup-gui.cmd -Config config.debug.json` va directo), así que sigue siendo automatizable. Los candidatos salen de `Get-CvSetupConfigCandidates` (`lib\SetupCore.psm1`), no de la ventana.
 
@@ -110,8 +110,8 @@ Mismo contenido y **misma semántica de guardado** que el editor de consola (se 
 `setup.ps1` acepta ejecutar **una sola acción y salir**, sin menú. Lo usa la ventana para las acciones largas, y sirve para automatizar desde un `.cmd` o CI:
 
 ```powershell
-setup.ps1 -Task install -App ffmpeg -Version 7.1.1 [-SetDefault]   # instala (y fija como 'selected')
-setup.ps1 -Task tests   -Suite unit|features|gui|cola              # lanza una bateria del catalogo
+bin\setup.ps1 -Task install -App ffmpeg -Version 7.1.1 [-SetDefault]   # instala (y fija como 'selected')
+bin\setup.ps1 -Task tests   -Suite unit|features|gui|cola              # lanza una bateria del catalogo
 ```
 
 Las baterías salen del catálogo único `Get-CvSetupTestSuites` (`lib\SetupCore.psm1`): añadir una ahí la hace aparecer **sola** en el menú de consola, en la ventana y en `-Task`.

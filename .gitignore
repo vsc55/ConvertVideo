@@ -13,4 +13,6 @@
 /tools/*
 /logs/*
 /config.*json
+/config/*.json
+!/config/config.json.example
 /Proceso/*.json

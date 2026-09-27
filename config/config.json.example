@@ -1,0 +1,33 @@
+{
+  "ui": {
+    "language": "auto"
+  },
+  "languages": {
+    "audio": [ "es" ],
+    "subtitle": [ "es" ]
+  },
+  "paths": {
+    "base": "",
+    "original": "",
+    "proceso": "",
+    "convertido": "",
+    "logs": ""
+  },
+  "encode": {
+    "outputExtension": "mkv",
+    "video": {
+      "videoEncoder": "auto",
+      "detectBorder": "auto"
+    },
+    "audio": {
+      "encoder": "aac_coder",
+      "bitrate": "192k"
+    }
+  },
+  "behavior": {
+    "workers": 2
+  },
+  "gui": {
+    "theme": "system"
+  }
+}

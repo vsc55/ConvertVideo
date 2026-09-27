@@ -23,7 +23,9 @@ param(
 $ErrorActionPreference = 'Stop'
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 
-$Root = $PSScriptRoot
+# La raiz del PROYECTO es la carpeta de arriba: los scripts viven en bin\ y todo lo demas
+# -lib\, lang\, tools\, Original\...- cuelga de la raiz, no de aqui.
+$Root = Split-Path -Parent $PSScriptRoot
 $Lib  = Join-Path $Root 'lib'
 # Mismos modulos que setup.ps1 (ConfigEditor aporta Get-CvEditorOptions, que la ventana reutiliza
 # para los desplegables) mas GuiSetup (la ventana) y SetupCore (los datos).
@@ -85,7 +87,7 @@ $logFile = $sess.LogFile
 
 # 'Alterno' = NO es el config.json de junto al programa. Se compara la RUTA ya resuelta, no si vino
 # -Config: ahora el chooser siempre rellena -Config, y elegir el normal no debe salir como alterno.
-$isAlt = ($CfgPath -ne (Join-Path $Root 'config.json'))
+$isAlt = ($CfgPath -ne (Get-CvDefaultConfigPath -Root $Root))
 Write-CvLog 'SETUP' (Get-CvText -Key 'sg.abriendo' -Values @($CfgName))
 
 $ok = Show-CvSetupWindow -Context $ctx -Root $Root -CfgPath $CfgPath -CfgName $CfgName -IsAlt $isAlt -CurrentLog "$logFile"

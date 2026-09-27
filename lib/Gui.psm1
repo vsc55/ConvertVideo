@@ -48,7 +48,7 @@ function Get-CvGuiLayoutPath {
     #>
     param([Parameter(Mandatory)]$Context)
     $cfg = "$($Context.ConfigPath)"
-    if ([string]::IsNullOrWhiteSpace($cfg)) { $cfg = Join-Path "$($Context.Root)" 'config.json' }
+    if ([string]::IsNullOrWhiteSpace($cfg)) { $cfg = Get-CvDefaultConfigPath -Root "$($Context.Root)" }
     $dir = Split-Path -Parent $cfg
     if ([string]::IsNullOrWhiteSpace($dir)) { $dir = "$($Context.Root)" }
     return (Join-Path $dir ("{0}.gui.json" -f [System.IO.Path]::GetFileNameWithoutExtension($cfg)))

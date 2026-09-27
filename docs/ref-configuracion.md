@@ -1,5 +1,7 @@
 # Referencia de `config.json`
 
+Vive en **`config\config.json`**, junto a los demás `config*.json` (`config.debug.json`…). Si vienes de una versión anterior y aún lo tienes suelto en el raíz del programa, **se sigue usando ese**: no hay que mover nada para que funcione, aunque lo suyo es llevarlo a `config\`. En `config\config.json.example` hay uno **mínimo de ejemplo** con las opciones que más se tocan, listo para copiar y renombrar.
+
 Se carga al arrancar (`Get-CvConfig`) y se **fusiona en profundidad** con los valores por defecto (`Get-CvConfigDefaults`, la fuente única): puedes tener un `config.json` parcial y se completan las claves que falten, sin romper al añadir opciones nuevas.
 
 Por eso el `config.json` distribuido es **mínimo**: solo lleva lo que se **sobrescribe** respecto a los defaults (p. ej. la versión de ffmpeg, el idioma de audio o el tamaño de ventana). Todo lo demás —incluido el catálogo completo de `downloads` (`ffmpeg`, `aacgain`, `sevenzip`, `mkvtoolnix`) y la sección `postprocess`— sale de los defaults. Un `config.json` vacío (`{}`) también es válido.

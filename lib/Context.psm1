@@ -50,6 +50,23 @@ function Start-CvSession {
     }
 }
 
+function Get-CvScriptDir {
+    <# La carpeta de los scripts del programa (Convert.ps1, setup.ps1...): <raiz>in. #>
+    param([Parameter(Mandatory)][string]$Root)
+    return (Join-Path $Root 'bin')
+}
+
+function Get-CvScriptPath {
+    <#
+        La ruta de UNO de los scripts del programa. Fuente unica: quien abre un proceso -la cola
+        lanzando un worker (Convert.ps1 -WorkerOnly), la ventana de setup lanzando setup.ps1 -Task,
+        las baterias montando su root de mentira- pregunta aqui en vez de escribir 'bin' por su
+        cuenta. Asi mover la carpeta es cambiar una linea y no salir a buscar por todo el repo.
+    #>
+    param([Parameter(Mandatory)][string]$Root, [Parameter(Mandatory)][string]$Name)
+    return (Join-Path (Get-CvScriptDir -Root $Root) $Name)
+}
+
 function Get-CvWorkDirs {
     <# Unica fuente de verdad de las carpetas de trabajo del proyecto (crear/comprobar). #>
     param([Parameter(Mandatory)]$Context)
@@ -97,7 +114,7 @@ function New-CvContext {
         [string]$ConfigPath = ''
     )
 
-    $cfgFile = if ([string]::IsNullOrWhiteSpace($ConfigPath)) { Join-Path $Root 'config.json' } else { $ConfigPath }
+    $cfgFile = if ([string]::IsNullOrWhiteSpace($ConfigPath)) { Get-CvDefaultConfigPath -Root $Root } else { $ConfigPath }
     $cfg = Get-CvConfig -Root $Root -Path $cfgFile
     # Defaults (fuente unica): se usan como fallback cuando un valor de $cfg es INVALIDO (no cuando
     # falta, que ya lo cubre la fusion de Get-CvConfig). Asi los numeros/opciones por defecto viven

@@ -5,4 +5,4 @@ REM -WindowStyle Hidden: oculta esta consola, que aqui solo hace de anfitriona d
 REM Las acciones largas (instalar, tests) abren su PROPIA consola para ver el progreso.
 REM chcp 65001 pone la consola en UTF-8 (el log de la sesion sale en UTF-8).
 chcp 65001 >nul
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Sta -WindowStyle Hidden -File "%~dp0setup-gui.ps1" %*
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Sta -WindowStyle Hidden -File "%~dp0bin\setup-gui.ps1" %*

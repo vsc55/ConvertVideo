@@ -200,7 +200,9 @@ Write-Host ('Root aislado: {0}' -f $tempRoot)
 New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
 New-Item -ItemType Junction  -Path (Join-Path $tempRoot 'lib')   -Target (Join-Path $Root 'lib')   | Out-Null
 New-Item -ItemType Junction  -Path (Join-Path $tempRoot 'tools') -Target (Join-Path $Root 'tools') | Out-Null
-Copy-Item -LiteralPath (Join-Path $Root 'Convert.ps1') -Destination (Join-Path $tempRoot 'Convert.ps1') -Force
+# El worker se abre desde bin\ (Get-CvScriptPath), asi que en el root aislado va en el mismo sitio.
+New-Item -ItemType Directory -Path (Join-Path $tempRoot 'bin') -Force | Out-Null
+Copy-Item -LiteralPath (Join-Path $Root 'bin\Convert.ps1') -Destination (Join-Path $tempRoot 'bin\Convert.ps1') -Force
 try {
     # Config del root aislado: fusionado (para tener todas las secciones aunque config.json sea
     # minimo) + comportamiento contenido. Paths vacios => carpetas de trabajo bajo el root temporal.
@@ -330,7 +332,7 @@ try {
     # volveria un error terminante en el padre, asi que aislamos la llamada al proceso hijo.
     $old = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
     # Mostrar solo las lineas de log del conversor (no el volcado de progreso de ffmpeg).
-    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $tempRoot 'Convert.ps1') 2>&1 |
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $tempRoot 'bin\Convert.ps1') 2>&1 |
         ForEach-Object {
             $t = "$_"
             if ($t -match '\[(WORKER|GLOBAL|AUDIO|VIDEO|MULTIPLEX|SUB)\]' -or $t -match 'Error|ERROR') {

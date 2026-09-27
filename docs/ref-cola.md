@@ -6,11 +6,11 @@ Es la fase **WORKER** con ratón, y también la de **PREPARAR** para el caso nor
 
 | Lanzador | Qué hace |
 |---|---|
-| **`Convert-gui.cmd`** | Va **directo** con el `config.json` de junto al programa (le pasa `-Config`, por eso no pregunta). |
+| **`Convert-gui.cmd`** | Va **directo** con `config\config.json` (le pasa `-Config`, por eso no pregunta). |
 | **`Convert-gui-Config.cmd`** | **Pregunta** con qué configuración trabajar: lista los `config*.json` que haya al lado (`config.json`, `config.debug.json`…) y deja buscar otro en disco. Es el equivalente de elegir entre `Convert.cmd` y `Convert-Debug.cmd` sin cambiar de lanzador. |
 
 ```
-powershell -NoProfile -ExecutionPolicy Bypass -Sta -File Convert-gui.ps1 [-Config <ruta>]
+powershell -NoProfile -ExecutionPolicy Bypass -Sta -File bin\Convert-gui.ps1 [-Config <ruta>]
 ```
 
 La regla es esa: **con `-Config` va directo, sin `-Config` pregunta** (el mismo selector que `setup-gui.cmd`).
@@ -347,7 +347,7 @@ Las dos últimas llevan el recuento en el texto (*"Quitar de la cola los 3 selec
 La ventana **no codifica**: WinForms es de un solo hilo y se quedaría congelada durante horas. Cada worker es un proceso aparte, igual que `setup-gui` lanza `setup.ps1 -Task ...`:
 
 ```
-Convert.ps1 -WorkerOnly -Unattended [-Config <ruta>]
+bin\Convert.ps1 -WorkerOnly -Unattended [-Config <ruta>]
 ```
 
 `-Unattended` implica `-WorkerOnly` y es lo que hace seguro tenerlo **sin consola a la vista**: no pregunta nada (si falta la versión de `ffmpeg` del job, aborta con el motivo en el log en vez de ofrecer el menú de descarga) y no se queda en la pausa final. Un prompt en una consola oculta sería un proceso colgado para siempre; por eso la ventana comprueba `ffmpeg` **antes** de abrir ningún worker.

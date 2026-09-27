@@ -871,7 +871,8 @@ if (Test-Group 'gif') {
     # Aqui se CODIFICA de verdad, y los workers son procesos aparte que abren '<root>\Convert.ps1':
     # el root de demo necesita el script y sus modulos. Sin esto los workers se mueren al nacer y la
     # lista se queda en 'En cola' para siempre (paso: el GIF salio con la cola parada).
-    Copy-Item -LiteralPath (Join-Path $Root 'Convert.ps1') -Destination (Join-Path $ctx.Root 'Convert.ps1') -Force
+    New-Item -ItemType Directory -Path (Join-Path $ctx.Root 'bin') -Force | Out-Null
+    Copy-Item -LiteralPath (Join-Path $Root 'bin\Convert.ps1') -Destination (Join-Path $ctx.Root 'bin\Convert.ps1') -Force
     if (-not (Test-Path -LiteralPath (Join-Path $ctx.Root 'lib'))) {
         New-Item -ItemType Junction -Path (Join-Path $ctx.Root 'lib') -Target (Join-Path $Root 'lib') | Out-Null
     }

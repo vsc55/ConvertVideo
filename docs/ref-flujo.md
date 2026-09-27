@@ -27,7 +27,7 @@ flowchart TD
 
 | Parámetro | Vale para | Uso |
 |---|---|---|
-| `-Config <ruta>` | `Convert` y `setup` | Fichero de configuración a usar en vez de `config.json` junto al programa. Admite ruta **absoluta** o **relativa** al directorio actual. Permite mantener varios perfiles de config (p. ej. `Convert.cmd -Config perfiles\anime.json`). Los workers extra heredan el mismo `-Config`. Si la ruta no existe, se avisa y se usan los valores por defecto. |
+| `-Config <ruta>` | `Convert` y `setup` | Fichero de configuración a usar en vez de `config\config.json`. Admite ruta **absoluta** o **relativa** al directorio actual. Permite mantener varios perfiles de config (p. ej. `Convert.cmd -Config perfiles\anime.json`). Los workers extra heredan el mismo `-Config`. Si la ruta no existe, se avisa y se usan los valores por defecto. |
 | `-WorkerOnly` | `Convert` | Salta la fase PREPARAR y entra directo como worker (lo usan las ventanas extra que se abren al pedir varios workers en paralelo). |
 | `-Only <nombres>` | `Convert` | Codifica **solo** esos archivos (nombre base, sin extensión), en vez de todos los preparados. Lo usa la ventana de la cola al elegir unos cuantos a mano, y sirve igual desde consola para rehacer uno concreto: `Convert.cmd -WorkerOnly -Only "Serie_1x05"`. Vacío = todos. Solo afecta a la fase WORKER. |
 | `-Unattended` | `Convert` | Worker **desatendido** (el que abre `Convert-gui`, normalmente sin consola a la vista): implica `-WorkerOnly`, no pregunta nada (si falta `ffmpeg` aborta con el motivo en vez de ofrecer la descarga) y no pausa al terminar. Ver [ref-cola.md](ref-cola.md). |

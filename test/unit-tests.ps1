@@ -1989,7 +1989,10 @@ $totVacio = Get-CvQueueTotals -Rows @()
 Assert-Eq 'Totales: cola vacia' 0 $totVacio.Total
 # Argumentos con los que la ventana abre un worker (puro: se comprueba sin abrir procesos).
 $wa = @(Get-CvConvertWorkerArgs -Root 'D:\cv')
-Assert-True 'Worker args: sin perfil ni config'  (($wa -join ' ') -eq '-NoProfile -ExecutionPolicy Bypass -File "D:\cv\Convert.ps1" -WorkerOnly -Unattended')
+Assert-True 'Worker args: sin perfil ni config'  (($wa -join ' ') -eq '-NoProfile -ExecutionPolicy Bypass -File "D:\cv\bin\Convert.ps1" -WorkerOnly -Unattended')
+# Y de donde sale ese 'bin': de una sola funcion, para que mover la carpeta sea cambiar una linea.
+Assert-Eq 'Scripts: viven en bin'    'D:\cv\bin' (Get-CvScriptDir -Root 'D:\cv')
+Assert-Eq 'Scripts: la ruta de uno'  'D:\cv\bin\setup.ps1' (Get-CvScriptPath -Root 'D:\cv' -Name 'setup.ps1')
 $wc = @(Get-CvConvertWorkerArgs -Root 'D:\cv' -CfgPath 'D:\cv\config.debug.json')
 Assert-True 'Worker args: con -Config'           (($wc -join ' ').Contains('-Config "D:\cv\config.debug.json"'))
 # -Only: la ventana lo manda en UN argumento con los nombres separados por '|', porque
@@ -2536,8 +2539,60 @@ Assert-Eq   'Textos: ninguna ventana lleva el texto pegado' '' (($pegados | Sele
 # validos se colapsaba a un elemento y cualquier valor caia en 'auto'-.
 $cfgLang = Join-Path ([IO.Path]::GetTempPath()) ("cvlangcfg-" + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.json')
 Set-Content -LiteralPath $cfgLang -Encoding UTF8 -Value '{ "ui": { "language": "en" } }'
-Assert-Eq 'Config: el idioma del fichero llega al contexto' 'en' "$((New-CvContext -Root $raizRepo -ConfigPath $cfgLang).Language)"
+# Root TEMPORAL y no el del repo: New-CvContext crea las carpetas de trabajo que falten, y con el
+# root del proyecto la bateria le iba dejando Original\, Proceso\, Convertido\ y logs\ dentro.
+$rootLang = Join-Path ([IO.Path]::GetTempPath()) ("cvlangroot-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+New-Item -ItemType Directory -Path $rootLang -Force | Out-Null
+Assert-Eq 'Config: el idioma del fichero llega al contexto' 'en' "$((New-CvContext -Root $rootLang -ConfigPath $cfgLang).Language)"
+Remove-Item -LiteralPath $rootLang -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $cfgLang -Force -ErrorAction SilentlyContinue
+
+# ------------------------------------------------------------------------------------------------
+# DONDE VIVE LA CONFIGURACION: en config\, con respaldo a la raiz (donde estaba hasta la 4.7.3).
+Write-Host "`nLa carpeta de configuracion" -ForegroundColor Cyan
+
+$cfgRaiz = Join-Path ([IO.Path]::GetTempPath()) ("cvcfgdir-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+New-Item -ItemType Directory -Path (Join-Path $cfgRaiz 'config') -Force | Out-Null
+Assert-Eq 'Config: la carpeta es config' (Join-Path $cfgRaiz 'config') (Get-CvConfigDir -Root $cfgRaiz)
+# Sin ningun fichero: se apunta al sitio NUEVO, que es donde se creara al guardar.
+Assert-Eq 'Config: sin ficheros, el de config' (Join-Path $cfgRaiz 'config\config.json') (Get-CvDefaultConfigPath -Root $cfgRaiz)
+# Solo el viejo (quien actualiza y no mueve nada): se usa el suyo y no se pierde la configuracion.
+Set-Content -LiteralPath (Join-Path $cfgRaiz 'config.json') -Encoding UTF8 -Value '{ }'
+Assert-Eq 'Config: si solo esta el de la raiz, ese' (Join-Path $cfgRaiz 'config.json') (Get-CvDefaultConfigPath -Root $cfgRaiz)
+# Con los dos, manda el nuevo.
+Set-Content -LiteralPath (Join-Path $cfgRaiz 'config\config.json') -Encoding UTF8 -Value '{ }'
+Assert-Eq 'Config: con los dos, manda config\' (Join-Path $cfgRaiz 'config\config.json') (Get-CvDefaultConfigPath -Root $cfgRaiz)
+# Y -Config sigue mandando sobre todo lo anterior.
+Assert-Eq 'Config: -Config absoluto manda' 'E:\otro\mio.json' (Resolve-CvConfigPathArg -Root $cfgRaiz -Config 'E:\otro\mio.json')
+Remove-Item -LiteralPath $cfgRaiz -Recurse -Force -ErrorAction SilentlyContinue
+
+# El EJEMPLO que se reparte en el repo: tiene que ser JSON valido y no inventarse claves. Sin esto
+# se queda viejo en cuanto se renombre una opcion, y nadie se entera hasta que alguien lo copia.
+$ejemplo = Join-Path $raizRepo 'config\config.json.example'
+Assert-True 'Ejemplo: esta en el repo' (Test-Path -LiteralPath $ejemplo)
+if (Test-Path -LiteralPath $ejemplo) {
+    $ej = $null
+    try { $ej = Get-Content -LiteralPath $ejemplo -Raw | ConvertFrom-Json } catch { $ej = $null }
+    Assert-True 'Ejemplo: es JSON valido' ($null -ne $ej)
+    $desconocidas = @()
+    $mira = {
+        param($Nodo, $Def, [string]$Ruta)
+        foreach ($pr in @($Nodo.PSObject.Properties)) {
+            $hijoDef = $null
+            if ($Def -is [System.Collections.IDictionary]) {
+                if ($Def.Contains($pr.Name)) { $hijoDef = $Def[$pr.Name] } else { $script:faltaAqui = $true }
+            }
+            $r = $(if ($Ruta -eq '') { $pr.Name } else { "$Ruta/$($pr.Name)" })
+            if ($null -eq $hijoDef -and -not ($Def -is [System.Collections.IDictionary] -and $Def.Contains($pr.Name))) {
+                $desconocidas += $r
+                continue
+            }
+            if ($pr.Value -is [System.Management.Automation.PSCustomObject]) { & $mira $pr.Value $hijoDef $r }
+        }
+    }
+    if ($null -ne $ej) { & $mira $ej (Get-CvConfigDefaults) '' }
+    Assert-Eq 'Ejemplo: ninguna clave inventada' '' (($desconocidas | Sort-Object) -join ', ')
+}
 
 # ------------------------------------------------------------------------------------------------
 # CLAVES QUE SON UNA RUTA: el editor en ventana les pone el boton de buscarla con el explorador.
@@ -2586,7 +2641,7 @@ $json = @{
     }
 } | ConvertTo-Json -Depth 5
 Set-Content -LiteralPath $cfgPath -Encoding UTF8 -Value $json
-$ctxP = New-CvContext -Root $raizRepo -ConfigPath $cfgPath
+$ctxP = New-CvContext -Root $tmpBase -ConfigPath $cfgPath
 Assert-Eq 'Contexto: la base llega del config'        $tmpBase "$($ctxP.Base)"
 Assert-Eq 'Contexto: Original cuelga de la base'      (Join-Path $tmpBase 'Original') "$($ctxP.Original)"
 Assert-Eq 'Contexto: Proceso tambien'                 (Join-Path $tmpBase 'Proceso')  "$($ctxP.Proceso)"
@@ -2597,9 +2652,12 @@ Assert-Eq 'Contexto: la sacada aparte se respeta'     $tmpOut "$($ctxP.Convertid
 # sus propias carpetas puestas, con lo que este caso fallaria sin que nada estuviera roto (paso).
 $cfgVacio = Join-Path ([IO.Path]::GetTempPath()) ("cvpathvacio-" + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.json')
 Set-Content -LiteralPath $cfgVacio -Encoding UTF8 -Value '{ }'
-$ctxD = New-CvContext -Root $raizRepo -ConfigPath $cfgVacio
-Assert-Eq 'Contexto: sin paths, Original junto al programa' (Join-Path $raizRepo 'Original') "$($ctxD.Original)"
-Assert-Eq 'Contexto: sin paths, la base es el programa'     $raizRepo "$($ctxD.Base)"
+$rootVacio = Join-Path ([IO.Path]::GetTempPath()) ("cvrootvacio-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+New-Item -ItemType Directory -Path $rootVacio -Force | Out-Null
+$ctxD = New-CvContext -Root $rootVacio -ConfigPath $cfgVacio
+Assert-Eq 'Contexto: sin paths, Original junto al programa' (Join-Path $rootVacio 'Original') "$($ctxD.Original)"
+Assert-Eq 'Contexto: sin paths, la base es el programa'     $rootVacio "$($ctxD.Base)"
+Remove-Item -LiteralPath $rootVacio -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $cfgVacio -Force -ErrorAction SilentlyContinue
 foreach ($d in @($tmpBase, $tmpOut)) { Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue }
 Remove-Item -LiteralPath $cfgPath -Force -ErrorAction SilentlyContinue

@@ -15,11 +15,11 @@
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/vsc55/ConvertVideo)
 [![GitHub Stars](https://img.shields.io/github/stars/vsc55/ConvertVideo?style=social)](https://github.com/vsc55/ConvertVideo/stargazers)
 
-Conversor/recodificador de vídeo por lotes para Windows, escrito en **PowerShell 5.1**, que usa **FFmpeg** como motor. Diseño modular en `lib\` y toda la configuración en `config.json`.
+Conversor/recodificador de vídeo por lotes para Windows, escrito en **PowerShell 5.1**, que usa **FFmpeg** como motor. Diseño modular en `lib\`, los scripts en `bin\` y toda la configuración en `config\config.json`.
 
 Recodifica a **MKV** (vídeo H.265/H.264/AV1 por GPU NVIDIA o CPU; audio AAC, AC-3, E-AC-3, MP3, FLAC u Opus, o copia sin recodificar), con detección y recorte de bandas negras, selección de pistas (vídeo/audio/subtítulos, con preview), corrección de sincronía, normalización de volumen y **MKV final limpio** (sin metadatos heredados ni etiquetas `DURATION`).
 
-![De Original\ a Convertido\](manual/img/uso.gif)
+![De Original a Convertido, sin tocar nada mas](manual/img/uso.gif)
 
 *La cola de conversión de principio a fin: dejar los vídeos, `Preparar pendientes`, `Iniciar` y listo. Es una sesión real grabada con [`manual/generar-capturas.ps1`](manual/generar-capturas.ps1).*
 
@@ -35,7 +35,7 @@ Recodifica a **MKV** (vídeo H.265/H.264/AV1 por GPU NVIDIA o CPU; audio AAC, AC
    - Primero **pregunta** la configuración de cada archivo; luego **codifica** sin más preguntas.
 3. El resultado queda en `Convertido\<nombre>_fix.mkv`.
 
-`Convert.cmd` solo lanza `Convert.ps1` con `-ExecutionPolicy Bypass` (no cambia la política del sistema) y pone la consola en UTF-8.
+`Convert.cmd` solo lanza `bin\Convert.ps1` con `-ExecutionPolicy Bypass` (no cambia la política del sistema) y pone la consola en UTF-8.
 
 > ¿Prefieres ventanas? **[Manual de uso con capturas](manual/README.md)**: preparar, la cola de conversión, los workers y qué hacer cuando algo se queda a medias.
 
@@ -143,9 +143,8 @@ Todo es configurable en `config.json` (detalle en [ref-configuracion.md](docs/re
 | `Convert-gui.cmd` / `setup-gui.cmd` | Lo mismo en **ventana**: la cola de conversión ([docs/ref-cola.md](docs/ref-cola.md)) y el setup ([docs/ref-setup.md](docs/ref-setup.md)). |
 | `Convert-gui-Config.cmd` | La cola en ventana **preguntando** con qué `config*.json` trabajar (el normal va directo). |
 | `Convert-Debug.cmd` / `setup-Debug.cmd` / `config.debug.json` | Conversor / editor de setup en modo debug (log detallado), sobre `config.debug.json`. |
-| `Convert.ps1` | Orquestador (clasificar / preparar / worker). |
-| `setup.ps1` | Herramientas + editor de `config.json` + limpieza. |
-| `config.json` | Toda la configuración. |
+| `bin\` | Los scripts del programa: `Convert.ps1` (orquestador: clasificar / preparar / worker), `setup.ps1` (herramientas + editor de `config.json` + limpieza), sus dos versiones en ventana y `FixSyncSub.ps1`. En el raíz solo quedan los lanzadores. |
+| `config\` | Las configuraciones: `config.json`, `config.debug.json`… y `config.json.example`, un mínimo de ejemplo para copiar. Un `config.json` que siga en el raíz de una versión anterior se sigue usando. |
 | `lib\` | Módulos PowerShell (`*.psm1`); las ventanas, una por fichero, en `lib\form\`. |
 | `lang\` | Textos de la interfaz por idioma (`es.json`, `en.json`…). |
 | `Original\` | Vídeos de entrada (las cuatro carpetas de trabajo se pueden mover con `paths`). |

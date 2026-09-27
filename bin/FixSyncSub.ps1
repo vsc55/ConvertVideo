@@ -20,7 +20,9 @@ param([string]$Path = '', [string]$Config = '')
 $ErrorActionPreference = 'Stop'
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 
-$Root = $PSScriptRoot
+# La raiz del PROYECTO es la carpeta de arriba: los scripts viven en bin\ y todo lo demas
+# -lib\, lang\, tools\, Original\...- cuelga de la raiz, no de aqui.
+$Root = Split-Path -Parent $PSScriptRoot
 $Lib  = Join-Path $Root 'lib'
 $modules = @(
     'Log'
