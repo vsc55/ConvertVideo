@@ -11,6 +11,9 @@
         directa como worker y se reparten los archivos por el lock.
 
     Regla del prefijo _: si el nombre empieza por '_', se fuerza la deteccion de bordes.
+
+    Con que configuracion trabaja: con la de siempre, sin preguntar. Para elegir otra, -Config <ruta>,
+    o MANTENER Mayus mientras arranca (gui.askConfigKey), que saca la misma lista que setup.
 #>
 
 [CmdletBinding()]
@@ -29,9 +32,13 @@ param(
     # WORKER: PREPARAR sigue recorriendo lo que falte. Desde la ventana llegan todos en un solo
     # valor separados por '|' (ver Get-CvConvertWorkerArgs / Expand-CvOnlyList).
     [string[]]$Only = @(),
-    # Fichero de configuracion a usar (por defecto config.json junto al programa). Admite ruta
-    # absoluta o relativa al directorio actual. Permite tener varios perfiles de config.
-    [string]$Config = ''
+    # Fichero de configuracion a usar (por defecto el de config\). Admite ruta absoluta o relativa
+    # al directorio actual. Permite tener varios perfiles de config.
+    [string]$Config = '',
+    # PREGUNTAR con que config*.json trabajar en vez de usar el de siempre. Es tambien lo que pasa
+    # si se arranca MANTENIENDO la tecla de gui.askConfigKey (Mayus de fabrica). Con -Config
+    # explicito se ignora: mandar una ruta es mas concreto. Nunca en modo worker.
+    [switch]$AskConfig
 )
 
 $ErrorActionPreference = 'Stop'
@@ -53,6 +60,7 @@ $modules = @(
     'Job'
     'JobCore'
     'WorkerCore'
+    'SetupCore'
     'Tools'
     'MediaInfo'
     'Profile'
@@ -65,12 +73,35 @@ $modules = @(
     'Render'
     'OnePass'
 )
+# Las teclas, LO PRIMERO y con un solo modulo cargado: el truco es "manten Mayus mientras arranca",
+# y cargar los veintitantos modulos cuesta unos segundos en los que habria que seguir aguantandola.
+# Asi se mira lo que habia pulsado al ARRANCAR, que es lo que la persona ha hecho.
+Import-Module (Join-Path $Lib 'Console.psm1') -Force
+$teclasAlArrancar = Get-CvModifierKeysDown
+
 foreach ($m in $modules) {
     Import-Module (Join-Path $Lib ("{0}.psm1" -f $m)) -Force
 }
 
 # Desatendido = worker: nunca entra en PREPARAR (que es todo preguntas).
 if ($Unattended) { $WorkerOnly = $true }
+
+# Con que configuracion se trabaja. Por defecto, con la de siempre y sin preguntar: abrir el
+# conversor es "venga, a convertir". Se pregunta (misma lista que setup y que la cola) con
+# -AskConfig, o MANTENIENDO la tecla que diga gui.askConfigKey -Mayus de fabrica- mientras arranca.
+# NUNCA en modo worker: esas ventanas las abre la cola -o este mismo script- para codificar sin
+# nadie delante, y una pregunta ahi es un proceso colgado para siempre. Con -Config tampoco: dar
+# una ruta es mas concreto que una tecla.
+if ([string]::IsNullOrWhiteSpace($Config) -and -not $WorkerOnly) {
+    # Las preferencias de ANTES de la sesion (idioma de la pregunta y tecla), del config por
+    # defecto: el elegido todavia no se sabe, que es justo lo que se esta preguntando.
+    $ini = Get-CvStartupPrefs -Root $Root
+    if ($AskConfig -or (Test-CvAskConfigKey -Setting $ini.AskConfigKey -Keys $teclasAlArrancar)) {
+        [void](Set-CvLanguage -Lang $ini.Language)
+        $Config = Read-CvConfigChoice -Root $Root
+        if ([string]::IsNullOrWhiteSpace($Config)) { return }    # se ha salido: no se convierte nada
+    }
+}
 # Los nombres elegidos pueden venir pegados por '|' en un solo valor: 'powershell -File' no sabe
 # pasar listas (ver Expand-CvOnlyList).
 $Only = @(Expand-CvOnlyList -Values $Only)
@@ -413,8 +444,9 @@ if ($needPrepare) {
     $extra = $nw - 1
     if ($extra -gt 0) {
         $cmdPath = Join-Path $Root 'Convert.cmd'
-        # Los workers extra heredan el mismo -Config (ruta absoluta ya resuelta), solo si el
-        # usuario lo indico (sin -Config cada ventana resuelve su config.json por defecto).
+        # Los workers extra heredan el mismo -Config (ruta absoluta ya resuelta) siempre que se
+        # haya elegido uno: con -Config, o en la pregunta del arranque (Mayus). Si no se eligio
+        # ninguno, cada ventana resuelve por su cuenta el de por defecto, que es el mismo.
         $wArgs = @('-WorkerOnly')
         if (-not [string]::IsNullOrWhiteSpace($Config)) { $wArgs += @('-Config', ('"{0}"' -f $cfgPath)) }
         $opened = 0

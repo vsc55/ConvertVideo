@@ -139,7 +139,7 @@ Todo es configurable en `config.json` (detalle en [ref-configuracion.md](docs/re
 
 | Carpeta / fichero | Uso |
 |---|---|
-| `Convert.cmd` / `setup.cmd` | Lanzadores del conversor / de la utilidad de gestión. |
+| `Convert.cmd` / `setup.cmd` | Lanzadores del conversor / de la utilidad de gestión. Con **Mayús mantenida** al arrancar, el conversor pregunta con qué `config*.json` trabajar; setup lo pregunta siempre. |
 | `Convert-gui.cmd` / `setup-gui.cmd` | Lo mismo en **ventana**: la cola de conversión ([docs/ref-cola.md](docs/ref-cola.md)) y el setup ([docs/ref-setup.md](docs/ref-setup.md)). |
 | `extras\Convert-gui-Config.cmd` | La cola en ventana **preguntando** con qué `config*.json` trabajar. El normal va directo, pero **manteniendo Mayús** al arrancarlo pregunta igual (`gui.askConfigKey`). |
 | `extras\Convert-Debug.cmd` / `config.debug.json` | El conversor en modo debug (log detallado), sobre `config.debug.json`. Setup no necesita lanzador propio: pregunta con qué config trabajar. |

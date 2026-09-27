@@ -63,33 +63,6 @@ foreach ($m in $modules) {
     Import-Module (Join-Path $Lib ("{0}.psm1" -f $m)) -Force
 }
 
-function Select-ConfigFile {
-    <#
-        Pregunta con QUE configuracion trabajar cuando no viene -Config. La lista NO se arma aqui:
-        sale de Get-CvSetupConfigMenu (SetupCore), la misma que pinta el dialogo de la ventana, mas
-        la ultima fila para escribir la ruta de un fichero de cualquier carpeta.
-
-        Devuelve la ruta elegida, o '' si se sale (y entonces no se abre nada). ENTER elige el
-        'config.json' de siempre, que es exactamente lo que hacia setup.cmd antes de preguntar.
-    #>
-    param([Parameter(Mandatory)][string]$Root)
-    $menu = @(Get-CvSetupConfigMenu -Root $Root)
-    while ($true) {
-        Clear-Host
-        $sel = Select-FromList -Title (Get-CvText -Key 'elegircfg.tit') -Options $menu `
-                               -NoneLabel (Get-CvText -Key 'elegircfg.salir') -NoneKey 'S' -DefaultIndex 1
-        if ("$sel" -eq '') { return '' }                         # 0 / S / ESC = salir
-        $it = @($menu | Where-Object { $_.Value -eq $sel })[0]
-        if (-not $it) { return '' }
-        if ($it.Kind -ne 'other') { return $it.Path }
-        # Otro fichero: se escribe la ruta, con las mismas reglas que -Config (absoluta o relativa
-        # al directorio actual). Vacio = volver a la lista, para no dejar sin salida a quien entra
-        # aqui sin querer.
-        $t = "$(Read-Host (Get-CvText -Key 'elegircfg.ruta'))".Trim().Trim('"')
-        if ($t) { return (Resolve-CvConfigPathArg -Root $Root -Config $t) }
-    }
-}
-
 # Sin -Config se PREGUNTA que configuracion gestionar: es lo que antes eran dos lanzadores
 # (setup.cmd y setup-Debug.cmd), pero sin tener que cerrar uno y abrir el otro. Con -Config no se
 # pregunta, y con -Task tampoco: ese modo lo usan la ventana y los .cmd, y no hay nadie mirando.
@@ -97,7 +70,7 @@ if ([string]::IsNullOrWhiteSpace($Config) -and [string]::IsNullOrWhiteSpace($Tas
     # El idioma de la sesion lo fija Start-CvSession con el config ELEGIDO, que es justo lo que se
     # esta preguntando; para la pregunta se usa el del config por defecto.
     [void](Set-CvLanguage -Lang (Get-CvStartupPrefs -Root $Root).Language)
-    $Config = Select-ConfigFile -Root $Root
+    $Config = Read-CvConfigChoice -Root $Root
     if ([string]::IsNullOrWhiteSpace($Config)) { return }        # se ha salido: no se abre nada
 }
 

@@ -659,6 +659,36 @@ function Select-FromList {
 }
 
 
+function Read-CvConfigChoice {
+    <#
+        Pregunta EN CONSOLA con que configuracion trabajar: es la cara de texto del dialogo que
+        abre Show-CvSetupConfigChooser (form\GuiConfigChooser.psm1), y las dos pintan la MISMA
+        lista, que no se arma aqui sino en Get-CvSetupConfigMenu (SetupCore).
+
+        La usan setup.ps1 -que pregunta siempre que no le den -Config- y Convert.ps1 -que solo
+        pregunta si se arranca con la tecla de gui.askConfigKey mantenida-.
+
+        Devuelve la ruta elegida, o '' si se sale (y entonces el llamador no abre nada). ENTER elige
+        el de siempre, que es lo que hacian esos lanzadores antes de preguntar nada.
+    #>
+    param([Parameter(Mandatory)][string]$Root)
+    $menu = @(Get-CvSetupConfigMenu -Root $Root)
+    while ($true) {
+        Clear-Host
+        $sel = Select-FromList -Title (Get-CvText -Key 'elegircfg.tit') -Options $menu `
+                               -NoneLabel (Get-CvText -Key 'elegircfg.salir') -NoneKey 'S' -DefaultIndex 1
+        if ("$sel" -eq '') { return '' }                         # 0 / S / ESC = salir
+        $it = @($menu | Where-Object { $_.Value -eq $sel })[0]
+        if (-not $it) { return '' }
+        if ($it.Kind -ne 'other') { return $it.Path }
+        # Otro fichero: se escribe la ruta, con las mismas reglas que -Config (absoluta o relativa
+        # al directorio actual). Vacio = volver a la lista, para no dejar sin salida a quien entra
+        # aqui sin querer.
+        $t = "$(Read-Host (Get-CvText -Key 'elegircfg.ruta'))".Trim().Trim('"')
+        if ($t) { return (Resolve-CvConfigPathArg -Root $Root -Config $t) }
+    }
+}
+
 function Get-CvModifierKeysDown {
     <#
         Que teclas modificadoras hay pulsadas AHORA MISMO: @{ Shift; Ctrl; Alt }.
