@@ -8,7 +8,7 @@ los menús de `lib\Console.psm1`, y toda la lógica de `.srt` vive en **`lib\Sub
 `*-CvSrt*`), así que queda disponible también para futuras funciones del conversor.
 
 - **`FixSyncSub.ps1`** — el asistente.
-- **`FixSyncSub.cmd`** — lanzador que ejecuta el `.ps1` con `-ExecutionPolicy Bypass` (solo para esa
+- **`extras\FixSyncSub.cmd`** — lanzador que ejecuta el `.ps1` con `-ExecutionPolicy Bypass` (solo para esa
   ejecución, no cambia la política del sistema) y admite **arrastrar y soltar**.
 - **`lib\SubtitleSRT.psm1`** — la lógica pura de `.srt` (lectura/codificación, OCR, sincronización). Distinto
   de `lib\Subtitle.psm1`, que trata las **pistas** de subtítulo dentro de un vídeo (vía ffprobe).
@@ -37,8 +37,8 @@ El fichero original **no se toca**: el resultado se escribe en uno nuevo (por de
 
 Tres formas:
 
-- **Doble clic** en `FixSyncSub.cmd` → lista los `.srt` de la carpeta `Original\` y eliges uno por número.
-- **Arrastrar y soltar** un `.srt` sobre `FixSyncSub.cmd` → lo procesa directamente.
+- **Doble clic** en `extras\FixSyncSub.cmd` → lista los `.srt` de la carpeta `Original\` y eliges uno por número.
+- **Arrastrar y soltar** un `.srt` sobre `extras\FixSyncSub.cmd` → lo procesa directamente.
 - **Por línea de comandos**:
 
   ```powershell

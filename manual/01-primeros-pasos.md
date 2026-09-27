@@ -23,13 +23,13 @@
 
 | Lanzador | Cuándo |
 |---|---|
-| **`Convert-gui.cmd`** | **El de siempre**: la cola de conversión en ventana, con el `config.json` de al lado. |
-| `Convert-gui-Config.cmd` | Lo mismo, pero **preguntando** con qué configuración trabajar (útil si tienes varios `config*.json`). |
+| **`Convert-gui.cmd`** | **El de siempre**: la cola de conversión en ventana, con tu configuración de siempre. |
+| `extras\Convert-gui-Config.cmd` | Lo mismo, pero **preguntando** con qué configuración trabajar (útil si tienes varios `config*.json`). No hace falta buscarlo: **manteniendo Mayús** mientras arranca `Convert-gui.cmd` —un par de segundos, hasta que salga la pregunta— hace lo mismo. |
 | `setup-gui.cmd` | Herramientas, configuración, estado, logs y limpieza, en ventana. |
 | `Convert.cmd` | El conversor **en consola** (pregunta archivo por archivo y luego codifica). Sigue estando: la ventana no lo sustituye. |
-| `setup.cmd` | Setup en consola. |
-| `FixSyncSub.cmd` | Utilidad aparte para arreglar y sincronizar subtítulos `.srt` sueltos ([ref-fixsyncsub.md](../docs/ref-fixsyncsub.md)). |
-| `*-Debug.cmd` | Los mismos, pero sobre `config.debug.json` (log detallado) sin tocar tu configuración normal. |
+| `setup.cmd` | Setup en consola. Al arrancar pregunta con qué `config*.json` trabajar (ENTER = el de siempre); `setup-gui.cmd` hace la misma pregunta en una ventana. |
+| `extras\FixSyncSub.cmd` | Utilidad aparte para arreglar y sincronizar subtítulos `.srt` sueltos ([ref-fixsyncsub.md](../docs/ref-fixsyncsub.md)). |
+| `extras\Convert-Debug.cmd` | El conversor sobre `config.debug.json` (log detallado), sin tocar tu configuración normal. Para setup no hace falta: `config.debug.json` es una opción más de su pregunta. |
 
 Todos admiten `-Config <ruta>` para trabajar con otro fichero de configuración.
 

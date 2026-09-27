@@ -62,14 +62,17 @@ foreach ($m in $modules) {
     Import-Module (Join-Path $Lib ("{0}.psm1" -f $m)) -Force
 }
 
-# Sin -Config se PREGUNTA que configuracion gestionar (config.json, config.debug.json, u otra): es el
-# equivalente de elegir entre setup.cmd y setup-Debug.cmd, pero sin cerrar y abrir otro lanzador. Con
-# -Config explicito no se pregunta. Cancelar = no abrir nada.
+# Sin -Config se PREGUNTA que configuracion gestionar (config.json, config.debug.json, u otra), la
+# misma pregunta que hace setup.ps1 en consola y sobre la misma lista. Con -Config explicito no se
+# pregunta. Cancelar = no abrir nada.
 if ([string]::IsNullOrWhiteSpace($Config)) {
     if (-not (Initialize-CvGui)) {
         Write-Host (Get-CvText -Key 'sg.singui')
         return
     }
+    # El idioma de la sesion lo fija Start-CvSession con el config ELEGIDO, que es justo lo que se
+    # esta preguntando; para la pregunta se usa el del config por defecto.
+    [void](Set-CvLanguage -Lang (Get-CvStartupPrefs -Root $Root).Language)
     $Config = Show-CvSetupConfigChooser -Root $Root
     if ([string]::IsNullOrWhiteSpace($Config)) { return }   # cancelado por el usuario
 }

@@ -11,13 +11,16 @@
     lib\Tools.psm1 (las mismas que usa Convert.ps1 cuando falta una herramienta).
     El guardado/reset de config.json vive en lib\Config.psm1.
 
+    Sin -Config PREGUNTA con que configuracion trabajar (config.json, config.debug.json, u otra),
+    igual que la ventana: por eso hay UN solo lanzador y no uno por config.
+
     Lanzar:  setup.cmd   (o)   powershell -NoProfile -ExecutionPolicy Bypass -File setup.ps1
 #>
 
 [CmdletBinding()]
 param(
-    # Fichero de configuracion a editar/gestionar (por defecto config.json junto al programa).
-    # Admite ruta absoluta o relativa al directorio actual.
+    # Fichero de configuracion a editar/gestionar. Admite ruta absoluta o relativa al directorio
+    # actual. Si no se da, se PREGUNTA al arrancar (salvo con -Task, que no es interactivo).
     [string]$Config = '',
     # Modo NO INTERACTIVO: ejecuta UNA accion y sale, en vez de abrir el menu. Lo usa la ventana
     # (setup-gui.ps1) para las acciones LARGAS -instalar una herramienta, lanzar una bateria-, que
@@ -58,6 +61,44 @@ $modules = @(
 )
 foreach ($m in $modules) {
     Import-Module (Join-Path $Lib ("{0}.psm1" -f $m)) -Force
+}
+
+function Select-ConfigFile {
+    <#
+        Pregunta con QUE configuracion trabajar cuando no viene -Config. La lista NO se arma aqui:
+        sale de Get-CvSetupConfigMenu (SetupCore), la misma que pinta el dialogo de la ventana, mas
+        la ultima fila para escribir la ruta de un fichero de cualquier carpeta.
+
+        Devuelve la ruta elegida, o '' si se sale (y entonces no se abre nada). ENTER elige el
+        'config.json' de siempre, que es exactamente lo que hacia setup.cmd antes de preguntar.
+    #>
+    param([Parameter(Mandatory)][string]$Root)
+    $menu = @(Get-CvSetupConfigMenu -Root $Root)
+    while ($true) {
+        Clear-Host
+        $sel = Select-FromList -Title (Get-CvText -Key 'elegircfg.tit') -Options $menu `
+                               -NoneLabel (Get-CvText -Key 'elegircfg.salir') -NoneKey 'S' -DefaultIndex 1
+        if ("$sel" -eq '') { return '' }                         # 0 / S / ESC = salir
+        $it = @($menu | Where-Object { $_.Value -eq $sel })[0]
+        if (-not $it) { return '' }
+        if ($it.Kind -ne 'other') { return $it.Path }
+        # Otro fichero: se escribe la ruta, con las mismas reglas que -Config (absoluta o relativa
+        # al directorio actual). Vacio = volver a la lista, para no dejar sin salida a quien entra
+        # aqui sin querer.
+        $t = "$(Read-Host (Get-CvText -Key 'elegircfg.ruta'))".Trim().Trim('"')
+        if ($t) { return (Resolve-CvConfigPathArg -Root $Root -Config $t) }
+    }
+}
+
+# Sin -Config se PREGUNTA que configuracion gestionar: es lo que antes eran dos lanzadores
+# (setup.cmd y setup-Debug.cmd), pero sin tener que cerrar uno y abrir el otro. Con -Config no se
+# pregunta, y con -Task tampoco: ese modo lo usan la ventana y los .cmd, y no hay nadie mirando.
+if ([string]::IsNullOrWhiteSpace($Config) -and [string]::IsNullOrWhiteSpace($Task)) {
+    # El idioma de la sesion lo fija Start-CvSession con el config ELEGIDO, que es justo lo que se
+    # esta preguntando; para la pregunta se usa el del config por defecto.
+    [void](Set-CvLanguage -Lang (Get-CvStartupPrefs -Root $Root).Language)
+    $Config = Select-ConfigFile -Root $Root
+    if ([string]::IsNullOrWhiteSpace($Config)) { return }        # se ha salido: no se abre nada
 }
 
 # Arranque comun (config + contexto + marcas + log + apariencia + cabecera). Ver Start-CvSession.
@@ -443,9 +484,12 @@ function Show-MaintenanceMenu {
 #  Estado general (directorios de trabajo + herramientas)
 # ===========================================================================
 function Show-Identity {
-    # Identidad del entorno: version del programa y config.json en uso (por defecto o alterno -Config).
+    # Identidad del entorno: version del programa y fichero de configuracion en uso (el de por
+    # defecto o uno alterno). 'Alterno' se decide comparando la RUTA RESUELTA con la de por defecto,
+    # no con si vino -Config: ahora la pregunta del arranque rellena -Config siempre, tambien cuando
+    # se elige el de siempre, y mirando el argumento saldria 'alterno' hasta eligiendo config.json.
     Write-Host ''
-    $id = Get-CvSetupIdentity -Context $ctx -CfgPath $CfgPath -IsAlt (-not [string]::IsNullOrWhiteSpace($Config))
+    $id = Get-CvSetupIdentity -Context $ctx -CfgPath $CfgPath -IsAlt ($CfgPath -ne (Get-CvDefaultConfigPath -Root $Root))
     Write-CvLog 'SETUP' ("{0} v{1}" -f $id.AppName, $id.Version)
     $tag = if ($id.IsAlt) { (Get-CvText -Key 'cli.cfg.alterno') } else { (Get-CvText -Key 'cli.cfg.defecto') }
     $ex  = if ($id.Exists) { '' } else { (Get-CvText -Key 'cli.cfg.noexiste') }

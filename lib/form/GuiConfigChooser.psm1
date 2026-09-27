@@ -8,10 +8,9 @@
 
 function Show-CvSetupConfigChooser {
     <#
-        Pregunta QUE configuracion gestionar al abrir la ventana sin -Config: lista los 'config*.json'
-        que haya junto al programa (Get-CvSetupConfigCandidates, con 'config.json' preseleccionado) y
-        ofrece 'Otro...' para buscar uno en disco. Es el equivalente de elegir entre setup.cmd y
-        setup-Debug.cmd, pero sin tener que cerrar y abrir otro lanzador.
+        Pregunta QUE configuracion gestionar al abrir la ventana sin -Config. La lista NO se arma
+        aqui: es Get-CvSetupConfigMenu (datos), la misma que pinta la consola en bin\setup.ps1, con
+        'config.json' preseleccionado y una ultima fila para escoger un fichero de cualquier carpeta.
 
         Devuelve la ruta elegida, o '' si se cancela (el llamador no abre nada). Con -Config en la
         linea de comandos esta pregunta NO aparece.
@@ -19,28 +18,22 @@ function Show-CvSetupConfigChooser {
     param([Parameter(Mandatory)][string]$Root)
     if (-not (Initialize-CvGui)) { return '' }
 
-    $items = @(Get-CvSetupConfigCandidates -Root $Root)
-    $otro  = (Get-CvText -Key 'elegircfg.otro')
+    $items = @(Get-CvSetupConfigMenu -Root $Root)
 
     $form = New-Object System.Windows.Forms.Form
     $form.Text            = (Get-CvText -Key 'elegircfg.tit')
     $form.StartPosition   = 'CenterScreen'
-    $form.Size            = New-Object System.Drawing.Size(520, 300)
+    $form.Size            = New-Object System.Drawing.Size(640, 300)
     $form.FormBorderStyle = 'FixedDialog'
     $form.MaximizeBox     = $false
     $form.MinimizeBox     = $false
 
     $lst = New-Object System.Windows.Forms.ListBox
     $lst.Location = New-Object System.Drawing.Point(12, 12)
-    $lst.Size     = New-Object System.Drawing.Size(480, 190)
+    $lst.Size     = New-Object System.Drawing.Size(600, 190)
     $lst.Font     = (New-CvGuiFont 10)
     $lst.Name     = 'cvCfgList'
-    foreach ($c in $items) {
-        $tag = if ($c.Text) { "   ({0})" -f $c.Text } else { '' }
-        $ex  = if ($c.Exists) { '' } else { (Get-CvText -Key 'elegircfg.noexiste') }
-        [void]$lst.Items.Add(("{0}{1}{2}" -f $c.Name, $tag, $ex))
-    }
-    [void]$lst.Items.Add($otro)
+    foreach ($c in $items) { [void]$lst.Items.Add($c.Value) }   # la etiqueta ya viene hecha
     $lst.SelectedIndex = 0
     $form.Controls.Add($lst)
 
@@ -52,19 +45,19 @@ function Show-CvSetupConfigChooser {
     $rows = [Math]::Max(3, [Math]::Min($lst.Items.Count, 10))
     $lst.Height  = ($rows * $lst.ItemHeight) + 10
     $btnTop      = $lst.Bottom + 12
-    $form.ClientSize = New-Object System.Drawing.Size(504, ($btnTop + 42))
+    $form.ClientSize = New-Object System.Drawing.Size(624, ($btnTop + 42))
 
     $btnOk = New-Object System.Windows.Forms.Button
     $btnOk.Text     = (Get-CvText -Key 'comun.aceptar')
     $btnOk.Size     = New-Object System.Drawing.Size(110, 30)
-    $btnOk.Location = New-Object System.Drawing.Point(262, $btnTop)
+    $btnOk.Location = New-Object System.Drawing.Point(382, $btnTop)
     $btnOk.Name     = 'cvCfgOk'
     $form.Controls.Add($btnOk)
 
     $btnCancel = New-Object System.Windows.Forms.Button
     $btnCancel.Text     = (Get-CvText -Key 'comun.cancelar')
     $btnCancel.Size     = New-Object System.Drawing.Size(110, 30)
-    $btnCancel.Location = New-Object System.Drawing.Point(382, $btnTop)
+    $btnCancel.Location = New-Object System.Drawing.Point(502, $btnTop)
     $form.Controls.Add($btnCancel)
     $form.AcceptButton = $btnOk
     $form.CancelButton = $btnCancel
@@ -73,8 +66,8 @@ function Show-CvSetupConfigChooser {
     $accept = {
         $i = $lst.SelectedIndex
         if ($i -lt 0) { return }
-        if ($i -ge $items.Count) {
-            # 'Otro...': buscador de ficheros. Si se cancela, se vuelve a la lista (no se cierra).
+        if ($items[$i].Kind -eq 'other') {
+            # Otro fichero: buscador. Si se cancela, se vuelve a la lista (no se cierra la ventana).
             $dlg = New-Object System.Windows.Forms.OpenFileDialog
             $dlg.Title            = (Get-CvText -Key 'elegircfg.dlg.tit')
             $dlg.InitialDirectory = $Root

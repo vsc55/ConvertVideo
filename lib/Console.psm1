@@ -659,4 +659,42 @@ function Select-FromList {
 }
 
 
+function Get-CvModifierKeysDown {
+    <#
+        Que teclas modificadoras hay pulsadas AHORA MISMO: @{ Shift; Ctrl; Alt }.
+
+        Se usa al arrancar para el truco de siempre de Windows -mantener Mayus mientras se abre algo
+        para que se comporte distinto-, y por eso no vale lo de WinForms ([Control]::ModifierKeys):
+        eso mira el estado del teclado que le toca al HILO, y un proceso recien nacido, sin ventana
+        y sin foco, no tiene ninguno. GetAsyncKeyState pregunta por el estado FISICO de la tecla, que
+        es lo unico que hay antes de que exista una ventana (y sirve igual en consola).
+
+        El bit alto (0x8000) es 'esta pulsada ahora'; el bajo es 'se ha pulsado desde la ultima vez
+        que se pregunto', que aqui no sirve: diria que si por una pulsacion de hace un rato.
+
+        Si no se puede preguntar (sin user32, sin escritorio interactivo) se devuelve todo a $false:
+        el programa arranca como siempre, que es lo unico que no sorprende a nadie.
+    #>
+    if ($null -eq $script:CvKeyState) {
+        try {
+            Add-Type -Namespace CvNative -Name Keys -MemberDefinition @'
+[DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vKey);
+'@ -ErrorAction Stop
+            $script:CvKeyState = $true
+        } catch {
+            $script:CvKeyState = $false
+        }
+    }
+    $down = {
+        param([int]$Vk)
+        if (-not $script:CvKeyState) { return $false }
+        try { return ((([CvNative.Keys]::GetAsyncKeyState($Vk)) -band 0x8000) -ne 0) } catch { return $false }
+    }
+    return [pscustomobject]@{
+        Shift = (& $down 0x10)   # VK_SHIFT
+        Ctrl  = (& $down 0x11)   # VK_CONTROL
+        Alt   = (& $down 0x12)   # VK_MENU
+    }
+}
+
 Export-ModuleMember -Function *

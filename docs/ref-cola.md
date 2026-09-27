@@ -6,8 +6,10 @@ Es la fase **WORKER** con ratón, y también la de **PREPARAR** para el caso nor
 
 | Lanzador | Qué hace |
 |---|---|
-| **`Convert-gui.cmd`** | Va **directo** con `config\config.json` (le pasa `-Config`, por eso no pregunta). |
-| **`Convert-gui-Config.cmd`** | **Pregunta** con qué configuración trabajar: lista los `config*.json` que haya al lado (`config.json`, `config.debug.json`…) y deja buscar otro en disco. Es el equivalente de elegir entre `Convert.cmd` y `Convert-Debug.cmd` sin cambiar de lanzador. |
+| **`Convert-gui.cmd`** | Va **directo** con la configuración de siempre, sin preguntar… **salvo que mantengas Mayús** mientras arranca (unos 2 s, hasta que salga la pregunta): entonces se comporta como el de abajo. La tecla se cambia en `gui.askConfigKey` (`shift` de fábrica, `ctrl`, `any`, `off`). |
+| **`extras\Convert-gui-Config.cmd`** | **Pregunta** siempre con qué configuración trabajar (es este mismo con `-AskConfig`): lista los `config*.json` de `config\` (`config.json`, `config.debug.json`…) y deja buscar otro en disco. Es el equivalente de elegir entre `Convert.cmd` y `Convert-Debug.cmd` sin cambiar de lanzador. |
+
+Con **`-Config <ruta>`** no pregunta ninguno de los dos, ni con la tecla: dar una ruta es más concreto que una tecla.
 
 ```
 powershell -NoProfile -ExecutionPolicy Bypass -Sta -File bin\Convert-gui.ps1 [-Config <ruta>]

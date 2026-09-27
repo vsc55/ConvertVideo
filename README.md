@@ -39,7 +39,7 @@ Recodifica a **MKV** (vídeo H.265/H.264/AV1 por GPU NVIDIA o CPU; audio AAC, AC
 
 > ¿Prefieres ventanas? **[Manual de uso con capturas](manual/README.md)**: preparar, la cola de conversión, los workers y qué hacer cuando algo se queda a medias.
 
-Para gestionar las herramientas (FFmpeg, aacgain, MKVToolNix, 7zr) o editar la configuración cómodamente: **`setup.cmd`**. Ambos lanzadores admiten `-Config <ruta>` para usar un fichero de configuración alterno (se **reenvía** a las ventanas worker que se abran en paralelo). Para depurar hay **`Convert-Debug.cmd`**, que usa `config.debug.json` (`debug.enabled = true`) y muestra el log detallado sin tocar tu `config.json`; y **`setup-Debug.cmd`** para editar/gestionar ese `config.debug.json` con el editor de setup.
+Para gestionar las herramientas (FFmpeg, aacgain, MKVToolNix, 7zr) o editar la configuración cómodamente: **`setup.cmd`**, que al arrancar **pregunta** con qué `config*.json` trabajar (ENTER = el de siempre). Todos los lanzadores admiten `-Config <ruta>` para ir directo a un fichero alterno (se **reenvía** a las ventanas worker que se abran en paralelo). Para depurar hay **`Convert-Debug.cmd`**, que usa `config.debug.json` (`debug.enabled = true`) y muestra el log detallado sin tocar tu `config.json`; ese mismo fichero sale como una opción más en la pregunta de setup.
 
 ## En qué consiste
 
@@ -141,8 +141,10 @@ Todo es configurable en `config.json` (detalle en [ref-configuracion.md](docs/re
 |---|---|
 | `Convert.cmd` / `setup.cmd` | Lanzadores del conversor / de la utilidad de gestión. |
 | `Convert-gui.cmd` / `setup-gui.cmd` | Lo mismo en **ventana**: la cola de conversión ([docs/ref-cola.md](docs/ref-cola.md)) y el setup ([docs/ref-setup.md](docs/ref-setup.md)). |
-| `Convert-gui-Config.cmd` | La cola en ventana **preguntando** con qué `config*.json` trabajar (el normal va directo). |
-| `Convert-Debug.cmd` / `setup-Debug.cmd` / `config.debug.json` | Conversor / editor de setup en modo debug (log detallado), sobre `config.debug.json`. |
+| `extras\Convert-gui-Config.cmd` | La cola en ventana **preguntando** con qué `config*.json` trabajar. El normal va directo, pero **manteniendo Mayús** al arrancarlo pregunta igual (`gui.askConfigKey`). |
+| `extras\Convert-Debug.cmd` / `config.debug.json` | El conversor en modo debug (log detallado), sobre `config.debug.json`. Setup no necesita lanzador propio: pregunta con qué config trabajar. |
+| `extras\FixSyncSub.cmd` | El arreglador de subtítulos `.srt` sueltos: doble clic, o arrastra un `.srt` encima ([docs/ref-fixsyncsub.md](docs/ref-fixsyncsub.md)). |
+| `extras\` | Los lanzadores que no son del día a día (los tres de arriba). En el raíz se quedan solo los cuatro que se usan a diario. |
 | `bin\` | Los scripts del programa: `Convert.ps1` (orquestador: clasificar / preparar / worker), `setup.ps1` (herramientas + editor de `config.json` + limpieza), sus dos versiones en ventana y `FixSyncSub.ps1`. En el raíz solo quedan los lanzadores. |
 | `config\` | Las configuraciones: `config.json`, `config.debug.json`… y `config.json.example`, un mínimo de ejemplo para copiar. Un `config.json` que siga en el raíz de una versión anterior se sigue usando. |
 | `lib\` | Módulos PowerShell (`*.psm1`); las ventanas, una por fichero, en `lib\form\`. |

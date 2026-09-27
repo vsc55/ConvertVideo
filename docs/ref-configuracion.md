@@ -345,6 +345,7 @@ Lo que `console` es para el modo consola, pero para `Convert-gui` / `setup-gui`.
 | `theme` | `"system"` | Aspecto de **todas las ventanas**: `system` sigue lo que tenga Windows (Configuración → Personalización → Colores → *Modo de aplicación*), `light` fuerza claro y `dark` fuerza oscuro. Detalle y límites en [ref-gotchas.md](ref-gotchas.md). |
 | `rememberLayout` | `true` | Al **cerrar** la ventana de la cola se apunta cómo quedó (tamaño, maximizada, posición del divisor y anchos de columna) y la siguiente vez se abre igual. Con `false` no se escribe nada y siempre se abre con los tamaños de aquí. |
 | `bringToFront` | `true` | Traer la ventana **al frente** cuando toca: **al abrirla** —hace falta cuando el programa se lanza desde un **acceso directo minimizado**, porque el proceso nace sin derecho de primer plano y Windows la deja detrás de lo que estuvieras usando (solo parpadea en la barra de tareas)— y **al cerrarse un reproductor** abierto desde ella (ffplay no devuelve el foco a quien lo lanzó, y el editor del job se quedaba debajo de otras aplicaciones). Con `false` no se pelea nunca por el foco. Ver `Set-CvGuiForeground` en [ref-gotchas.md](ref-gotchas.md). |
+| `askConfigKey` | `shift` | Tecla que, **mantenida mientras arranca la cola** (`Convert-gui.cmd`), hace que **pregunte** con qué `config*.json` trabajar en vez de abrir directo el de siempre: `Convert-gui-Config.cmd` sin cambiar de lanzador. Hay que aguantarla hasta que salga la pregunta (**~2 s**: medido, soltando a 1,2 s ya no llega). Valores: `shift`, `ctrl`, `any` (cualquiera de las tres) y `off`. No hay «solo Alt» porque con Alt pulsado el doble clic abre las **propiedades** del acceso directo y el programa ni se lanza. Con `-Config <ruta>` no pregunta ni con la tecla. |
 | `minimizeToTray` | `false` | Al **minimizar** la ventana de la cola, esconderla en el área de notificación (junto al reloj) en vez de dejarla en la barra de tareas; vuelve con doble clic en su icono. Se puede marcar desde la pestaña *Opciones* de la cola, que lo escribe aquí. |
 | `trayBalloonMs` | `3000` | Aviso de *«sigo aquí»* la primera vez que la ventana se esconde, en cada sesión (ms). `0` = nunca. |
 | `prepareAutoClose` | `false` | Valor de partida de la casilla *Cerrar al terminar* de **Preparar pendientes** (la ventana lo reescribe aquí al marcarla). Con un error, o si se cancela, **no** se cierra aunque esté marcada. |
@@ -431,7 +432,7 @@ Lo que no se reconozca —un perfil propio que se borró, un número que ya no e
 
 ## Fichero de config alternativo (`-Config`)
 
-`Convert.cmd` y `setup.cmd` aceptan `-Config <ruta>` para usar/editar **otro** fichero de configuración en vez de `config.json` (ruta absoluta o relativa al directorio actual). Útil para mantener varios juegos de ajustes/perfiles:
+`Convert.cmd` y `setup.cmd` aceptan `-Config <ruta>` para usar/editar **otro** fichero de configuración en vez del de por defecto (ruta absoluta o relativa al directorio actual). Útil para mantener varios juegos de ajustes/perfiles:
 
 ```bat
 Convert.cmd -Config perfiles\anime.json
@@ -439,3 +440,5 @@ setup.cmd   -Config perfiles\anime.json
 ```
 
 Las ventanas de worker extra heredan el mismo `-Config`. Si la ruta no existe, se avisa y se usan los valores por defecto.
+
+Sin `-Config`, **setup pregunta** con cuál trabajar en vez de dar por hecho el `config.json`: la misma lista en consola y en ventana (ver [ref-setup.md](ref-setup.md)).

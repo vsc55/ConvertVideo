@@ -1166,6 +1166,9 @@ Assert-Eq 'Config: tema por defecto'    'system' "$((Get-CvConfigDefaults).gui.t
 Assert-True 'Config: la ventana de setup cabe con su menu' ([int](Get-CvConfigDefaults).gui.setupHeight -ge 780)
 Assert-True 'Config: y tiene ancho de partida'             ([int](Get-CvConfigDefaults).gui.setupWidth -ge 860)
 Assert-Eq 'Catalogo de temas'           3       (@(Get-CvGuiThemes)).Count
+Assert-Eq 'Catalogo de tecla de config' 4       (@(Get-CvAskConfigKeys)).Count
+Assert-Eq 'Tecla de config: default'    'shift' "$((Get-CvConfigDefaults).gui.askConfigKey)"
+Assert-True 'Tecla de config: el default esta en el catalogo' (@(Get-CvAskConfigKeys | ForEach-Object { $_.Value }) -contains "$((Get-CvConfigDefaults).gui.askConfigKey)")
 # Las pestanas son PROPIAS (el TabControl de WinForms no se puede oscurecer): el reparto de la fila
 # y el saber donde se ha pinchado son puros, asi que se prueban aqui, sin ventana.
 $tl = @(Get-CvGuiTabLayout -Widths @(100, 40) -PadX 12 -Gap 2 -Start 2)
@@ -2561,9 +2564,42 @@ Set-Content -LiteralPath (Join-Path $cfgRaiz 'config.json') -Encoding UTF8 -Valu
 Assert-Eq 'Config: si solo esta el de la raiz, ese' (Join-Path $cfgRaiz 'config.json') (Get-CvDefaultConfigPath -Root $cfgRaiz)
 # Con los dos, manda el nuevo.
 Set-Content -LiteralPath (Join-Path $cfgRaiz 'config\config.json') -Encoding UTF8 -Value '{ }'
+Set-Content -LiteralPath (Join-Path $cfgRaiz 'config.en.json') -Encoding UTF8 -Value '{ "ui": { "language": "en" } }'
 Assert-Eq 'Config: con los dos, manda config\' (Join-Path $cfgRaiz 'config\config.json') (Get-CvDefaultConfigPath -Root $cfgRaiz)
 # Y -Config sigue mandando sobre todo lo anterior.
 Assert-Eq 'Config: -Config absoluto manda' 'E:\otro\mio.json' (Resolve-CvConfigPathArg -Root $cfgRaiz -Config 'E:\otro\mio.json')
+# Lo que se sabe ANTES de elegir configuracion: es lo unico que se pinta o se decide antes de que
+# exista contexto (en que idioma se pregunta y con que tecla), y montar el contexto ahi crearia de
+# paso las carpetas de trabajo de un config que a lo mejor ni se elige.
+Assert-Eq 'Arranque: el idioma del fichero' 'en' (Get-CvStartupPrefs -Root $cfgRaiz -Path (Join-Path $cfgRaiz 'config.en.json')).Language
+Assert-Eq 'Arranque: sin clave, auto'       'auto' (Get-CvStartupPrefs -Root $cfgRaiz).Language
+Assert-Eq 'Arranque: fichero que no existe' 'auto' (Get-CvStartupPrefs -Root $cfgRaiz -Path (Join-Path $cfgRaiz 'no-hay.json')).Language
+Assert-Eq 'Arranque: tecla por defecto'     'shift' (Get-CvStartupPrefs -Root $cfgRaiz).AskConfigKey
+Set-Content -LiteralPath (Join-Path $cfgRaiz 'config.tecla.json') -Encoding UTF8 -Value '{ "gui": { "askConfigKey": "ctrl" } }'
+Assert-Eq 'Arranque: la tecla del fichero'  'ctrl' (Get-CvStartupPrefs -Root $cfgRaiz -Path (Join-Path $cfgRaiz 'config.tecla.json')).AskConfigKey
+# Una errata no deja la cola preguntando para siempre: cae al valor de fabrica.
+Set-Content -LiteralPath (Join-Path $cfgRaiz 'config.mala.json') -Encoding UTF8 -Value '{ "gui": { "askConfigKey": "mayusculas" } }'
+Assert-Eq 'Arranque: tecla invalida -> la de fabrica' 'shift' (Get-CvStartupPrefs -Root $cfgRaiz -Path (Join-Path $cfgRaiz 'config.mala.json')).AskConfigKey
+
+# Y la decision: con estas teclas pulsadas y este ajuste, hay que preguntar? (pura, sin teclado)
+$K = {
+    param([bool]$Shift, [bool]$Ctrl, [bool]$Alt)
+    [pscustomobject]@{ Shift = $Shift; Ctrl = $Ctrl; Alt = $Alt }
+}
+$nada = & $K $false $false $false
+Assert-Eq 'Tecla: shift con Mayus'        $true  (Test-CvAskConfigKey -Setting 'shift' -Keys (& $K $true $false $false))
+Assert-Eq 'Tecla: shift con Ctrl, no'     $false (Test-CvAskConfigKey -Setting 'shift' -Keys (& $K $false $true $false))
+Assert-Eq 'Tecla: shift sin nada, no'     $false (Test-CvAskConfigKey -Setting 'shift' -Keys $nada)
+Assert-Eq 'Tecla: ctrl con Ctrl'          $true  (Test-CvAskConfigKey -Setting 'ctrl'  -Keys (& $K $false $true $false))
+Assert-Eq 'Tecla: ctrl con Mayus, no'     $false (Test-CvAskConfigKey -Setting 'ctrl'  -Keys (& $K $true $false $false))
+Assert-Eq 'Tecla: any con Alt'            $true  (Test-CvAskConfigKey -Setting 'any'   -Keys (& $K $false $false $true))
+Assert-Eq 'Tecla: any sin nada, no'       $false (Test-CvAskConfigKey -Setting 'any'   -Keys $nada)
+Assert-Eq 'Tecla: off ni con todas'       $false (Test-CvAskConfigKey -Setting 'off'   -Keys (& $K $true $true $true))
+# Un ajuste que no existe se trata como 'off': preguntar siempre por una errata seria peor.
+Assert-Eq 'Tecla: ajuste raro = nunca'    $false (Test-CvAskConfigKey -Setting 'loquesea' -Keys (& $K $true $true $true))
+# Sin poder leer el teclado (Get-CvModifierKeysDown devuelve $null en un sitio sin user32), no se
+# pregunta: arrancar como siempre es lo unico que no sorprende.
+Assert-Eq 'Tecla: sin teclado, no'        $false (Test-CvAskConfigKey -Setting 'any' -Keys $null)
 Remove-Item -LiteralPath $cfgRaiz -Recurse -Force -ErrorAction SilentlyContinue
 
 # El EJEMPLO que se reparte en el repo: tiene que ser JSON valido y no inventarse claves. Sin esto

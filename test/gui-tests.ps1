@@ -406,19 +406,19 @@ $cntCfg = [pscustomobject]@{
 Assert-Eq 'Editadas: cuenta solo lo distinto' 1 (Get-CvCfgModifiedCount -Node $cntCfg -Path '')
 
 # ================================================================================================
-Write-Host "`nSetupCore - configuraciones que ofrece la ventana" -ForegroundColor Cyan
+Write-Host "`nSetupCore - configuraciones que se ofrecen al arrancar sin -Config" -ForegroundColor Cyan
 # Solo existe config.json en el root temporal: aun asi debe salir el 1o y marcado como default.
 $c1 = @(Get-CvSetupConfigCandidates -Root $tmpRoot)
 Assert-Eq   'Configs: config.json 1o'  'config.json' $c1[0].Name
 Assert-True 'Configs: marcado default' $c1[0].IsDefault
 Assert-True 'Configs: existe'          $c1[0].Exists
-Assert-Eq   'Configs: etiqueta'        'por defecto' $c1[0].Text
+Assert-Eq   'Configs: etiqueta'        (Get-CvText -Key 'elegircfg.pordefecto') $c1[0].Text
 # Con un config.debug.json al lado, aparece el segundo y con su etiqueta.
 Set-Content -Path (Join-Path $tmpRoot 'config.debug.json') -Value '{}' -Encoding UTF8
 $c2 = @(Get-CvSetupConfigCandidates -Root $tmpRoot)
 Assert-Eq   'Configs: ahora 2'         2 $c2.Count
 Assert-Eq   'Configs: el 2o es debug'  'config.debug.json' $c2[1].Name
-Assert-Eq   'Configs: etiqueta debug'  'depuracion' $c2[1].Text
+Assert-Eq   'Configs: etiqueta debug'  (Get-CvText -Key 'elegircfg.depuracion') $c2[1].Text
 Assert-Eq   'Configs: debug no default' $false $c2[1].IsDefault
 # Sin config.json, sigue ofreciendose el primero (sin fichero se usan los valores por defecto).
 $noCfgRoot = Join-Path $tmpRoot 'vacio'
@@ -427,6 +427,65 @@ $c3 = @(Get-CvSetupConfigCandidates -Root $noCfgRoot)
 Assert-Eq   'Configs: sin ficheros -> 1' 1 $c3.Count
 Assert-Eq   'Configs: no existe'       $false $c3[0].Exists
 Assert-True 'Configs: ruta absoluta'   ([System.IO.Path]::IsPathRooted($c3[0].Path))
+
+# Display/Label: lo que se PINTA. Lleva la CARPETA porque con un config.json heredado en la raiz y
+# otro en config\ salian dos filas identicas y no habia forma de saber cual era cual.
+New-Item -ItemType Directory -Path (Join-Path $tmpRoot 'config') -Force | Out-Null
+Set-Content -Path (Join-Path $tmpRoot 'config\config.json') -Value '{}' -Encoding UTF8
+$c4 = @(Get-CvSetupConfigCandidates -Root $tmpRoot)
+Assert-Eq   'Configs: 1o el de config'   (Join-Path 'config' 'config.json') $c4[0].Display
+Assert-Eq   'Configs: y el de la raiz'   'config.json' (@($c4 | Where-Object { $_.Display -eq 'config.json' })[0].Display)
+Assert-True 'Configs: etiqueta completa' ($c4[0].Label -like ("{0}   (*" -f $c4[0].Display))
+# El que NO existe lo dice en su propia etiqueta (y solo ese).
+$c5 = @(Get-CvSetupConfigCandidates -Root $noCfgRoot)
+Assert-True 'Configs: avisa de que no existe'  ($c5[0].Label -match [regex]::Escape((Get-CvText -Key 'elegircfg.noexiste')))
+Assert-Eq   'Configs: el que existe no avisa'  $false ($c4[0].Label -match [regex]::Escape((Get-CvText -Key 'elegircfg.noexiste')))
+
+# EL MENU: la lista que pintan LAS DOS caras -el dialogo de la ventana y la pregunta de la consola-,
+# para que ninguna decida por su cuenta que hay en ella ni como se llama cada fila.
+$menu = @(Get-CvSetupConfigMenu -Root $tmpRoot)
+Assert-Eq   'Menu: una fila mas que ficheros' ($c4.Count + 1) $menu.Count
+Assert-Eq   'Menu: la 1a es la etiqueta'      $c4[0].Label $menu[0].Value
+Assert-Eq   'Menu: la 1a lleva su ruta'       $c4[0].Path  $menu[0].Path
+Assert-Eq   'Menu: la 1a es un fichero'       'file'       $menu[0].Kind
+Assert-Eq   'Menu: la ultima es "otro"'       'other'      $menu[$menu.Count - 1].Kind
+Assert-Eq   'Menu: "otro" no lleva ruta'      ''           "$($menu[$menu.Count - 1].Path)"
+Assert-Eq   'Menu: "otro" con su texto'       (Get-CvText -Key 'elegircfg.otro') $menu[$menu.Count - 1].Value
+# Las etiquetas son UNICAS: la consola devuelve la fila elegida por su TEXTO (Select-FromList), asi
+# que dos filas iguales serian siempre la primera.
+Assert-Eq   'Menu: sin etiquetas repetidas'   $menu.Count @($menu | Select-Object -ExpandProperty Value -Unique).Count
+Remove-Item -LiteralPath (Join-Path $tmpRoot 'config') -Recurse -Force -ErrorAction SilentlyContinue
+
+# ================================================================================================
+Write-Host "`nLa tecla que fuerza la pregunta (teclado de verdad)" -ForegroundColor Cyan
+# La DECISION (ajuste x teclas) se prueba en los unitarios, que no necesitan teclado. Aqui se
+# prueba lo otro: que Get-CvModifierKeysDown lee el estado FISICO de la tecla. Se pulsa Mayus por
+# software (keybd_event) y se pregunta; sin escritorio interactivo no hay teclado que pulsar.
+if (-not (Initialize-CvGui)) {
+    Write-Skip 'Tecla fisica (Mayus)' 'sin entorno grafico'
+} else {
+    Add-Type -Namespace CvTest -Name Kbd -MemberDefinition @'
+[DllImport("user32.dll")] public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, System.UIntPtr dwExtraInfo);
+'@
+    $VK_SHIFT = [byte]0x10
+    $KEYUP    = [uint32]0x0002
+    # Sin tocar nada: no hay ninguna pulsada (si la bateria se lanza con una tecla apretada, este
+    # caso avisa de eso y no de un fallo del codigo).
+    Assert-Eq 'Tecla: en reposo, Mayus suelta' $false ([bool](Get-CvModifierKeysDown).Shift)
+    try {
+        [CvTest.Kbd]::keybd_event($VK_SHIFT, 0, 0, [UIntPtr]::Zero)      # abajo
+        Start-Sleep -Milliseconds 60
+        $conMayus = Get-CvModifierKeysDown
+        Assert-True 'Tecla: con Mayus pulsada, se ve'  ([bool]$conMayus.Shift)
+        Assert-Eq   'Tecla: y Ctrl sigue suelta' $false ([bool]$conMayus.Ctrl)
+    } finally {
+        # SIEMPRE se suelta: dejar Mayus pillada estropearia todo lo que venga despues (y lo que
+        # el usuario tenga delante).
+        [CvTest.Kbd]::keybd_event($VK_SHIFT, 0, $KEYUP, [UIntPtr]::Zero)
+        Start-Sleep -Milliseconds 60
+    }
+    Assert-Eq 'Tecla: al soltarla, ya no' $false ([bool](Get-CvModifierKeysDown).Shift)
+}
 
 # ================================================================================================
 Write-Host "`nGuiSetup - informe de texto (sin ventana)" -ForegroundColor Cyan

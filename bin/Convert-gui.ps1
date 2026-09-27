@@ -13,15 +13,22 @@
     Los archivos SIN preparar se pueden preparar aqui mismo (doble clic: editor del job en ventana,
     lib\form\GuiJobWindow.psm1) o en la consola de siempre con el boton 'Preparar (consola)'.
 
+    Con que configuracion trabaja: con la de siempre, sin preguntar. Para elegir otra, Convert-gui-Config.cmd
+    (que es esto mismo con -AskConfig) o MANTENER Mayus mientras arranca la cola normal (gui.askConfigKey).
+
     Lanzar:  Convert-gui.cmd   (o)   powershell -NoProfile -ExecutionPolicy Bypass -Sta -File Convert-gui.ps1
     Sin entorno grafico (o sin STA) se avisa y se remite a Convert.cmd.
 #>
 
 [CmdletBinding()]
 param(
-    # Fichero de configuracion a usar (por defecto config.json junto al programa). Admite ruta
-    # absoluta o relativa. Mismo parametro que Convert.ps1 y setup.ps1.
-    [string]$Config = ''
+    # Fichero de configuracion a usar (por defecto el de config\). Admite ruta absoluta o relativa.
+    # Mismo parametro que Convert.ps1 y setup.ps1; si se da, no se pregunta nada.
+    [string]$Config = '',
+    # PREGUNTAR con que config*.json trabajar en vez de abrir el de siempre. Es lo que pasa
+    # Convert-gui-Config.cmd, y lo que se consigue tambien MANTENIENDO Mayus al arrancar la cola
+    # normal (gui.askConfigKey). Con -Config explicito se ignora: mandar una ruta es mas concreto.
+    [switch]$AskConfig
 )
 
 $ErrorActionPreference = 'Stop'
@@ -75,19 +82,36 @@ $modules = @(
     'form\GuiProfileEditorWindow'
     'form\GuiProfilesWindow'
 )
+# Las teclas, LO PRIMERO y con un solo modulo cargado: el truco es "manten Mayus mientras arranca",
+# y cargar los veintitantos modulos cuesta unos segundos en los que habria que seguir aguantandola
+# (medido: de 5 s a menos de 2). Asi se mira lo que habia pulsado al ARRANCAR, que es lo que la
+# persona ha hecho, y no lo que siga pulsado un rato despues.
+Import-Module (Join-Path $Lib 'Console.psm1') -Force
+$teclasAlArrancar = Get-CvModifierKeysDown
+
 foreach ($m in $modules) {
     Import-Module (Join-Path $Lib ("{0}.psm1" -f $m)) -Force
 }
 
-# Sin -Config se PREGUNTA con que configuracion trabajar (el mismo selector que setup-gui): es el
-# equivalente de elegir entre Convert.cmd y Convert-Debug.cmd sin cambiar de lanzador.
+# Con que configuracion se trabaja. Por defecto, con la de siempre y sin preguntar nada: la cola es
+# lo que se abre a diario de un doble clic. Se pregunta (mismo selector que setup-gui) de dos formas:
+#   - con -AskConfig, que es lo que pasa Convert-gui-Config.cmd;
+#   - o MANTENIENDO la tecla que diga gui.askConfigKey -Mayus de fabrica- mientras arranca la cola
+#     normal, el truco de toda la vida de Windows, para no tener que buscar el otro lanzador.
+# Con -Config explicito no se pregunta ni con la tecla: dar una ruta es mas concreto que una tecla.
 if ([string]::IsNullOrWhiteSpace($Config)) {
-    if (-not (Initialize-CvGui)) {
-        Write-Host (Get-CvText -Key 'cg.singui')
-        return
+    # Las preferencias de ANTES de la sesion (idioma de la pregunta y tecla), del config por defecto:
+    # el elegido todavia no se sabe, que es justo lo que se esta preguntando.
+    $ini = Get-CvStartupPrefs -Root $Root
+    if ($AskConfig -or (Test-CvAskConfigKey -Setting $ini.AskConfigKey -Keys $teclasAlArrancar)) {
+        if (-not (Initialize-CvGui)) {
+            Write-Host (Get-CvText -Key 'cg.singui')
+            return
+        }
+        [void](Set-CvLanguage -Lang $ini.Language)
+        $Config = Show-CvSetupConfigChooser -Root $Root
+        if ([string]::IsNullOrWhiteSpace($Config)) { return }   # cancelado por el usuario
     }
-    $Config = Show-CvSetupConfigChooser -Root $Root
-    if ([string]::IsNullOrWhiteSpace($Config)) { return }   # cancelado por el usuario
 }
 
 # Arranque comun (config + contexto + marcas + log + apariencia), igual que Convert.ps1 y setup.ps1.

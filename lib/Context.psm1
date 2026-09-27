@@ -13,6 +13,28 @@ function Get-CvAppName {
     'ConvertVideo'
 }
 
+function Get-CvStartupPrefs {
+    <#
+        Lo que hay que saber ANTES de elegir con que configuracion se va a trabajar -o sea, antes de
+        que exista $ctx-: en que IDIOMA se pregunta y con que TECLA se fuerza la pregunta. Sale del
+        config por defecto (o del que se diga con -Path).
+
+        Sin montar contexto a proposito: New-CvContext crea de paso las carpetas de trabajo, y aqui
+        todavia no se sabe si ese config es el que se va a usar; crearle las carpetas a uno que a lo
+        mejor ni se elige es justo lo que dejaba Original\ y compania por ahi sembradas.
+
+        Devuelve @{ Language; AskConfigKey }, ya resueltos contra sus catalogos.
+    #>
+    param([Parameter(Mandatory)][string]$Root, [string]$Path = '')
+    $cfg  = Get-CvConfig -Root $Root -Path $Path
+    $def  = Get-CvConfigDefaults
+    $lang = "$($cfg.ui.language)"
+    [pscustomobject]@{
+        Language     = $(if ([string]::IsNullOrWhiteSpace($lang)) { 'auto' } else { $lang })
+        AskConfigKey = (Resolve-CvOneOf "$($cfg.gui.askConfigKey)" @(@(Get-CvAskConfigKeys) | ForEach-Object { "$($_.Value)" }) "$($def.gui.askConfigKey)")
+    }
+}
+
 function Start-CvSession {
     <#
         Arranque COMUN de Convert.ps1 y setup.ps1 (evita duplicar la secuencia y desincronizar el

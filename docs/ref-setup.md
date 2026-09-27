@@ -56,13 +56,15 @@ flowchart TD
 - **Acciones largas en su propia consola**: instalar una herramienta y lanzar una batería no se ejecutan dentro de la ventana (WinForms es de un solo hilo y se quedaría congelada), sino como `setup.ps1 -Task …` en una consola aparte, donde se ve el progreso real (descarga, SHA256, NVENC, casos de test). Al terminar una instalación, la ventana **refresca** el estado.
 - **Sin entorno gráfico** (host no STA, servidor sin escritorio): avisa y remite a `setup.cmd`, que hace exactamente lo mismo.
 
-### Qué configuración se gestiona (en vez de un `setup-gui-Debug.cmd`)
+### Qué configuración se gestiona (un lanzador, no uno por config)
 
-Al abrir **sin `-Config`**, la ventana **pregunta** qué configuración gestionar: lista los `config*.json` que encuentre en `config\` —y, por compatibilidad, los que queden sueltos en el raíz de una versión anterior— (con `config.json` preseleccionado y `config.debug.json` marcado como *depuración*) más **`Otro...`** para buscar uno en disco. Cancelar = no abrir nada.
+Al arrancar **sin `-Config`** se **pregunta** qué configuración gestionar, y lo hacen **las dos caras igual**: la ventana con un diálogo y la consola con su menú de siempre. La lista son los `config*.json` que haya en `config\` —y, por compatibilidad, los que queden sueltos en el raíz de una versión anterior— con `config.json` el primero y preseleccionado, `config.debug.json` marcado como *depuración*, y una última fila para usar un fichero de **cualquier** carpeta (la ventana lo busca con el explorador; la consola te deja escribir la ruta). Salir sin elegir = no se abre nada.
 
-Así se cubre lo que en consola hacen los dos lanzadores (`setup.cmd` / `setup-Debug.cmd`) sin duplicar un `.cmd`, y además se puede abrir un config que esté en cualquier carpeta. Con **`-Config <ruta>` explícito no pregunta** (`setup-gui.cmd -Config config.debug.json` va directo), así que sigue siendo automatizable. Los candidatos salen de `Get-CvSetupConfigCandidates` (`lib\SetupCore.psm1`), no de la ventana.
+Por eso hay **un solo lanzador de cada** y no uno por configuración: esto es lo que antes hacían `setup.cmd` y `setup-Debug.cmd`, pero sin cerrar uno para abrir el otro, y ahora además llega a un config que esté donde sea. Con **`-Config <ruta>` explícito no pregunta** (`setup.cmd -Config config\config.debug.json` va directo) y con **`-Task` tampoco** (no es interactivo), así que sigue siendo automatizable.
 
-Todos los textos (título, barra inferior, estado, editor) muestran el **nombre real** del fichero, y el estado marca `[alterno]` cuando **no** es el `config.json` de junto al programa.
+La lista no la arma ninguna de las dos caras: sale de `Get-CvSetupConfigMenu` (`lib\SetupCore.psm1`), que es también quien decide la **etiqueta** de cada fila —y por eso lleva la carpeta (`config\config.json`): con un `config.json` heredado en el raíz y otro en `config\` salían dos filas idénticas—.
+
+Todos los textos (título, barra inferior, estado, editor) muestran el **nombre real** del fichero, y el estado marca `[alterno]` cuando la ruta resuelta **no** es la del config por defecto (no cuando se pasó `-Config`: ahora la pregunta lo rellena siempre).
 
 ### Visor de logs
 
@@ -151,8 +153,8 @@ Lanzadores de depuración incluidos:
 | Fichero | Uso |
 |---|---|
 | `config.debug.json` | Override mínimo `{ "debug": { "enabled": true } }` (se fusiona con los defaults). |
-| `Convert-Debug.cmd` | Igual que `Convert.cmd` pero con `-Config config.debug.json`: abre el conversor con el **log detallado** (comandos de ffmpeg y pasos internos) sin tocar tu `config.json`. |
-| `setup-Debug.cmd` | Igual que `setup.cmd` pero con `-Config config.debug.json`: para **editar/gestionar** ese config de depuración. |
+| `extras\Convert-Debug.cmd` | Igual que `Convert.cmd` pero con `-Config config\config.debug.json`: abre el conversor con el **log detallado** (comandos de ffmpeg y pasos internos) sin tocar tu `config.json`. |
+| *(setup no tiene lanzador `-Debug`)* | `setup.cmd` **pregunta** al arrancar con qué `config*.json` trabajar, y `config.debug.json` es una opción más de esa lista. |
 
 ## Añadir una versión nueva de una herramienta
 

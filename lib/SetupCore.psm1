@@ -535,30 +535,47 @@ function Get-CvSetupLogText {
 
 function Get-CvSetupConfigCandidates {
     <#
-        Ficheros de configuracion que se ofrecen al arrancar la VENTANA sin -Config: los 'config*.json'
-        de la carpeta config\. 'config.json' va SIEMPRE el primero y aunque NO exista (sin fichero se
-        usan los valores por defecto, que es justo lo que hace el conversor); el resto, por nombre.
+        Ficheros de configuracion que se ofrecen al arrancar SIN -Config: los 'config*.json' de la
+        carpeta config\. 'config.json' va SIEMPRE el primero y aunque NO exista (sin fichero se usan
+        los valores por defecto, que es justo lo que hace el conversor); el resto, por nombre.
 
         Tambien se miran los que hubiera en la RAIZ: hasta la 4.7.3 vivian ahi, y quien actualice sin
         mover sus ficheros tiene que seguir viendolos en la lista.
 
-        Devuelve @{ Path; Name; Exists; IsDefault; Text }, donde Text es la etiqueta para la UI
-        ('por defecto', 'depuracion', o vacia) - la UI no vuelve a decidir nada.
+        Devuelve @{ Path; Name; Display; Exists; IsDefault; Text; Label }:
+          - Display es la ruta RELATIVA a la raiz ('config\config.json'), que es lo que distingue
+            uno de config\ de otro de la raiz que se llame igual -si no, salian dos filas identicas-.
+          - Text es la etiqueta ('por defecto' / 'depuracion' / vacia) y Label la linea COMPLETA que
+            pinta cada cara (ventana y consola muestran lo mismo porque sale de aqui).
     #>
     param([Parameter(Mandatory)][string]$Root)
     $def  = Get-CvDefaultConfigPath -Root $Root
     $out  = @()
     $seen = @{}
+    $raiz = $Root.TrimEnd('\')
     $make = {
         param([string]$Path)
         $name = Split-Path -Leaf $Path
-        $txt  = if ($name -eq 'config.json') { 'por defecto' } elseif ($name -eq 'config.debug.json') { 'depuracion' } else { '' }
+        $txt  = if ($name -eq 'config.json') { (Get-CvText -Key 'elegircfg.pordefecto') }
+                elseif ($name -eq 'config.debug.json') { (Get-CvText -Key 'elegircfg.depuracion') }
+                else { '' }
+        # Relativa a la raiz cuando cuelga de ella; si esta en otro disco, la ruta entera.
+        $disp = $Path
+        if ($Path.Length -gt ($raiz.Length + 1) -and $Path.Substring(0, $raiz.Length + 1).ToLower() -eq ($raiz + '\').ToLower()) {
+            $disp = $Path.Substring($raiz.Length + 1)
+        }
+        $existe = (Test-Path -LiteralPath $Path)
+        $lbl = $disp
+        if ($txt)      { $lbl += ('   ({0})' -f $txt) }
+        if (-not $existe) { $lbl += ('   {0}' -f (Get-CvText -Key 'elegircfg.noexiste')) }
         [pscustomobject]@{
             Path      = $Path
             Name      = $name
-            Exists    = (Test-Path -LiteralPath $Path)
+            Display   = $disp
+            Exists    = $existe
             IsDefault = ($name -eq 'config.json')
             Text      = $txt
+            Label     = $lbl
         }
     }
     $out += (& $make $def)
@@ -568,6 +585,37 @@ function Get-CvSetupConfigCandidates {
         if ($seen.ContainsKey($f.FullName.ToLower())) { continue }
         $seen[$f.FullName.ToLower()] = $true
         $out += (& $make $f.FullName)
+    }
+    return @($out)
+}
+
+function Get-CvSetupConfigMenu {
+    <#
+        El menu de 'con que configuracion trabajo': los ficheros de Get-CvSetupConfigCandidates mas
+        una ultima fila 'Otro...' para escoger uno de cualquier carpeta.
+
+        Lo usan las DOS caras -el dialogo de la ventana (form\GuiConfigChooser.psm1) y la pregunta de
+        la consola (bin\setup.ps1)-, asi que ninguna decide por su cuenta que hay en la lista ni como
+        se llama cada fila: Value es la etiqueta que se pinta y Kind lo que hay que hacer al elegirla
+        ('file' = usar Path; 'other' = preguntar por una ruta).
+
+        Value/Text tienen ese nombre porque es el formato que consume Select-FromList (consola).
+    #>
+    param([Parameter(Mandatory)][string]$Root)
+    $out = @()
+    foreach ($c in @(Get-CvSetupConfigCandidates -Root $Root)) {
+        $out += [pscustomobject]@{
+            Value = $c.Label
+            Text  = ''
+            Path  = $c.Path
+            Kind  = 'file'
+        }
+    }
+    $out += [pscustomobject]@{
+        Value = (Get-CvText -Key 'elegircfg.otro')
+        Text  = ''
+        Path  = ''
+        Kind  = 'other'
     }
     return @($out)
 }

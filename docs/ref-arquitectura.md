@@ -12,9 +12,12 @@ ConvertVideo/
 │   ├── setup-gui.ps1       La MISMA utilidad en VENTANA (WinForms); comparte los datos con setup.ps1 vía lib\SetupCore.psm1
 │   ├── Convert-gui.ps1     La COLA de conversión en VENTANA: estado de cada archivo, workers y progreso (lib\WorkerCore.psm1)
 │   └── FixSyncSub.ps1      Utilidad aparte: corregir/re-sincronizar subtítulos .srt (usa lib\SubtitleSRT.psm1)
-├── *.cmd                   Lanzadores por doble clic (Bypass): Convert.cmd / setup.cmd / Convert-gui.cmd / setup-gui.cmd / FixSyncSub.cmd (arrastrar y soltar) + Convert-Debug.cmd / setup-Debug.cmd (cargan config.debug.json) + Convert-gui-Config.cmd (la cola en ventana preguntando el config)
-├── config.json             Toda la configuración (se carga al arrancar)
-├── config.debug.json       Config alterna para los lanzadores -Debug (-Config)
+├── *.cmd                   Lanzadores por doble clic (Bypass), los cuatro del día a día: Convert.cmd / setup.cmd / Convert-gui.cmd / setup-gui.cmd. setup, en sus dos caras, pregunta con qué config trabajar al arrancar; la cola también si mantienes Mayús (gui.askConfigKey)
+├── extras/                 Los lanzadores que no son del día a día, fuera del raíz para no estorbar: Convert-Debug.cmd (carga config.debug.json), Convert-gui-Config.cmd (la cola preguntando el config) y FixSyncSub.cmd (arrastrar y soltar un .srt)
+├── config/
+│   ├── config.json         Toda la configuración (se carga al arrancar); un config.json que siga en el raíz de una versión anterior se sigue usando
+│   ├── config.debug.json   Config alterna (debug.enabled) que carga extras\Convert-Debug.cmd y que setup ofrece en su lista
+│   └── config.json.example Mínimo de ejemplo, lo único de config/ que viaja en el repositorio
 ├── lib/
 │   ├── Io.psm1             Ficheros: JSON atómico y UTF-8 sin BOM (job, estado de workers, config, layout)
 │   ├── Log.psm1            Log de consola (Write-CvLog) y transcript a logs\

@@ -146,6 +146,44 @@ function Get-CvGuiThemes {
     )
 }
 
+function Get-CvAskConfigKeys {
+    <#
+        Tecla que, MANTENIDA al arrancar, hace que la cola pregunte con que config*.json trabajar en
+        vez de abrir la de siempre (gui.askConfigKey). El 1o = default de fabrica.
+
+        No esta 'alt' a secas por una razon de Windows y no del programa: con Alt pulsado, el doble
+        clic en el explorador abre las PROPIEDADES del acceso directo y el programa ni se lanza.
+    #>
+    @(
+        @{ Value = 'shift'; Text = (Get-CvText -Key 'cat.askcfg.shift') }
+        @{ Value = 'ctrl';  Text = (Get-CvText -Key 'cat.askcfg.ctrl') }
+        @{ Value = 'any';   Text = (Get-CvText -Key 'cat.askcfg.any') }
+        @{ Value = 'off';   Text = (Get-CvText -Key 'cat.askcfg.off') }
+    )
+}
+
+function Test-CvAskConfigKey {
+    <#
+        Con las teclas que habia pulsadas al arrancar (Get-CvModifierKeysDown) y lo que diga
+        gui.askConfigKey, hay que preguntar con que configuracion trabajar? Pura: la parte que se
+        puede probar sin teclado ni ventanas.
+
+        Un valor que no este en el catalogo se trata como 'off': mejor no preguntar nunca que
+        preguntar siempre por una errata en el config.
+    #>
+    param([string]$Setting = 'shift', $Keys = $null)
+    if ($null -eq $Keys) { return $false }
+    $shift = [bool]$Keys.Shift
+    $ctrl  = [bool]$Keys.Ctrl
+    $alt   = [bool]$Keys.Alt
+    switch ("$Setting".ToLower()) {
+        'shift' { return $shift }
+        'ctrl'  { return $ctrl }
+        'any'   { return ($shift -or $ctrl -or $alt) }
+    }
+    return $false
+}
+
 function Get-CvPlayerModes {
     <# Con que se reproduce un video entero desde la cola (preview.player). El 1o = default. #>
     @(
@@ -760,6 +798,10 @@ function Get-CvConfigDefaults {
             # Aviso de "sigo aqui" la primera vez que se esconde en una sesion (ms; 0 = nunca). Sin
             # el, la primera vez parece que la ventana se ha cerrado sola.
             trayBalloonMs      = 3000
+            # Tecla que, MANTENIDA mientras arranca la cola (Convert-gui.cmd), hace que PREGUNTE con
+            # que config*.json trabajar en vez de abrir directo el de siempre: es Convert-gui-Config.cmd
+            # sin cambiar de lanzador. Catalogo en Get-CvAskConfigKeys ('off' = nunca).
+            askConfigKey       = 'shift'
             prepareAutoClose   = $false
             # Cuanto se ve el resumen antes de que la ventana se cierre sola (ms). Cerrar en el
             # mismo momento en que acaba no deja leer ni el 100% ni lo que se ha preparado.
@@ -1038,6 +1080,7 @@ function Get-CvConfigHelp {
         'gui/bringToFront' = (Get-CvText -Key 'cfg.help.gui.bringToFront')
         'gui/minimizeToTray' = (Get-CvText -Key 'cfg.help.gui.minimizeToTray')
         'gui/trayBalloonMs' = (Get-CvText -Key 'cfg.help.gui.trayBalloonMs')
+        'gui/askConfigKey' = (Get-CvText -Key 'cfg.help.gui.askConfigKey')
         'gui/prepareAutoClose' = (Get-CvText -Key 'cfg.help.gui.prepareAutoClose')
         'gui/prepareAutoCloseMs' = (Get-CvText -Key 'cfg.help.gui.prepareAutoCloseMs')
         'gui/setupWidth' = (Get-CvText -Key 'cfg.help.gui.setupWidth')
