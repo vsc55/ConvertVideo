@@ -17,7 +17,7 @@
 
 Conversor/recodificador de vídeo por lotes para Windows, escrito en **PowerShell 5.1**, que usa **FFmpeg** como motor. Diseño modular en `lib\` y toda la configuración en `config.json`.
 
-Recodifica a **MKV** (vídeo H.265/H.264 por GPU NVIDIA o CPU; audio AAC, AC-3, E-AC-3, MP3, FLAC u Opus, o copia sin recodificar), con detección y recorte de bandas negras, selección de pistas (vídeo/audio/subtítulos, con preview), corrección de sincronía, normalización de volumen y **MKV final limpio** (sin metadatos heredados ni etiquetas `DURATION`).
+Recodifica a **MKV** (vídeo H.265/H.264/AV1 por GPU NVIDIA o CPU; audio AAC, AC-3, E-AC-3, MP3, FLAC u Opus, o copia sin recodificar), con detección y recorte de bandas negras, selección de pistas (vídeo/audio/subtítulos, con preview), corrección de sincronía, normalización de volumen y **MKV final limpio** (sin metadatos heredados ni etiquetas `DURATION`).
 
 > La versión antigua en Batch (CMD + VBScript) se conserva en la rama **`v3.x`**.
 
@@ -66,7 +66,8 @@ Todo es configurable en `config.json` (detalle en [ref-configuracion.md](docs/re
 | **Vídeo anamórfico (SAR ≠ 1)** | Conservar · cuadrar por ancho · cuadrar por alto |
 | **Control de calidad** | SSIM o VMAF de la salida frente al origen |
 | **Animación** | `-tune animation` (libx264/libx265); PREPARAR pregunta por archivo |
-| **Selección de pista de vídeo** | Menú con preview cuando hay varias pistas |
+| **Selección de pista de vídeo** | Menú con preview cuando hay varias pistas (y preview del **original** al lado del recortado) |
+| **Si recodificar engorda, quedarse con el original** | Compara la pista codificada con la de partida y, si ha salido **más grande** y la imagen no se toca, multiplexa el vídeo original (el audio y los subtítulos ya hechos se conservan) |
 
 ### Audio
 
@@ -112,6 +113,18 @@ Todo es configurable en `config.json` (detalle en [ref-configuracion.md](docs/re
 | **Descarga de FFmpeg** | Automática, verificada con SHA256 |
 | **Modo test / debug** | Recortar la codificación a N minutos · log detallado |
 
+### Ventanas e idioma
+
+| Funcionalidad | Opciones |
+|---|---|
+| **Idioma de la interfaz** | `ui.language`: `auto` (el de Windows), `es` o `en`. Los textos viven en `lang\<idioma>.json` y **añadir un idioma es soltar un fichero ahí**: la lista sale de los que haya y cada uno dice su propio nombre. Lo que no esté traducido cae al castellano |
+| **La cola en ventana** (`Convert-gui.cmd`) | Todo el estado en un panel: fila por archivo, workers, progreso en vivo, resumen de lo que se le hará a cada uno y log. Con **atajos de teclado** (`F5`, `F2`, `F6`, `F9`, `Esc`…) y, si quieres, **se esconde en el área de notificación** al minimizarla |
+| **Preparar en ventana** | El mismo recorrido que en consola: pregunta el perfil una vez y solo se para donde se pararía la consola, abriendo el editor del archivo con el motivo escrito |
+| **Editor del job** | Pista de vídeo, recorte (con detección de bordes **a medida**: desde qué segundo, cuántas muestras y de cuánto), escalado, audio con idioma y retardo —y preview del original y del resultado— y subtítulos |
+| **Editar varios jobs a la vez** | Marca las filas y cambia **solo lo que marques**; el resto de cada job se queda como estaba |
+| **Tema claro / oscuro** | `gui.theme`: `system`, `light` o `dark`; se cambia desde la propia ventana y se recuerda |
+| **Setup en ventana** (`setup-gui.cmd`) | Herramientas, editor de `config.json`, perfiles propios, logs y mantenimiento |
+
 ## Requisitos
 
 - Windows de 64 bits con **PowerShell 5.1** (el que trae Windows).
@@ -129,7 +142,8 @@ Todo es configurable en `config.json` (detalle en [ref-configuracion.md](docs/re
 | `Convert.ps1` | Orquestador (clasificar / preparar / worker). |
 | `setup.ps1` | Herramientas + editor de `config.json` + limpieza. |
 | `config.json` | Toda la configuración. |
-| `lib\` | Módulos PowerShell (`*.psm1`). |
+| `lib\` | Módulos PowerShell (`*.psm1`); las ventanas, una por fichero, en `lib\form\`. |
+| `lang\` | Textos de la interfaz por idioma (`es.json`, `en.json`…). |
 | `Original\` | Vídeos de entrada. |
 | `Proceso\` | Trabajo: `*.job.json`, `*.lock`, temporales. |
 | `Convertido\` | Resultado final (`*_fix.mkv`). |
@@ -151,7 +165,13 @@ La documentación técnica y detallada (cómo trabaja, flujos, diagramas y **los
 - [Herramientas](docs/ref-herramientas.md) — versiones, plataforma, descargas y versión por job.
 - [Setup](docs/ref-setup.md) — utilidad `setup` (menú, editor de config, `-Config`, debug, fallback NVENC).
 - [Jobs](docs/ref-jobs.md) — formato del job, lock y temporales.
+- [La cola en ventana](docs/ref-cola.md) — estados, columnas, workers, atajos y opciones de la ventana.
+- [FFmpeg](docs/ref-ffmpeg.md) — qué build se usa y por qué.
+- [FixSyncSub](docs/ref-fixsyncsub.md) — el arreglador de `.srt` externos.
+- [Trampas conocidas](docs/ref-gotchas.md) — errores reales ya pisados (PowerShell 5.1, ffmpeg, NVENC, WinForms).
 - [Pruebas](docs/ref-pruebas.md) — muestras de test, batería del pipeline y fuentes/licencias.
+
+Y los *cómo y por qué* con diagramas —[detección de bordes](docs/explica-deteccion-bordes.md), [audio](docs/explica-audio.md), [control de tasa](docs/explica-control-tasa.md), [anamórfico](docs/explica-anamorfico.md), [HDR→SDR](docs/explica-tonemap-hdr.md), [calidad](docs/explica-calidad.md)— y algún [postmortem](docs/caso-rendimiento-subtitulos.md), listados en el [índice](docs/README.md).
 
 ## Star History
 

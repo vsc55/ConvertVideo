@@ -86,6 +86,14 @@ Un árbol con todas las secciones y, a la derecha, la clave elegida: su valor (c
 - **`Mostrar opciones avanzadas`** enseña también las secciones que no se tocan a diario (como el catálogo de descargas).
 - Al **guardar** se escribe **solo lo que difiere del valor por defecto**: tu `config.json` no se llena de claves que no has cambiado, y lo que devuelves al default desaparece del fichero.
 
+### El idioma del programa
+
+En **`ui` → `language`** eliges en qué idioma te habla: **`auto`** (el de Windows y, si no hay traducción para él, castellano), **`es`** o **`en`**. Cambia todo lo que se lee: ventanas, menús de consola, la ayuda de cada opción de este editor y el log del worker.
+
+> Ojo con el parecido: **`languages`** (en plural, otra sección) son los idiomas de las **pistas** de audio y subtítulos que quieres conservar. No tienen nada que ver.
+
+Los textos no están en el código, viven en `lang\<idioma>.json`. **Añadir un idioma es dejar un `.json` ahí** y nada más: la lista sale de los ficheros que haya.
+
 La referencia completa de cada clave está en [ref-configuracion.md](../docs/ref-configuracion.md).
 
 ---
