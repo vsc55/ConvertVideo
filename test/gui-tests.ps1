@@ -438,6 +438,11 @@ Assert-True 'Estado: lleva herramientas' ($txt -match 'Estado de las herramienta
 Assert-True 'Estado: lleva Proceso'      ($txt -match 'Carpeta Proceso:')
 Assert-True 'Estado: lleva trabajo'      ($txt -match 'Trabajo:')
 Assert-True 'Estado: nombra ffmpeg'      ($txt -match 'ffmpeg')
+# Y las RUTAS enteras: con paths.base las carpetas pueden estar en cualquier sitio, asi que el
+# estado tiene que decir a donde van a atacar los scripts, no solo si existen.
+Assert-True 'Estado: dice la ruta de Original'   ($txt -match [regex]::Escape("$($ctx.Original)"))
+Assert-True 'Estado: y la de Convertido'         ($txt -match [regex]::Escape("$($ctx.Convertido)"))
+Assert-True 'Estado: y la de los logs'           ($txt -match [regex]::Escape("$($ctx.Logs)"))
 # Sin ffmpeg instalado en el root temporal, la sonda de GPU avisa en vez de petar.
 $gtxt = Get-CvSetupGpuText -Context $ctx
 Assert-True 'GPU: cabecera'              ($gtxt -match 'Codecs por GPU')
@@ -507,6 +512,19 @@ if (-not $sta) {
             $chk.Checked = $false
             $script:advOff2 = ($null -eq (& $findNode $tree.Nodes 'downloads'))
 
+            # 0b) RUTAS: las claves que son una carpeta o un programa llevan al lado el boton de
+            #     buscarla con el explorador; las demas, no. Solo se mira que el boton ESTE: abrirlo
+            #     sacaria un dialogo del sistema y dejaria la bateria esperando un clic.
+            $pick = $f.Controls.Find('cvPick', $true)[0]
+            $chk.Checked = $true     # 'paths' es una seccion avanzada
+            $tree.SelectedNode = (& $findNode $tree.Nodes 'paths/base')
+            $script:pickDir  = ($pick.Visible -and $text.Visible)
+            $tree.SelectedNode = (& $findNode $tree.Nodes 'preview/playerExe')
+            $script:pickFile = $pick.Visible
+            $chk.Checked = $false
+            $tree.SelectedNode = (& $findNode $tree.Nodes 'behavior/workers')
+            $script:pickNo   = $pick.Visible
+
             # 1) NUMERO: behavior/workers 3 -> 5, sin salir del campo (lo confirma el cambio de nodo).
             $tree.SelectedNode = (& $findNode $tree.Nodes 'behavior/workers')
             $script:sawText = $text.Visible
@@ -545,6 +563,9 @@ if (-not $sta) {
     Assert-True 'Al marcar aparece downloads'    $script:advOn
     Assert-True 'Al marcar aparece el tuning'    $script:advTun
     Assert-True 'Al desmarcar vuelve a ocultar'  $script:advOff2
+    Assert-True 'Rutas: una carpeta lleva boton de buscar'   $script:pickDir
+    Assert-True 'Rutas: un programa tambien'                 $script:pickFile
+    Assert-True 'Rutas: una clave normal no lo lleva'        (-not $script:pickNo)
     Assert-True 'Guardado confirmado'     $saved
     Assert-True 'Numero -> cuadro de texto' $script:sawText
     Assert-True 'Enum -> desplegable'       $script:sawCombo
@@ -906,6 +927,54 @@ if (-not $sta) {
     $fSin = New-Object System.Windows.Forms.Form
     Assert-Eq   'Frente: sin ventana dibujada, $false' $false (Set-CvGuiForeground -Form $fSin)
     $fSin.Dispose()
+}
+
+# ================================================================================================
+# LA VENTANA DE SETUP, abierta de verdad: el MENU empieza por Estado (con la GPU en esa misma
+# seccion) y el panel de salida arranca con el informe de estado, que lleva las RUTAS enteras.
+Write-Host "`nGuiSetup - la ventana y su menu" -ForegroundColor Cyan
+if (-not $sta) {
+    Write-Skip 'Ventana de setup' 'el host no es STA (usa -Sta)'
+} elseif (-not (Initialize-CvGui)) {
+    Write-Skip 'Ventana de setup' 'sin entorno grafico'
+} else {
+    $script:swErr   = ''
+    $script:swMenu  = @()
+    $script:swOut   = ''
+    $script:swEsper = 0
+    $tSw = New-Object System.Windows.Forms.Timer
+    $tSw.Interval = 400
+    $tSw.Add_Tick({
+        try {
+            $f = @([System.Windows.Forms.Application]::OpenForms | Where-Object { $_.Controls.Find('cvSetupMenu', $true).Count -gt 0 })[0]
+            if ($null -eq $f) {
+                $script:swEsper++
+                if ($script:swEsper -gt 60) { $tSw.Stop() }
+                return
+            }
+            $tSw.Stop()
+            foreach ($c in $f.Controls.Find('cvSetupMenu', $true)[0].Controls) {
+                $script:swMenu += ("{0}|{1}" -f $(if ($c -is [System.Windows.Forms.Button]) { 'b' } else { 'h' }), "$($c.Text)".Trim())
+            }
+            $script:swOut = "$($f.Controls.Find('cvSetupOut', $true)[0].Text)"
+            $f.Close()
+        } catch { $tSw.Stop(); $script:swErr = "$_"; foreach ($fm in @([System.Windows.Forms.Application]::OpenForms)) { $fm.Close() } }
+    })
+    $tSw.Start()
+    [void](Show-CvSetupWindow -Context $ctx -Root $tmpRoot -CfgPath $tmpCfg -CfgName 'config.json' -IsAlt $false -CurrentLog '')
+    $tSw.Stop()
+
+    Assert-Eq   'Ventana setup: sin excepciones'  '' $script:swErr
+    Assert-True 'Ventana setup: hay menu'         (@($script:swMenu).Count -ge 6)
+    # El ORDEN: primero el titulo de Estado, y sus DOS botones (ver estado y la GPU) antes de que
+    # llegue el titulo siguiente. Era lo que estaba al reves: Herramientas abria el menu.
+    Assert-Eq   'Ventana setup: empieza por Estado' ("h|" + (Get-CvText -Key 'setup.sec.estado')) "$(@($script:swMenu)[0])"
+    Assert-Eq   'Ventana setup: y su primer boton es ver estado' ("b|" + (Get-CvText -Key 'setup.btn.estado')) "$(@($script:swMenu)[1])"
+    Assert-Eq   'Ventana setup: la GPU va en esa misma seccion'  ("b|" + (Get-CvText -Key 'setup.btn.gpu'))    "$(@($script:swMenu)[2])"
+    Assert-Eq   'Ventana setup: y despues, las herramientas'     ("h|" + (Get-CvText -Key 'setup.sec.herr'))   "$(@($script:swMenu)[3])"
+    # El panel arranca con el estado, y el estado dice las rutas.
+    Assert-True 'Ventana setup: el panel abre con el estado' ($script:swOut -match [regex]::Escape((Get-CvVersion)))
+    Assert-True 'Ventana setup: con la ruta de Original'     ($script:swOut -match [regex]::Escape("$($ctx.Original)"))
 }
 
 # ================================================================================================

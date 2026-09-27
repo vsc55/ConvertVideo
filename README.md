@@ -19,6 +19,10 @@ Conversor/recodificador de vídeo por lotes para Windows, escrito en **PowerShel
 
 Recodifica a **MKV** (vídeo H.265/H.264/AV1 por GPU NVIDIA o CPU; audio AAC, AC-3, E-AC-3, MP3, FLAC u Opus, o copia sin recodificar), con detección y recorte de bandas negras, selección de pistas (vídeo/audio/subtítulos, con preview), corrección de sincronía, normalización de volumen y **MKV final limpio** (sin metadatos heredados ni etiquetas `DURATION`).
 
+![De Original\ a Convertido\](manual/img/uso.gif)
+
+*La cola de conversión de principio a fin: dejar los vídeos, `Preparar pendientes`, `Iniciar` y listo. Es una sesión real grabada con [`manual/generar-capturas.ps1`](manual/generar-capturas.ps1).*
+
 > La versión antigua en Batch (CMD + VBScript) se conserva en la rama **`v3.x`**.
 
 ***
@@ -144,7 +148,7 @@ Todo es configurable en `config.json` (detalle en [ref-configuracion.md](docs/re
 | `config.json` | Toda la configuración. |
 | `lib\` | Módulos PowerShell (`*.psm1`); las ventanas, una por fichero, en `lib\form\`. |
 | `lang\` | Textos de la interfaz por idioma (`es.json`, `en.json`…). |
-| `Original\` | Vídeos de entrada. |
+| `Original\` | Vídeos de entrada (las cuatro carpetas de trabajo se pueden mover con `paths`). |
 | `Proceso\` | Trabajo: `*.job.json`, `*.lock`, temporales. |
 | `Convertido\` | Resultado final (`*_fix.mkv`). |
 | `tools\<app>\<ver>\<plat>` | Ejecutables (FFmpeg, aacgain, mkvpropedit, 7zr). |

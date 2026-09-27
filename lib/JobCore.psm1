@@ -1181,7 +1181,11 @@ function Get-CvJobAutoPlan {
             if ("$($dec.Decision)" -eq 'crop') {
                 $draft.Crop = "$($dec.Crop)"
             } elseif ("$($dec.Decision)" -eq 'manual') {
-                $reasons += ("{0}: confirma el recorte." -f $dec.Reason)
+                # El motivo YA lo explica Resolve-CvCropAutoDecision ('...: confirmalo antes de
+                # aplicarlo'), asi que se usa tal cual: pegarle otra frase detras lo dejaba en
+                # "confirmalo antes de aplicarlo: confirma el recorte", y ademas en castellano
+                # pasara lo que pasara, porque era un literal en el codigo.
+                $reasons += "$($dec.Reason)"
             } else {
                 $draft.Crop = ''
             }

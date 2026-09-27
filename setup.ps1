@@ -149,9 +149,11 @@ function Show-Dirs {
     # Checklist de las carpetas de trabajo (Get-CvSetupDirStatus crea las que falten).
     Write-Host ''
     Write-CvLog 'SETUP' (Get-CvText -Key 'cli.dirs')
+    # Con la RUTA entera: con paths.base (o cada carpeta por su cuenta) pueden estar en cualquier
+    # sitio, y lo primero que hay que poder mirar es a donde van a atacar los scripts de verdad.
     foreach ($d in (Get-CvSetupDirStatus -Context $ctx)) {
         $extra = if ($d.Created) { (Get-CvText -Key 'cli.dirs.creada') } else { '' }
-        Write-CvLog 'SETUP' ("  {0,-12} {1}{2}" -f $d.Name, (Get-CvMark $d.Ok), $extra)
+        Write-CvLog 'SETUP' ("  {0,-12} {1}  {2}{3}" -f $d.Name, (Get-CvMark $d.Ok), $d.Path, $extra)
     }
 }
 
@@ -444,7 +446,7 @@ function Show-Identity {
     $id = Get-CvSetupIdentity -Context $ctx -CfgPath $CfgPath -IsAlt (-not [string]::IsNullOrWhiteSpace($Config))
     Write-CvLog 'SETUP' ("{0} v{1}" -f $id.AppName, $id.Version)
     $tag = if ($id.IsAlt) { (Get-CvText -Key 'cli.cfg.alterno') } else { (Get-CvText -Key 'cli.cfg.defecto') }
-    $ex  = if ($id.Exists) { '' } else { '  (no existe -> se usan los valores por defecto)' }
+    $ex  = if ($id.Exists) { '' } else { (Get-CvText -Key 'cli.cfg.noexiste') }
     Write-CvLog 'SETUP' (Get-CvText -Key 'cli.cfg.linea' -Values @($id.CfgPath, $tag, $ex))
 }
 
@@ -596,14 +598,14 @@ while (-not $exit) {
     $opts    = @()
     $headers = @{}
 
-    $headers[$opts.Count] = (Get-CvText -Key 'cli.men.herr')
-    $opts += (Get-CvText -Key 'cli.men.herr.op')
-
+    # ESTADO primero (con la comprobacion de la GPU en la misma seccion: las dos cosas son "como
+    # esta esto", no acciones que cambien nada), y despues ya las herramientas.
     $headers[$opts.Count] = (Get-CvText -Key 'cli.men.estado')
     $opts += (Get-CvText -Key 'cli.men.estado.op')
-
-    $headers[$opts.Count] = (Get-CvText -Key 'cli.men.compat')
     $opts += (Get-CvText -Key 'cli.men.gpu.op')
+
+    $headers[$opts.Count] = (Get-CvText -Key 'cli.men.herr')
+    $opts += (Get-CvText -Key 'cli.men.herr.op')
 
     $headers[$opts.Count] = (Get-CvText -Key 'cli.men.pruebas')
     # Una entrada por bateria del catalogo (fuente unica Get-CvSetupTestSuites, compartida con la GUI).

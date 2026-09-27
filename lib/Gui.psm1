@@ -1843,6 +1843,60 @@ function Set-CvGuiForeground {
     } catch { return $false }
 }
 
+function Show-CvGuiFolderPicker {
+    <#
+        El dialogo de ELEGIR CARPETA de Windows. Devuelve la ruta elegida, o '' si se cancela (o si
+        el dialogo no se puede abrir: esto nunca puede tumbar una ventana, se sigue pudiendo
+        escribir la ruta a mano, que es para lo que esta el campo de al lado).
+
+        -Initial es donde se abre: lo que ya haya escrito, si existe.
+    #>
+    param([string]$Initial = '', [string]$Title = '')
+    try {
+        [void](Initialize-CvGui)
+        $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
+        $dlg.Description = "$Title"
+        $dlg.ShowNewFolderButton = $true
+        $ini = "$Initial".Trim()
+        if ($ini -ne '' -and (Test-Path -LiteralPath $ini)) { $dlg.SelectedPath = $ini }
+        $r = $dlg.ShowDialog()
+        $sel = "$($dlg.SelectedPath)"
+        $dlg.Dispose()
+        if ($r -ne [System.Windows.Forms.DialogResult]::OK) { return '' }
+        return $sel
+    } catch { return '' }
+}
+
+function Show-CvGuiFilePicker {
+    <#
+        El dialogo de ELEGIR FICHERO de Windows. Devuelve la ruta elegida o '' (cancelado o fallo).
+        -Filter es el filtro de tipos en formato WinForms ('Programas|*.exe|Todos|*.*').
+    #>
+    param(
+        [string]$Initial = '',
+        [string]$Title = '',
+        [string]$Filter = ''
+    )
+    try {
+        [void](Initialize-CvGui)
+        $dlg = New-Object System.Windows.Forms.OpenFileDialog
+        $dlg.Title = "$Title"
+        $dlg.CheckFileExists = $true
+        if ("$Filter" -ne '') { $dlg.Filter = "$Filter" }
+        $ini = "$Initial".Trim()
+        if ($ini -ne '') {
+            $dir = Split-Path -Parent $ini
+            if ("$dir" -ne '' -and (Test-Path -LiteralPath $dir)) { $dlg.InitialDirectory = $dir }
+            if (Test-Path -LiteralPath $ini) { $dlg.FileName = $ini }
+        }
+        $r = $dlg.ShowDialog()
+        $sel = "$($dlg.FileName)"
+        $dlg.Dispose()
+        if ($r -ne [System.Windows.Forms.DialogResult]::OK) { return '' }
+        return $sel
+    } catch { return '' }
+}
+
 function Set-CvGuiTrayText {
     <#
         El rotulo del icono del area de notificacion. Va aparte por un detalle que revienta:

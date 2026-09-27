@@ -24,45 +24,48 @@ function Get-CvSetupStatusText {
     $L = New-Object System.Collections.Generic.List[string]
     $id = Get-CvSetupIdentity -Context $Context -CfgPath $CfgPath -IsAlt $IsAlt
     $L.Add(("{0} v{1}" -f $id.AppName, $id.Version))
-    $tag = if ($id.IsAlt) { 'alterno (-Config)' } else { 'por defecto' }
-    $ex  = if ($id.Exists) { '' } else { '  (no existe -> se usan los valores por defecto)' }
-    $L.Add(("  config: {0}  [{1}]{2}" -f $id.CfgPath, $tag, $ex))
+    $tag = if ($id.IsAlt) { (Get-CvText -Key 'cli.cfg.alterno') } else { (Get-CvText -Key 'cli.cfg.defecto') }
+    $ex  = if ($id.Exists) { '' } else { (Get-CvText -Key 'cli.cfg.noexiste') }
+    $L.Add((Get-CvText -Key 'cli.cfg.linea' -Values @($id.CfgPath, $tag, $ex)))
 
     $L.Add('')
-    $L.Add('Directorios de trabajo:')
+    # Las mismas claves que la consola (cli.*): es el MISMO informe, y asi no hay dos textos que
+    # mantener. Con la RUTA entera: las carpetas pueden estar en cualquier sitio (paths.base), y lo
+    # primero que hay que poder mirar es a donde van a atacar los scripts.
+    $L.Add((Get-CvText -Key 'cli.dirs'))
     foreach ($d in (Get-CvSetupDirStatus -Context $Context)) {
-        $extra = if ($d.Created) { ' (creada)' } else { '' }
-        $L.Add(("  {0,-12} {1}{2}" -f $d.Name, (Get-CvMark $d.Ok), $extra))
+        $extra = if ($d.Created) { (Get-CvText -Key 'cli.dirs.creada') } else { '' }
+        $L.Add(("  {0,-12} {1}  {2}{3}" -f $d.Name, (Get-CvMark $d.Ok), $d.Path, $extra))
     }
 
     $L.Add('')
-    $L.Add('Estado de las herramientas:')
+    $L.Add((Get-CvText -Key 'cli.estado'))
     foreach ($t in (Get-CvSetupToolStatus -Context $Context)) {
         if (-not $t.Supported) {
             $L.Add((Get-CvText -Key 'setup.tool.no' -Values @((Get-CvMark $false), $t.Name, $t.Platform, $t.Selected)))
             continue
         }
-        $instTxt = if (@($t.Installed).Count) { (@($t.Installed) -join ', ') } else { 'ninguna' }
-        $L.Add(("  {0} {1,-10} [{2}] instaladas: {3,-22} por defecto (config): {4}" -f (Get-CvMark $t.SelectedOk), $t.Name, $t.Platform, $instTxt, $t.Selected))
+        $instTxt = if (@($t.Installed).Count) { (@($t.Installed) -join ', ') } else { (Get-CvText -Key 'comun.ninguna') }
+        $L.Add((Get-CvText -Key 'cli.tool.ok' -Values @((Get-CvMark $t.SelectedOk), $t.Name, $t.Platform, $instTxt, $t.Selected)))
     }
 
     $L.Add('')
-    $L.Add('Carpeta Proceso:')
+    $L.Add((Get-CvText -Key 'cli.proc.tit'))
     $p = Get-CvSetupProcesoStatus -Context $Context
     if (-not $p.Exists) {
-        $L.Add('  (no existe)')
+        $L.Add((Get-CvText -Key 'cli.proc.noexiste'))
     } else {
-        $staleTxt = if ($p.Stale -gt 0) { "  ({0} caducado(s)/huerfano(s))" -f $p.Stale } else { '' }
-        $L.Add(("  jobs pendientes : {0}" -f $p.Jobs))
-        $L.Add(("  bloqueos        : {0}{1}" -f $p.Locks, $staleTxt))
-        $L.Add(("  temporales      : {0}" -f $p.Temps))
+        $staleTxt = if ($p.Stale -gt 0) { (Get-CvText -Key 'cli.proc.caducados') -f $p.Stale } else { '' }
+        $L.Add((Get-CvText -Key 'cli.proc.jobs'  -Values @($p.Jobs)))
+        $L.Add((Get-CvText -Key 'cli.proc.locks' -Values @($p.Locks, $staleTxt)))
+        $L.Add((Get-CvText -Key 'cli.proc.temps' -Values @($p.Temps)))
     }
 
     $L.Add('')
-    $L.Add('Trabajo:')
+    $L.Add((Get-CvText -Key 'cli.trabajo'))
     $w = Get-CvSetupWorkStatus -Context $Context
-    $L.Add(("  en Original     : {0} video(s) de entrada" -f $w.Input))
-    $L.Add(("  en Convertido   : {0} convertido(s)" -f $w.Converted))
+    $L.Add((Get-CvText -Key 'cli.trabajo.in'  -Values @($w.Input)))
+    $L.Add((Get-CvText -Key 'cli.trabajo.out' -Values @($w.Converted)))
     return ($L -join [Environment]::NewLine)
 }
 

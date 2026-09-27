@@ -67,6 +67,7 @@ function Show-CvSetupWindow {
     $side.WrapContents  = $false
     $side.AutoScroll    = $true
     $side.Padding       = New-Object System.Windows.Forms.Padding(10)
+    $side.Name          = 'cvSetupMenu'   # con nombre para poder mirar el MENU sin raton (bateria)
     $form.Controls.Add($side)
 
     # --- salida (derecha): titulo de la accion + texto ---
@@ -102,6 +103,7 @@ function Show-CvSetupWindow {
     $out.Font       = (New-CvGuiFont 9)
     $out.DetectUrls = $false
     $out.BorderStyle = 'None'
+    $out.Name        = 'cvSetupOut'   # con nombre para poder leer el panel sin raton (bateria)
     $outBox.Controls.Add($out, 0, 1)
 
     $status = New-Object System.Windows.Forms.StatusStrip
@@ -124,6 +126,17 @@ function Show-CvSetupWindow {
         $out.Text = $Msg
         $form.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
         $out.Refresh(); $form.Refresh()
+    }
+
+    # EL CONTEXTO, EN UNA TABLA. Lo que se guarde en el editor de configuracion puede cambiar hasta
+    # las carpetas de trabajo (paths.base), asi que el $ctx con el que se abrio la ventana deja de
+    # valer y hay que REHACERLO. Va en un hashtable porque asignar $Context = ... dentro de un
+    # manejador crearia una variable local y el cambio no saldria de ahi (ver ref-gotchas.md). La
+    # consola no tiene este problema: rehace su contexto en cada vuelta al menu.
+    $vivo = @{ Ctx = $Context }
+    $recarga = {
+        try { $vivo.Ctx = New-CvContext -Root $Root -ConfigPath $CfgPath; return '' }
+        catch { return "$($_.Exception.Message)" }
     }
 
     # Helper para crear cada boton del panel lateral.
@@ -151,24 +164,26 @@ function Show-CvSetupWindow {
     }
 
     # Los dos espacios de delante de cada boton son sangria del menu, no parte del texto.
-    & $addHeader (Get-CvText -Key 'setup.sec.herr')
-    [void](& $addButton ('  ' + (Get-CvText -Key 'setup.btn.herr')) {
-        Show-CvToolsWindow -Context $Context -Root $Root -CfgPath $CfgPath
-        & $write (Get-CvText -Key 'setup.cab.estado') (Get-CvSetupStatusText -Context $Context -CfgPath $CfgPath -IsAlt $IsAlt)
-    })
-
+    # ESTADO va primero: es lo que se ensena al abrir -y lo que se mira cuando algo no cuadra-, asi
+    # que el menu empieza por ahi. La comprobacion de la GPU va en la misma seccion: tambien es
+    # "como esta esto", no una accion que cambie nada.
     & $addHeader (Get-CvText -Key 'setup.sec.estado')
     [void](& $addButton ('  ' + (Get-CvText -Key 'setup.btn.estado')) {
         & $busy (Get-CvText -Key 'setup.busy.estado')
-        try { & $write (Get-CvText -Key 'setup.cab.estado') (Get-CvSetupStatusText -Context $Context -CfgPath $CfgPath -IsAlt $IsAlt) }
+        try { & $write (Get-CvText -Key 'setup.cab.estado') (Get-CvSetupStatusText -Context $vivo.Ctx -CfgPath $CfgPath -IsAlt $IsAlt) }
+        finally { $form.Cursor = [System.Windows.Forms.Cursors]::Default }
+    })
+    [void](& $addButton ('  ' + (Get-CvText -Key 'setup.btn.gpu')) {
+        & $busy (Get-CvText -Key 'setup.busy.gpu')
+        try { & $write (Get-CvText -Key 'setup.cab.gpu') (Get-CvSetupGpuText -Context $vivo.Ctx) }
         finally { $form.Cursor = [System.Windows.Forms.Cursors]::Default }
     })
 
-    & $addHeader (Get-CvText -Key 'setup.sec.compat')
-    [void](& $addButton ('  ' + (Get-CvText -Key 'setup.btn.gpu')) {
-        & $busy (Get-CvText -Key 'setup.busy.gpu')
-        try { & $write (Get-CvText -Key 'setup.cab.gpu') (Get-CvSetupGpuText -Context $Context) }
-        finally { $form.Cursor = [System.Windows.Forms.Cursors]::Default }
+    & $addHeader (Get-CvText -Key 'setup.sec.herr')
+    [void](& $addButton ('  ' + (Get-CvText -Key 'setup.btn.herr')) {
+        Show-CvToolsWindow -Context $vivo.Ctx -Root $Root -CfgPath $CfgPath
+        [void](& $recarga)   # se puede haber cambiado la version EN USO: el contexto la lleva dentro
+        & $write (Get-CvText -Key 'setup.cab.estado') (Get-CvSetupStatusText -Context $vivo.Ctx -CfgPath $CfgPath -IsAlt $IsAlt)
     })
 
     & $addHeader (Get-CvText -Key 'setup.sec.pruebas')
@@ -186,7 +201,13 @@ function Show-CvSetupWindow {
     & $addHeader (Get-CvText -Key 'setup.sec.config')
     [void](& $addButton ('  ' + (Get-CvText -Key 'setup.btn.config' -Values @($CfgName))) {
         if (Show-CvConfigWindow -Root $Root -CfgPath $CfgPath -CfgName $CfgName) {
-            & $write (Get-CvText -Key 'setup.cab.config') (Get-CvText -Key 'setup.cfg.guardado' -Values @($CfgName))
+            # Se relee lo guardado y se ensena el estado YA con lo nuevo: si se ha cambiado
+            # paths.base, lo primero que se quiere ver es a donde apunta ahora cada carpeta.
+            $msg = (Get-CvText -Key 'setup.cfg.guardado' -Values @($CfgName))
+            $err = & $recarga
+            if ("$err" -ne '') { $msg = $msg + [Environment]::NewLine + (Get-CvText -Key 'setup.cfg.norecarga' -Values @($err)) }
+            & $write (Get-CvText -Key 'setup.cab.config') ($msg + [Environment]::NewLine + [Environment]::NewLine +
+                (Get-CvSetupStatusText -Context $vivo.Ctx -CfgPath $CfgPath -IsAlt $IsAlt))
         } else {
             & $write (Get-CvText -Key 'setup.cab.config') (Get-CvText -Key 'setup.cfg.sincambios')
         }
@@ -195,7 +216,7 @@ function Show-CvSetupWindow {
     # de serie en solo lectura para poder duplicarlos. La ventana vive en GuiProfile.psm1 porque la
     # comparten setup y la cola.
     [void](& $addButton ('  ' + (Get-CvText -Key 'setup.btn.perfiles')) {
-        [void](Show-CvProfilesWindow -Context $Context -CfgPath $CfgPath)
+        [void](Show-CvProfilesWindow -Context $vivo.Ctx -CfgPath $CfgPath)
         & $write (Get-CvText -Key 'setup.cab.perfiles') (Get-CvSetupProfilesText -CfgPath $CfgPath)
     })
     [void](& $addButton ('  ' + (Get-CvText -Key 'setup.btn.reset' -Values @($CfgName))) {
@@ -209,18 +230,18 @@ function Show-CvSetupWindow {
     # Antes eran tres botones repartidos entre 'Limpieza' y 'Logs' y habia que ir a buscarlos.
     & $addHeader (Get-CvText -Key 'setup.sec.mant')
     [void](& $addButton ('  ' + (Get-CvText -Key 'setup.btn.mant')) {
-        $n = Show-CvMaintenanceWindow -Context $Context -CurrentLog $CurrentLog
-        & $write (Get-CvText -Key 'setup.cab.mant') (Get-CvText -Key 'setup.mant.hecho' -Values @($n, (Get-CvSetupMaintenanceText -Context $Context -CurrentLog $CurrentLog)))
+        $n = Show-CvMaintenanceWindow -Context $vivo.Ctx -CurrentLog $CurrentLog
+        & $write (Get-CvText -Key 'setup.cab.mant') (Get-CvText -Key 'setup.mant.hecho' -Values @($n, (Get-CvSetupMaintenanceText -Context $vivo.Ctx -CurrentLog $CurrentLog)))
     })
     [void](& $addButton ('  ' + (Get-CvText -Key 'setup.btn.limpiar')) {
-        Show-CvCleanWindow -Context $Context
-        & $write (Get-CvText -Key 'setup.cab.estado') (Get-CvSetupStatusText -Context $Context -CfgPath $CfgPath -IsAlt $IsAlt)
+        Show-CvCleanWindow -Context $vivo.Ctx
+        & $write (Get-CvText -Key 'setup.cab.estado') (Get-CvSetupStatusText -Context $vivo.Ctx -CfgPath $CfgPath -IsAlt $IsAlt)
     })
 
     & $addHeader (Get-CvText -Key 'setup.sec.logs')
     [void](& $addButton ('  ' + (Get-CvText -Key 'setup.btn.logs')) {
-        Show-CvLogsWindow -Context $Context -CurrentLog $CurrentLog
-        & $write (Get-CvText -Key 'setup.cab.logs') (Get-CvText -Key 'setup.logs.hay' -Values @(@(Get-CvSetupLogFiles -Context $Context).Count, $Context.Logs))
+        Show-CvLogsWindow -Context $vivo.Ctx -CurrentLog $CurrentLog
+        & $write (Get-CvText -Key 'setup.cab.logs') (Get-CvText -Key 'setup.logs.hay' -Values @(@(Get-CvSetupLogFiles -Context $vivo.Ctx).Count, $vivo.Ctx.Logs))
     })
     # Si el MENU no cabe en el alto de la ventana, se agranda hasta que quepa (sin pasarse de la
     # pantalla). Asi anadir una opcion no deja la ultima seccion cortada detras de una barra de
@@ -240,7 +261,7 @@ function Show-CvSetupWindow {
     }.GetNewClosure())
 
     # Estado nada mas abrir, para que la ventana no arranque vacia.
-    & $write (Get-CvText -Key 'setup.cab.estado') (Get-CvSetupStatusText -Context $Context -CfgPath $CfgPath -IsAlt $IsAlt)
+    & $write (Get-CvText -Key 'setup.cab.estado') (Get-CvSetupStatusText -Context $vivo.Ctx -CfgPath $CfgPath -IsAlt $IsAlt)
     # Tema de la SESION (lo fija el lanzador con lo que diga la config, y lo cambia el boton
     # "Tema" de la cola): asi una ventana que se abre DESPUES de cambiarlo sale ya con el nuevo.
     [void](Set-CvGuiTheme -Form $form)

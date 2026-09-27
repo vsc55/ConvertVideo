@@ -2539,6 +2539,72 @@ Set-Content -LiteralPath $cfgLang -Encoding UTF8 -Value '{ "ui": { "language": "
 Assert-Eq 'Config: el idioma del fichero llega al contexto' 'en' "$((New-CvContext -Root $raizRepo -ConfigPath $cfgLang).Language)"
 Remove-Item -LiteralPath $cfgLang -Force -ErrorAction SilentlyContinue
 
+# ------------------------------------------------------------------------------------------------
+# CLAVES QUE SON UNA RUTA: el editor en ventana les pone el boton de buscarla con el explorador.
+Write-Host "`nClaves de configuracion que son rutas" -ForegroundColor Cyan
+
+Assert-Eq 'Ruta: paths/base es una carpeta'        'folder' (Get-CvConfigPathKind -Path 'paths/base')
+Assert-Eq 'Ruta: paths/convertido tambien'         'folder' (Get-CvConfigPathKind -Path 'paths/convertido')
+Assert-Eq 'Ruta: playerExe es un fichero'          'file'   (Get-CvConfigPathKind -Path 'preview/playerExe')
+Assert-Eq 'Ruta: una clave normal no es ruta'      ''       (Get-CvConfigPathKind -Path 'encode/video/crf')
+Assert-Eq 'Ruta: una clave que no existe tampoco'  ''       (Get-CvConfigPathKind -Path 'no/existe')
+# Una clave mal escrita en el catalogo no daria error: simplemente NO saldria el boton, y eso no se
+# ve hasta que alguien lo echa de menos. Asi que se comprueba que las cinco existen de verdad.
+$faltan = @()
+foreach ($k in (Get-CvConfigPathKeys).Keys) {
+    if ($null -eq (Get-CvConfigDefaultValue $k)) { $faltan += $k }
+}
+Assert-Eq 'Ruta: todas las claves del catalogo existen en la configuracion' '' (($faltan | Sort-Object) -join ', ')
+Assert-True 'Ruta: y todas son de un tipo conocido' (@((Get-CvConfigPathKeys).Values | Where-Object { @('folder', 'file') -notcontains "$_" }).Count -eq 0)
+
+# ------------------------------------------------------------------------------------------------
+# CARPETAS DE TRABAJO: la casa comun (paths.base) y cada carpeta por su cuenta.
+Write-Host "`nCarpetas de trabajo (paths)" -ForegroundColor Cyan
+
+# La base: vacia = la carpeta del programa (como ha funcionado siempre).
+Assert-Eq 'Base: vacia es la carpeta del programa' 'D:\prog' (Resolve-CvPathBase -Root 'D:\prog' -Base '')
+Assert-Eq 'Base: absoluta se usa tal cual'         'E:\Media' (Resolve-CvPathBase -Root 'D:\prog' -Base 'E:\Media')
+Assert-Eq 'Base: de red tambien'                   '\\nas\video' (Resolve-CvPathBase -Root 'D:\prog' -Base '\\nas\video')
+Assert-Eq 'Base: relativa cuelga del programa'     'D:\prog\trabajo' (Resolve-CvPathBase -Root 'D:\prog' -Base 'trabajo')
+
+# Cada carpeta, contra esa base.
+Assert-Eq 'Carpeta: vacia cuelga de la base'       'E:\Media\Original' (Resolve-CvPath 'E:\Media' '' 'Original')
+Assert-Eq 'Carpeta: relativa, tambien'             'E:\Media\entrada'  (Resolve-CvPath 'E:\Media' 'entrada' 'Original')
+# Una absoluta manda sobre la base: sacar UNA carpeta a otro disco no mueve las demas.
+Assert-Eq 'Carpeta: absoluta manda sobre la base'  'F:\in' (Resolve-CvPath 'E:\Media' 'F:\in' 'Original')
+
+# Y de punta a punta, con un config de verdad: base + una carpeta sacada aparte.
+$tmpBase = Join-Path ([IO.Path]::GetTempPath()) ("cvbase-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+$tmpOut  = Join-Path ([IO.Path]::GetTempPath()) ("cvout-"  + [guid]::NewGuid().ToString('N').Substring(0, 8))
+$cfgPath = Join-Path ([IO.Path]::GetTempPath()) ("cvpathcfg-" + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.json')
+# El JSON se arma con ConvertTo-Json y no a mano: escapar las barras de una ruta de Windows en
+# una cadena es justo donde se cuela un nivel de mas (paso: llegaban con las barras dobles).
+$json = @{
+    paths = @{
+        base       = $tmpBase
+        convertido = $tmpOut
+    }
+} | ConvertTo-Json -Depth 5
+Set-Content -LiteralPath $cfgPath -Encoding UTF8 -Value $json
+$ctxP = New-CvContext -Root $raizRepo -ConfigPath $cfgPath
+Assert-Eq 'Contexto: la base llega del config'        $tmpBase "$($ctxP.Base)"
+Assert-Eq 'Contexto: Original cuelga de la base'      (Join-Path $tmpBase 'Original') "$($ctxP.Original)"
+Assert-Eq 'Contexto: Proceso tambien'                 (Join-Path $tmpBase 'Proceso')  "$($ctxP.Proceso)"
+Assert-Eq 'Contexto: y los logs'                      (Join-Path $tmpBase 'logs')     "$($ctxP.Logs)"
+Assert-Eq 'Contexto: la sacada aparte se respeta'     $tmpOut "$($ctxP.Convertido)"
+# Y sin nada puesto, todo sigue junto al programa: es lo que no puede cambiar. Con un config VACIO
+# a proposito y no con el del repo: ese es de quien desarrolla (esta en .gitignore) y puede tener
+# sus propias carpetas puestas, con lo que este caso fallaria sin que nada estuviera roto (paso).
+$cfgVacio = Join-Path ([IO.Path]::GetTempPath()) ("cvpathvacio-" + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.json')
+Set-Content -LiteralPath $cfgVacio -Encoding UTF8 -Value '{ }'
+$ctxD = New-CvContext -Root $raizRepo -ConfigPath $cfgVacio
+Assert-Eq 'Contexto: sin paths, Original junto al programa' (Join-Path $raizRepo 'Original') "$($ctxD.Original)"
+Assert-Eq 'Contexto: sin paths, la base es el programa'     $raizRepo "$($ctxD.Base)"
+Remove-Item -LiteralPath $cfgVacio -Force -ErrorAction SilentlyContinue
+foreach ($d in @($tmpBase, $tmpOut)) { Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue }
+Remove-Item -LiteralPath $cfgPath -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $cfgLang -Force -ErrorAction SilentlyContinue
+
 Assert-Eq   'Config: el idioma de partida es auto' 'auto' "$((Get-CvConfigDefaults).ui.language)"
 # El catalogo de idiomas NO esta escrito a mano: sale de los ficheros de lang\, y el nombre de
 # cada uno lo da SU PROPIO fichero. Asi anadir un idioma es soltar un .json; si el nombre lo diera

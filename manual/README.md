@@ -14,7 +14,9 @@ Esto es el "qué veo y qué hago". Si lo que buscas es **cómo funciona por dent
 
 El resultado aparece en **`Convertido\`** como `<nombre>_fix.mkv`. Todo lo demás de este manual es para cuando ese camino corto no basta: elegir pistas, recortar bandas negras, corregir la sincronía del audio, repartir el trabajo entre varios workers o averiguar por qué un archivo se ha quedado a medias.
 
-![La cola de conversión](img/cola.png)
+![De Original\ a Convertido\, sin tocar nada más](img/uso.gif)
+
+*De tres archivos recién dejados en `Original\` a los tres convertidos, tal cual: la grabación es una sesión de verdad.*
 
 ## Índice
 
@@ -32,7 +34,10 @@ Las imágenes de `manual\img\` **no se hacen a mano**: las genera [`generar-capt
 ```powershell
 powershell -ExecutionPolicy Bypass -Sta -File manual\generar-capturas.ps1
 powershell -ExecutionPolicy Bypass -Sta -File manual\generar-capturas.ps1 -Only cola,setup
+powershell -ExecutionPolicy Bypass -Sta -File manual\generar-capturas.ps1 -Only gif
 ```
+
+El **GIF** (`-Only gif`, que hay que pedir a mano y no entra en la tanda normal) no es un montaje: graba una sesión de verdad —preparar y codificar tres archivos— sobre el mismo root de mentira. Cada escena lleva su rótulo abajo y una **pausa** para que dé tiempo a leerla, y se monta con el ffmpeg de `tools\`.
 
 Los vídeos que salen en ellas son las muestras de `test\` copiadas con nombres inventados (`Serie_1x01`…): en las capturas **no aparece material de nadie**. Al cambiar una ventana, se regenera el grupo que toque en vez de recortar pantallazos sueltos.
 

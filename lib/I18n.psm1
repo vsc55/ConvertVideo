@@ -49,10 +49,28 @@ function Get-CvUiLanguages {
 }
 
 function Get-CvLangDir {
-    <# La carpeta lang\, al lado de lib\. Se puede apuntar a otra (-Dir) para las pruebas. #>
+    <#
+        La carpeta lang\, al lado de lib\. Se puede apuntar a otra (-Dir) para las pruebas.
+
+        Y un caso que parece raro y no lo es: lib\ puede ser un ENLACE. Los roots de prueba y el
+        generador de capturas montan un directorio temporal con una union a lib\ del proyecto, y
+        entonces "al lado de lib" es una carpeta que no existe y el programa se queda SIN TEXTOS:
+        cada mensaje sale como su clave ('vd.run.proc' en la columna Progreso de la cola, visto en
+        un GIF). Si ahi no hay lang\, se mira al lado de la carpeta DE VERDAD a la que apunta.
+    #>
     param([string]$Dir = '')
     if ("$Dir" -ne '') { return $Dir }
-    return (Join-Path (Split-Path -Parent $PSScriptRoot) 'lang')
+    $d = Join-Path (Split-Path -Parent $PSScriptRoot) 'lang'
+    if (Test-Path -LiteralPath $d) { return $d }
+    try {
+        $destino = (Get-Item -LiteralPath $PSScriptRoot -Force).Target
+        $real = $(if ($destino -is [array]) { "$($destino[0])" } else { "$destino" })
+        if ("$real" -ne '') {
+            $d2 = Join-Path (Split-Path -Parent $real) 'lang'
+            if (Test-Path -LiteralPath $d2) { return $d2 }
+        }
+    } catch { }
+    return $d
 }
 
 function Get-CvLangAvailable {

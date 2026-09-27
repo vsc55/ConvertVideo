@@ -766,7 +766,12 @@ function Get-CvConfigDefaults {
             prepareAutoCloseMs = 1200
         }
         # Carpetas de trabajo: vacio = junto al programa; admite ruta absoluta o relativa.
+        # Carpetas de trabajo. 'base' es la casa comun: si se pone, las cuatro cuelgan de ahi en
+        # vez de la carpeta del programa, y cada una se puede sacar aparte igualmente. Vacio todo =
+        # como siempre, junto al programa. Una ruta de carpeta puede ser absoluta (E:\Media\In,
+        # \\servidor\share\in) o relativa; las relativas de las cuatro cuelgan de 'base'.
         paths     = [ordered]@{
+            base       = ''
             original   = ''
             proceso    = ''
             convertido = ''
@@ -1040,6 +1045,7 @@ function Get-CvConfigHelp {
         'gui/queueSplitPercent' = (Get-CvText -Key 'cfg.help.gui.queueSplitPercent')
 
         'paths' = ((Get-CvConfigAdvancedMark) + (Get-CvText -Key 'cfg.help.paths'))
+        'paths/base' = (Get-CvText -Key 'cfg.help.paths.base')
         'paths/original' = (Get-CvText -Key 'cfg.help.paths.original')
         'paths/proceso' = (Get-CvText -Key 'cfg.help.paths.proceso')
         'paths/convertido' = (Get-CvText -Key 'cfg.help.paths.convertido')
@@ -1048,6 +1054,34 @@ function Get-CvConfigHelp {
         'profiles' = ((Get-CvConfigAdvancedMark) + (Get-CvText -Key 'cfg.help.profiles'))
         'defaultProfile' = (Get-CvText -Key 'cfg.help.defaultProfile')
     }
+}
+
+function Get-CvConfigPathKeys {
+    <#
+        Las claves de config.json que son una RUTA, y de que tipo: 'folder' (una carpeta) o 'file'
+        (un ejecutable). Catalogo, como el resto: el editor en VENTANA le pone a esas claves un
+        boton para buscarla con el explorador en vez de tener que escribirla a mano (y acertar).
+
+        Se escriben con el mismo formato que la ayuda ('seccion/clave').
+    #>
+    @{
+        'paths/base'                = 'folder'
+        'paths/original'            = 'folder'
+        'paths/proceso'             = 'folder'
+        'paths/convertido'          = 'folder'
+        'paths/logs'                = 'folder'
+        'preview/playerExe'         = 'file'
+        'preview/subtitleEditorExe' = 'file'
+    }
+}
+
+function Get-CvConfigPathKind {
+    <# PURO. 'folder', 'file' o '' para una clave ('seccion/clave'), segun Get-CvConfigPathKeys. #>
+    param([string]$Path)
+    $mapa = Get-CvConfigPathKeys
+    $k = "$Path".Trim('/')
+    if ($mapa.ContainsKey($k)) { return "$($mapa[$k])" }
+    return ''
 }
 
 function Get-CvHelpFor {

@@ -56,17 +56,36 @@ function Get-CvWorkDirs {
     @($Context.Original, $Context.Proceso, $Context.Convertido, $Context.Tools, $Context.Logs)
 }
 
+function Resolve-CvPathBase {
+    <#
+        PURO. La CASA COMUN de las carpetas de trabajo (config 'paths.base'):
+        - vacio          -> la carpeta del programa ($Root), que es como ha funcionado siempre.
+        - ruta absoluta  -> se usa tal cual (otro disco, un share de red...).
+        - ruta relativa  -> relativa a la carpeta del programa.
+
+        De aqui cuelgan Original\, Proceso\, Convertido\ y logs\ salvo que alguna se saque por su
+        cuenta con su propia clave (Resolve-CvPath). NO afecta a tools\: los binarios son del
+        programa, no del material.
+    #>
+    param([string]$Root, [string]$Base = '')
+    if ([string]::IsNullOrWhiteSpace($Base)) { return $Root }
+    if ([System.IO.Path]::IsPathRooted($Base)) { return $Base }
+    return (Join-Path $Root $Base)
+}
+
 function Resolve-CvPath {
     <#
-        Resuelve una carpeta de trabajo desde config.json (seccion 'paths'):
-        - vacio       -> por defecto en la carpeta del programa ($Root\<DefaultName>).
-        - ruta absoluta (C:\..., D:\..., \\servidor\...) -> se usa tal cual.
-        - ruta relativa -> relativa a $Root.
+        Resuelve UNA carpeta de trabajo desde config.json (seccion 'paths'). -Base es la casa comun
+        ya resuelta (Resolve-CvPathBase), que con 'paths.base' vacio es la carpeta del programa:
+        - vacio       -> por defecto dentro de la base ($Base\<DefaultName>).
+        - ruta absoluta (C:\..., D:\..., \\servidor\...) -> se usa tal cual, se ponga lo que se
+          ponga en 'base': sacar UNA carpeta a otro disco no tiene por que mover las demas.
+        - ruta relativa -> relativa a la base.
     #>
-    param([string]$Root, [string]$Configured, [string]$DefaultName)
-    if ([string]::IsNullOrWhiteSpace($Configured)) { return (Join-Path $Root $DefaultName) }
+    param([string]$Base, [string]$Configured, [string]$DefaultName)
+    if ([string]::IsNullOrWhiteSpace($Configured)) { return (Join-Path $Base $DefaultName) }
     if ([System.IO.Path]::IsPathRooted($Configured)) { return $Configured }
-    return (Join-Path $Root $Configured)
+    return (Join-Path $Base $Configured)
 }
 
 
@@ -87,6 +106,8 @@ function New-CvContext {
     $plat  = Get-CvPlatform
     $ffSel = "$($cfg.downloads.ffmpeg.selected)"
     $agSel = "$($cfg.downloads.aacgain.selected)"
+    # La casa comun de las carpetas de trabajo, una vez (paths.base).
+    $baseDir = Resolve-CvPathBase -Root $Root -Base "$($cfg.paths.base)"
 
     $ctx = [pscustomobject]@{
         Root           = $Root
@@ -95,10 +116,13 @@ function New-CvContext {
         Version        = Get-CvVersion
         AppName        = Get-CvAppName
         # Carpetas de trabajo (configurables en config.json 'paths'; vacio = junto al programa).
-        Original       = Resolve-CvPath $Root "$($cfg.paths.original)"   'Original'
-        Proceso        = Resolve-CvPath $Root "$($cfg.paths.proceso)"    'Proceso'
-        Convertido     = Resolve-CvPath $Root "$($cfg.paths.convertido)" 'Convertido'
-        Logs           = Resolve-CvPath $Root "$($cfg.paths.logs)"       'logs'
+        # Las cuatro cuelgan de la CASA COMUN (paths.base; vacia = la carpeta del programa, o sea
+        # como ha funcionado siempre), y cada una puede salirse de ahi con su propia clave.
+        Base           = $baseDir
+        Original       = Resolve-CvPath $baseDir "$($cfg.paths.original)"   'Original'
+        Proceso        = Resolve-CvPath $baseDir "$($cfg.paths.proceso)"    'Proceso'
+        Convertido     = Resolve-CvPath $baseDir "$($cfg.paths.convertido)" 'Convertido'
+        Logs           = Resolve-CvPath $baseDir "$($cfg.paths.logs)"       'logs'
         Tools          = Join-Path $Root 'tools'
         # Rutas de herramientas: las rellena New-CvToolContext mas abajo (fuente unica de
         # los nombres de exe), apuntando a la version 'selected'.

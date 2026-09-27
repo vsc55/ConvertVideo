@@ -38,6 +38,7 @@ function Show-CvConfigWindow {
         Path    = ''         # su ruta completa
         Loading = $false     # $true mientras se rellenan los controles (evita marcar Dirty)
         Bold    = $null      # fuente de las claves editadas (se crea al montar el arbol)
+        PickKind = ''        # 'folder'/'file' si la clave elegida es una ruta (ver Get-CvConfigPathKind)
     }
 
     $form = New-Object System.Windows.Forms.Form
@@ -144,11 +145,33 @@ function Show-CvConfigWindow {
     $combo.Visible = $false
     $valBox.Controls.Add($combo)
 
+    # El campo de texto va con un boton al lado -'...'- para las claves que son una RUTA: se sigue
+    # pudiendo escribir a mano, pero no hace falta acertar tecleando. Los dos en una rejilla, que es
+    # la unica forma de que el reparto no dependa del orden en que se anaden (Dock 'Fill' + 'Right').
+    $rowText = New-Object System.Windows.Forms.TableLayoutPanel
+    $rowText.Dock        = 'Top'
+    $rowText.Height      = 24
+    $rowText.ColumnCount = 2
+    $rowText.RowCount    = 1
+    $rowText.Margin      = New-Object System.Windows.Forms.Padding(0)
+    [void]$rowText.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 100)))
+    [void]$rowText.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Absolute, 38)))
+    [void]$rowText.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 100)))
+    $rowText.Visible = $false
+    $valBox.Controls.Add($rowText)
+
     $text = New-Object System.Windows.Forms.TextBox
-    $text.Dock    = 'Top'
+    $text.Dock    = 'Fill'
     $text.Name    = 'cvText'
-    $text.Visible = $false
-    $valBox.Controls.Add($text)
+    $rowText.Controls.Add($text, 0, 0)
+
+    $btnPick = New-Object System.Windows.Forms.Button
+    $btnPick.Text    = (Get-CvText -Key 'cfg.btn.examinar')
+    $btnPick.Dock    = 'Fill'
+    $btnPick.Margin  = New-Object System.Windows.Forms.Padding(4, 0, 0, 0)
+    $btnPick.Name    = 'cvPick'
+    $btnPick.Visible = $false
+    $rowText.Controls.Add($btnPick, 1, 0)
 
     $list = New-Object System.Windows.Forms.TextBox
     $list.Dock       = 'Fill'
@@ -269,7 +292,7 @@ function Show-CvConfigWindow {
             $node = $tree.SelectedNode
             $st.Node = $node
             $st.Path = if ($node) { "$($node.Tag)" } else { '' }
-            $combo.Visible = $false; $text.Visible = $false; $list.Visible = $false
+            $combo.Visible = $false; $rowText.Visible = $false; $list.Visible = $false
             $right.RowStyles[2].Height = 0      # sin control de valor (seccion): sin hueco muerto
             $btnDef.Enabled = $false
             $lblKey.Text = if ($st.Path) { $st.Path } else { (Get-CvText -Key 'cfg.elige') }
@@ -334,10 +357,29 @@ function Show-CvConfigWindow {
                 return
             }
             $text.Text = "$val"
-            $text.Visible = $true
+            # Si la clave es una RUTA, sale el boton de buscarla (carpeta o fichero, segun el
+            # catalogo Get-CvConfigPathKeys).
+            $st.PickKind = Get-CvConfigPathKind -Path "$($st.Path)"
+            $btnPick.Visible = ("$($st.PickKind)" -ne '')
+            $rowText.Visible = $true
         } finally {
             $st.Loading = $false
         }
+    })
+
+    # Buscar la ruta con el explorador. Lo elegido se escribe en el campo, y de ahi sigue el
+    # camino de siempre (TextChanged -> se apunta el cambio), asi que no hay una segunda forma de
+    # guardar un valor.
+    $btnPick.Add_Click({
+        $act = "$($text.Text)".Trim()
+        $eleg = ''
+        if ("$($st.PickKind)" -eq 'folder') {
+            $eleg = Show-CvGuiFolderPicker -Initial $act -Title (Get-CvText -Key 'cfg.pick.carpeta' -Values @("$($st.Path)"))
+        } else {
+            $eleg = Show-CvGuiFilePicker -Initial $act -Title (Get-CvText -Key 'cfg.pick.fichero' -Values @("$($st.Path)")) `
+                -Filter (Get-CvText -Key 'cfg.pick.filtro')
+        }
+        if ("$eleg" -ne '') { $text.Text = "$eleg" }
     })
 
     # --- aplicar cambios de cada control ---

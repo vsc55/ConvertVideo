@@ -362,16 +362,31 @@ Lo que `console` es para el modo consola, pero para `Convert-gui` / `setup-gui`.
 
 ## `paths` — carpetas de trabajo
 
-Permite ubicar las carpetas fuera de la carpeta del programa. Cada valor admite **ruta absoluta** (`E:\Media\Original`, `\\servidor\share\in`) o **relativa** al programa; **vacío** = por defecto junto al programa. La carpeta se crea sola si no existe.
+Permite sacar las carpetas de trabajo fuera de la carpeta del programa. Hay **dos niveles**, y con todo vacío se comporta **como siempre** (las cuatro junto al programa):
+
+1. **`base`** — la casa común: si la pones, las cuatro cuelgan de ahí.
+2. **Cada carpeta** — se puede sacar aparte con su propia clave, esté puesta `base` o no.
+
+Cualquiera de las cinco admite **ruta absoluta** (`E:\Media`, `\\servidor\share\video`) o **relativa**; las relativas de las cuatro carpetas cuelgan de `base` (y `base` relativa cuelga del programa). Una carpeta con ruta **absoluta manda sobre `base`**: sacar *una* a otro disco no arrastra a las demás. Las carpetas se crean solas si no existen.
 
 | Clave | Vacío (por defecto) | Uso |
 |---|---|---|
-| `original` | `<programa>\Original` | Vídeos de entrada. |
-| `proceso` | `<programa>\Proceso` | Jobs, lock y temporales. |
-| `convertido` | `<programa>\Convertido` | Salida. |
-| `logs` | `<programa>\logs` | Transcript de las ejecuciones. |
+| `base` | `<programa>` | Casa común de las cuatro de abajo. |
+| `original` | `<base>\Original` | Vídeos de entrada. |
+| `proceso` | `<base>\Proceso` | Jobs, lock y temporales. |
+| `convertido` | `<base>\Convertido` | Salida. |
+| `logs` | `<base>\logs` | Transcript de las ejecuciones. |
 
-> La carpeta `tools\` (binarios) no es configurable: siempre va junto al programa.
+```json
+"paths": {
+  "base": "E:\\Media\\ConvertVideo",
+  "convertido": "\\\\nas\\peliculas\\listo"
+}
+```
+
+Con eso, la entrada, los temporales y los logs viven en `E:\Media\ConvertVideo\…` y **solo** la salida va al NAS. Como el `.job.json` guarda la ruta del archivo, mover las carpetas con trabajo a medias no es buena idea: termina o limpia la cola antes.
+
+> Dos cosas **no** siguen a `paths`: la carpeta `tools\` (los binarios son del programa, no del material) y `<config>.gui.json` (el estado de las ventanas y la caché), que va **junto al config en uso** (ver [`gui`](#gui--apariencia-de-las-ventanas)). Y ojo con el reparto entre varios equipos: si `base` apunta a un share de red compartido, cada máquina verá la misma cola y el **lock atómico** de `Proceso\` es justo lo que evita que dos workers cojan el mismo archivo.
 
 ## `profiles` — perfiles de codificación propios
 

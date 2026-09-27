@@ -77,8 +77,8 @@ function Show-CvJobWindow {
     $form = New-Object System.Windows.Forms.Form
     $form.Text          = (Get-CvText -Key 'job.tit' -Values @($Name))
     $form.StartPosition = 'CenterParent'
-    $form.Size          = New-Object System.Drawing.Size(1000, 856)
-    $form.MinimumSize   = New-Object System.Drawing.Size(820, 676)
+    $form.Size          = New-Object System.Drawing.Size(1000, 880)
+    $form.MinimumSize   = New-Object System.Drawing.Size(820, 700)
 
     $grid = New-Object System.Windows.Forms.TableLayoutPanel
     $grid.Dock        = 'Fill'
@@ -86,7 +86,7 @@ function Show-CvJobWindow {
     $grid.ColumnCount = 1
     $grid.RowCount    = 7
     [void]$grid.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 100)))
-    [void]$grid.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute, 44)))   # estado / motivos
+    [void]$grid.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute, 68)))   # estado / motivos
     [void]$grid.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute, 36)))   # perfil
     [void]$grid.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute, 192)))  # video
     [void]$grid.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 50)))    # audio
@@ -101,16 +101,25 @@ function Show-CvJobWindow {
     $head.ColumnCount = 1
     $head.RowCount    = 2
     [void]$head.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 100)))
-    [void]$head.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute, 22)))
+    # 46 y no 22: aqui van los MOTIVOS por los que se ha parado a preguntar, que son frases largas
+    # y ocupan dos lineas. Con una sola linea de alto el texto se partia igual -una Label ajusta
+    # sola- y se veia CORTADO por arriba, con medias letras.
+    [void]$head.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute, 46)))
     [void]$head.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute, 14)))
     $grid.Controls.Add($head, 0, 0)
 
     $lblHead = New-Object System.Windows.Forms.Label
     $lblHead.Dock      = 'Fill'
-    $lblHead.TextAlign = 'MiddleLeft'
+    # Arriba a la izquierda y no centrado: con dos lineas, centrar deja la primera a medias. Y con
+    # AutoEllipsis, un motivo larguisimo acaba en '...' en vez de cortarse a mitad de letra (el
+    # texto entero se puede leer en la ayuda emergente, ver mas abajo).
+    $lblHead.TextAlign    = 'TopLeft'
+    $lblHead.AutoEllipsis = $true
     $lblHead.Name      = 'cvJobHead'
     $lblHead.Text      = (Get-CvText -Key 'job.analizando' -Values @($Name))
     $head.Controls.Add($lblHead, 0, 0)
+    $tipHead = New-Object System.Windows.Forms.ToolTip
+    $tipHead.AutoPopDelay = 20000
 
     # Barra PINTADA (New-CvGuiProgressPanel) y no la del sistema: esa la dibuja Windows e ignora los
     # colores, asi que en modo oscuro se queda como una franja clara. Esta se mueve sola (-Marquee)
@@ -1016,8 +1025,11 @@ function Show-CvJobWindow {
             $bar.Visible = $false
             $rs = @($Reasons)
             if ($rs.Count -gt 0) {
-                $lblHead.ForeColor = [System.Drawing.Color]::DarkBlue
+                # Por ROL y no con un color a pelo: DarkBlue sobre el fondo oscuro no se lee.
+                [void](Set-CvGuiRole -Control $lblHead -Role 'warn')
                 $lblHead.Text = (Get-CvText -Key 'job.revisa' -Values @(($rs -join '  |  ')))
+                # Y entero en la ayuda emergente, uno por linea: en la cabecera caben dos lineas.
+                $tipHead.SetToolTip($lblHead, ($rs -join [Environment]::NewLine))
             } else {
                 $lblHead.Text = (Get-CvText -Key 'job.preparando' -Values @($Name))
             }

@@ -68,6 +68,11 @@ try {
     $cfg['behavior']['separateWindow'] = $false
     $cfg['behavior']['progress']       = $false
     $cfg['behavior']['log']            = $false
+    # Y las CARPETAS DE TRABAJO, siempre bajo el root aislado. Sin esto se heredan las del config
+    # del usuario ('paths.base' o cualquiera de las cuatro) y la bateria escribe en SU material:
+    # paso de verdad -una corrida dejo las fixtures y sus salidas en la carpeta buena-. Las claves
+    # salen de los defaults para que una nueva no se quede fuera por olvido.
+    foreach ($kPath in @((Get-CvConfigDefaults).paths.Keys)) { $cfg['paths'][$kPath] = '' }
     Save-CvConfigFile -Path (Join-Path $tempRoot 'config.json') -Config $cfg
     $ctx = New-CvContext -Root $tempRoot
     New-Item -ItemType Directory -Force -Path $ctx.Original, $ctx.Proceso, $ctx.Convertido | Out-Null

@@ -12,7 +12,12 @@
 
     Uso:  powershell -ExecutionPolicy Bypass -Sta -File manual\generar-capturas.ps1
           ...  -Only cola,job        (solo esos grupos: cola, job, preparar, setup)
+          ...  -Only gif             (el GIF de uso; ver abajo)
           ...  -Out C:\otra\carpeta  (por defecto manual\img)
+
+    El grupo 'gif' NO entra en la tanda normal y hay que pedirlo: no retrata, GRABA una sesion de
+    verdad (preparar + codificar tres archivos) y eso tarda minutos y gasta CPU. Sale
+    manual\img\uso.gif, montado con el ffmpeg de tools\.
 
     Las capturas se le piden a CADA VENTANA (PrintWindow), no a la pantalla, asi que salen bien
     aunque se este trabajando en el equipo mientras corren. La UNICA excepcion es la del menu
@@ -110,8 +115,12 @@ New-Item -ItemType Directory -Path $Out -Force | Out-Null
 $script:groups = @(@($Only) | ForEach-Object { "$_" -split ',' } | ForEach-Object { "$_".Trim() } | Where-Object { $_ -ne '' })
 
 function Test-Group {
-    <# Se pide este grupo de capturas? (sin -Only se hacen todos) #>
+    <#
+        Se pide este grupo de capturas? Sin -Only se hacen todos... menos 'gif': ese GRABA una
+        sesion entera (minutos de CPU codificando de verdad), asi que hay que pedirlo por su nombre.
+    #>
     param([string]$Name)
+    if ($Name -eq 'gif') { return ($script:groups -contains 'gif') }
     return ($script:groups.Count -eq 0 -or $script:groups -contains $Name)
 }
 
@@ -842,6 +851,260 @@ if (Test-Group 'setup') {
     [void](Show-CvSetupConfigChooser -Root $ctx.Root)
     Stop-Flow
 
+    Remove-ShotRoot -Path $ctx.Root
+}
+
+# ================================================================================================
+#  5) GIF de uso: la cola de principio a fin (preparar -> codificar -> hecho)
+# ================================================================================================
+if (Test-Group 'gif') {
+    Write-Host "`nGIF de uso (se graba una sesion DE VERDAD: tarda)" -ForegroundColor Cyan
+    # La ventana de preparar se cierra sola al terminar (gui.prepareAutoClose): asi el guion no
+    # tiene que pelearse con ella mientras esta bloqueado en el clic de 'Preparar pendientes'.
+    $ctx = New-ShotRoot -Gui '"rememberLayout": false, "queueWidth": 1280, "queueHeight": 720, "confirmCloseWithWorkers": false, "prepareAutoClose": true, "prepareAutoCloseMs": 700, "bringToFront": false'
+    foreach ($n in @('Serie_1x01', 'Serie_1x02', 'Serie_1x03')) {
+        # Una fixture que el autodiscover resuelve SOLO: si se para a preguntar, el recorrido abre
+        # el editor del job y el guion se queda bloqueado ahi (paso: tres editores abiertos que
+        # hubo que cerrar a mano). Aun asi, el guion de los fotogramas sabe cerrarlo por si acaso.
+        [void](Add-ShotVideo -Ctx $ctx -Name $n -Fixture 'audio-y-subs-multiidioma.mkv')
+    }
+    # Aqui se CODIFICA de verdad, y los workers son procesos aparte que abren '<root>\Convert.ps1':
+    # el root de demo necesita el script y sus modulos. Sin esto los workers se mueren al nacer y la
+    # lista se queda en 'En cola' para siempre (paso: el GIF salio con la cola parada).
+    Copy-Item -LiteralPath (Join-Path $Root 'Convert.ps1') -Destination (Join-Path $ctx.Root 'Convert.ps1') -Force
+    if (-not (Test-Path -LiteralPath (Join-Path $ctx.Root 'lib'))) {
+        New-Item -ItemType Junction -Path (Join-Path $ctx.Root 'lib') -Target (Join-Path $Root 'lib') | Out-Null
+    }
+
+    $frames = Join-Path ([System.IO.Path]::GetTempPath()) ('cv_gif_' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+    New-Item -ItemType Directory -Path $frames -Force | Out-Null
+    # El LIENZO es fijo y con sitio de sobra: todos los fotogramas tienen que medir lo mismo, y una
+    # ventana mas alta que el lienzo saldria CORTADA (paso con el editor del job). Lo que no quepa
+    # se reduce manteniendo la proporcion. Abajo, una franja con el ROTULO de lo que se esta viendo.
+    $gifW   = 1320
+    $gifH   = 920
+    $rotuloH = 54
+    $script:gifN      = 0
+    $script:gifPerf   = $false   # ya se contesto al dialogo del perfil
+    $script:gifTexto  = 'La cola de conversion: tres archivos recien dejados en Original\'
+    $script:gifCada   = 1        # 1 = todos los fotogramas; 3 = uno de cada tres (ver la codificacion)
+    $script:gifTick   = 0
+    $script:gifJobT   = 0        # ticks dentro del editor del job (su escena va por pasos, abajo)
+
+    # Los rotulos van en castellano y a pelo aqui: son texto DEL GIF del manual (que es en
+    # castellano), no de la aplicacion; no pasan por lang\ a proposito.
+    $fuenteRot = New-Object System.Drawing.Font('Segoe UI', 15, [System.Drawing.FontStyle]::Regular)
+    $brochaRot = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(236, 236, 236))
+    $brochaFon = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(32, 32, 32))
+    $brochaBor = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(0, 120, 215))
+
+    function Add-GifFrame {
+        <# Guarda el lienzo como fotograma; -Veces lo repite (asi se PARA el GIF donde hay que leer). #>
+        param($Img, [int]$Veces = 1)
+        if ($null -eq $Img) { return }
+        for ($i = 0; $i -lt [Math]::Max(1, $Veces); $i++) {
+            $script:gifN++
+            $Img.Save((Join-Path $frames ('f_{0:d5}.png' -f $script:gifN)), [System.Drawing.Imaging.ImageFormat]::Png)
+        }
+    }
+    function Wait-Gif {
+        <#
+            Pausa del GIF: repite el ULTIMO fotograma, para que de tiempo a leer lo que hay.
+
+            Se copia el PNG ya escrito en vez de volver a guardar el mismo objeto Bitmap: guardarlo
+            otra vez desde otro temporizador acababa en 'Error generico en GDI+' -y con el error, el
+            guion cerraba la ventana y no habia GIF-. Copiar un fichero no tiene ese problema.
+
+            Y OJO con el nombre del parametro: llamandolo '-Frames' pisaba a $frames -la carpeta de
+            los fotogramas-, porque en PowerShell las variables NO distinguen mayusculas. El
+            Join-Path se hacia contra un numero, Test-Path decia que no, y la pausa se iba EN
+            SILENCIO: el GIF salia sin una sola. Es la trampa apuntada en ref-gotchas.md.
+        #>
+        param([int]$Veces = 16)
+        if ($script:gifN -le 0) { return }
+        $ult = Join-Path $frames ('f_{0:d5}.png' -f $script:gifN)
+        if (-not (Test-Path -LiteralPath $ult)) { return }
+        for ($i = 0; $i -lt $Veces; $i++) {
+            $script:gifN++
+            Copy-Item -LiteralPath $ult -Destination (Join-Path $frames ('f_{0:d5}.png' -f $script:gifN)) -Force
+        }
+        # Se cuenta cada escena: asi se ve de un vistazo si una pausa no ha entrado (paso).
+        Write-Host ("  escena: +{0} fotogramas (total {1})  {2}" -f $Veces, $script:gifN, $script:gifTexto) -ForegroundColor DarkGray
+    }
+
+    # Temporizador APARTE para los fotogramas. Hace falta que sea otro: mientras el guion esta
+    # dentro del clic de 'Preparar pendientes' (que abre una ventana MODAL y no vuelve hasta que se
+    # cierra), su propio tick esta bloqueado; este sigue corriendo y ademas contesta al dialogo del
+    # perfil, que es lo unico que hay que pulsar ahi dentro.
+    $gifTimer = New-Object System.Windows.Forms.Timer
+    $gifTimer.Interval = 250
+    $gifTimer.Add_Tick({
+        try {
+            $f = Get-TopForm
+            if ($null -eq $f) { return }
+            # Si saliera el aviso de "solo los marcados o todos", se contesta TODOS: sin esto la
+            # grabacion se queda parada esperando un clic (paso).
+            if ("$($f.Name)" -eq 'cvStartAsk') {
+                $bAll = @($f.Controls.Find('cvStartAsk_all', $true))
+                if ($bAll.Count -gt 0) { $bAll[0].PerformClick(); return }
+            }
+            $pl = @($f.Controls.Find('cvProfList', $true))
+            if ($pl.Count -gt 0 -and -not $script:gifPerf) {
+                for ($i = 0; $i -lt $pl[0].Items.Count; $i++) {
+                    if ("$($pl[0].Items[$i])" -match 'AUTO-BORDE') { $pl[0].SelectedIndex = $i; break }
+                }
+                $script:gifPerf = $true
+                $f.Controls.Find('cvProfOk', $true)[0].PerformClick()
+                return
+            }
+            # EL EDITOR DEL JOB es una escena con su propio guion: se ensena lo que se puede tocar
+            # a mano y se cierra SIN guardar. Va aqui y no en el guion principal porque, mientras el
+            # editor esta abierto (modal), el tick de aquel esta bloqueado en el clic que lo abrio.
+            # Y de paso sirve de red: si el recorrido de preparar se parase a preguntar, esta misma
+            # cuenta lo acabaria cerrando en vez de dejar la ventana esperando a una persona.
+            if (@($f.Controls.Find('cvJobSave', $true)).Count -gt 0) {
+                $lvA = @($f.Controls.Find('cvJobAudio', $true))
+                if ($lvA.Count -eq 0 -or $lvA[0].Items.Count -eq 0) {
+                    $script:gifTexto = 'Editar job: primero se analiza el archivo (pistas, bordes, sincronia)'
+                } else {
+                    $script:gifJobT++
+                    switch ($script:gifJobT) {
+                        8  { $script:gifTexto = 'El editor del job: video, recorte y escalado, ya propuestos' }
+                        20 {
+                            $lvA[0].Items[0].Selected = $true
+                            $script:gifTexto = 'Audio: que pistas se conservan, su idioma y su retardo'
+                        }
+                        34 {
+                            $lvS = @($f.Controls.Find('cvJobSubs', $true))
+                            if ($lvS.Count -gt 0 -and $lvS[0].Items.Count -gt 0) { $lvS[0].Items[0].Selected = $true }
+                            $script:gifTexto = 'Subtitulos: cuales se conservan, forzados y predeterminado'
+                        }
+                        48 { $script:gifTexto = 'Lo que se decida aqui se congela en su .job.json' }
+                        58 { $f.Controls.Find('cvJobCancel', $true)[0].PerformClick() }
+                    }
+                }
+            }
+
+            # Ritmo: en la parte larga (codificando) no hace falta un fotograma cada 250 ms, y sin
+            # esto esa fase sola dura mas que todo lo demas junto.
+            $script:gifTick++
+            if (($script:gifTick % [Math]::Max(1, $script:gifCada)) -ne 0) { return }
+            $img = Get-WindowBitmap -Form $f
+            if ($null -eq $img) { return }
+            $lienzo = New-Object System.Drawing.Bitmap($gifW, $gifH)
+            $g = [System.Drawing.Graphics]::FromImage($lienzo)
+            $g.Clear([System.Drawing.Color]::FromArgb(58, 58, 58))
+            $g.InterpolationMode = 'HighQualityBicubic'
+            # La ventana, centrada en la zona de arriba; si no cabe, se reduce (nunca se corta).
+            $libreH = $gifH - $rotuloH
+            $esc = [Math]::Min(1.0, [Math]::Min($gifW / [double]$img.Width, $libreH / [double]$img.Height))
+            $w = [int]($img.Width * $esc)
+            $h = [int]($img.Height * $esc)
+            $g.DrawImage($img, [int](($gifW - $w) / 2), [int](($libreH - $h) / 2), $w, $h)
+            $img.Dispose()
+            # La franja del rotulo, con su filo de color y el texto de lo que se esta viendo.
+            $g.FillRectangle($brochaFon, 0, ($gifH - $rotuloH), $gifW, $rotuloH)
+            $g.FillRectangle($brochaBor, 0, ($gifH - $rotuloH), $gifW, 3)
+            $g.DrawString("$($script:gifTexto)", $fuenteRot, $brochaRot, 24, ($gifH - $rotuloH + 14))
+            $g.Dispose()
+            Add-GifFrame -Img $lienzo
+            $lienzo.Dispose()
+        } catch { }
+    })
+
+    # Plazo corto a proposito: si algo se tuerce, la ventana se cierra sola y no se queda ahi
+    # esperando a que la cierre quien estuviera trabajando en el equipo (paso, con 900 s).
+    Start-Flow -Seconds 300 -Body {
+        $f = @([System.Windows.Forms.Application]::OpenForms | Where-Object { $_.Controls.Find('cvQueue', $true).Count -gt 0 }) | Select-Object -First 1
+        if ($null -eq $f) { Wait-Step; return }
+        $lv = $f.Controls.Find('cvQueue', $true)[0]
+        if ($lv.Items.Count -lt 3) { Wait-Step -Max 400; return }
+        switch ($script:step) {
+            0 {
+                # Que se VEA la lista antes de tocar nada: era lo que mas fallaba del primer intento.
+                # Ojo: en los primeros ticks aun no hay NINGUN fotograma que repetir (el otro
+                # temporizador todavia no ha capturado), y la pausa se perdia entera.
+                if ($script:gifN -le 0) { return }
+                Wait-Gif -Veces 18
+                $script:step = 1
+            }
+            1 {
+                $script:gifTexto = 'Preparar pendientes: decide por ti y solo se para donde lo haria la consola'
+                Wait-Gif -Veces 12
+                $f.Controls.Find('cvPrepareAll', $true)[0].PerformClick()   # bloquea hasta que acabe
+                $script:step = 2
+            }
+            2 {
+                $script:gifTexto = 'Listos: cada archivo con su job congelado, en cola'
+                Wait-Gif -Veces 18
+                $script:step = 3
+            }
+            3 {
+                # Antes de arrancar: abrir el editor de UNO a mano, que es lo que no se veia.
+                $script:gifTexto = 'Y si quieres decidir tu: marca un archivo y Editar job'
+                $lv.Items[0].Selected = $true
+                Wait-Gif -Veces 12
+                $f.Controls.Find('cvPrepareGui', $true)[0].PerformClick()   # modal: bloquea aqui
+                $script:step = 31
+                return
+            }
+            31 {
+                $script:gifTexto = 'Sin guardar: el job se queda como lo dejo el recorrido'
+                Wait-Gif -Veces 12
+                $script:step = 32
+                return
+            }
+            32 {
+                # Sin marcas: con una fila marcada, 'Iniciar' pregunta si van solo esas (y con
+                # razon), pero aqui esa pregunta corta la grabacion.
+                foreach ($it in @($lv.Items)) { $it.Selected = $false }
+                $script:gifTexto = 'Iniciar: los workers son procesos aparte y van a lo suyo'
+                Wait-Gif -Veces 10
+                $f.Controls.Find('cvStart', $true)[0].PerformClick()
+                $script:gifTexto = 'Codificando: paso, porcentaje, velocidad y ETA en vivo'
+                $script:gifCada  = 5
+                $script:step = 4
+            }
+            4 {
+                $hechos = @($lv.Items | Where-Object { "$($_.SubItems[2].Text)" -match 'Hecho' }).Count
+                $script:waits++
+                if ($hechos -ge 3 -or $script:waits -gt 400) { $script:step = 5 }
+                return
+            }
+            5 {
+                $script:gifCada  = 1
+                $script:gifTexto = 'Hecho: cada salida en Convertido\, con lo que ha adelgazado'
+                Wait-Gif -Veces 24
+                $script:step = 6
+            }
+            default { $shotTimer.Stop(); $f.Close() }
+        }
+    }
+    $gifTimer.Start()
+    [void](Show-CvConvertWindow -Context $ctx -Root $ctx.Root -CfgPath $script:shotCfg -CfgName 'config.json' -CurrentLog '')
+    $gifTimer.Stop()
+    Stop-Flow
+    foreach ($o in @($fuenteRot, $brochaRot, $brochaFon, $brochaBor)) { try { $o.Dispose() } catch { } }
+
+    # Y a GIF con el ffmpeg de tools\: palette propia (los 256 colores por defecto destrozan el
+    # texto de una ventana) y a 8 fps, que es lo que hace que se pueda leer lo que pasa.
+    $gifOut = Join-Path $Out 'uso.gif'
+    if ($script:gifN -lt 10) {
+        Write-Host "  [ERROR] no se han grabado fotogramas suficientes ($script:gifN)" -ForegroundColor Red
+    } else {
+        $filtro = 'fps=6,scale=900:-1:flags=lanczos,split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle'
+        # $args NO: es variable automatica de PowerShell y aqui dentro es otra cosa.
+        $ffArgs = @('-y', '-loglevel', 'error', '-framerate', '6', '-i', (Join-Path $frames 'f_%05d.png'),
+                    '-filter_complex', $filtro, '-loop', '0', $gifOut)
+        & "$($ctx.FFmpeg)" @ffArgs
+        if (Test-Path -LiteralPath $gifOut) {
+            $mb = [math]::Round((Get-Item -LiteralPath $gifOut).Length / 1MB, 2)
+            Write-Host ("  [GIF]  {0}  ({1} fotogramas, {2} MB)" -f $gifOut, $script:gifN, $mb) -ForegroundColor Green
+        } else {
+            Write-Host '  [ERROR] ffmpeg no genero el GIF' -ForegroundColor Red
+        }
+    }
+    Remove-Item -Recurse -Force -LiteralPath $frames -ErrorAction SilentlyContinue
     Remove-ShotRoot -Path $ctx.Root
 }
 

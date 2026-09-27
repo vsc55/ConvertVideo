@@ -237,11 +237,11 @@ function Resolve-CvCropAutoDecision {
     )
     $g = @($Groups)
     if ($g.Count -eq 0) {
-        return @{ Decision = 'none'; Crop = ''; Reason = 'Sin bordes detectados: no se recorta' }
+        return @{ Decision = 'none'; Crop = ''; Reason = (Get-CvText -Key 'vd.crop.sinbordes') }
     }
     $crop = Merge-CvCropBoxes -Boxes @($g | ForEach-Object { "$($_.Crop)" }) -Width $Width -Height $Height -MinPct $MinCropPct
     if ("$crop" -eq '') {
-        return @{ Decision = 'none'; Crop = ''; Reason = 'Sin barras (lo detectado es ruido de borde): no se recorta' }
+        return @{ Decision = 'none'; Crop = ''; Reason = (Get-CvText -Key 'vd.crop.ruido') }
     }
     $q  = "$crop" -split ':'
     $cw = [int]$q[0]; $chh = [int]$q[1]

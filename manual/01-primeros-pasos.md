@@ -17,6 +17,8 @@
 | **`Convertido\`** | El resultado: `<nombre>_fix.mkv`. |
 | **`logs\`** | Un log por sesión. |
 
+**No tienen por qué estar junto al programa.** En la configuración, `paths` → **`base`** las mueve las cuatro de golpe (a otro disco, a un share de red…), y cada una puede además sacarse por su cuenta —por ejemplo, dejar la entrada y los temporales en un SSD local y mandar solo lo **convertido** al NAS—. Con `paths` vacío, todo sigue como está aquí arriba. Detalle en [ref-configuracion.md](../docs/ref-configuracion.md#paths--carpetas-de-trabajo).
+
 ## Qué lanzador abrir
 
 | Lanzador | Cuándo |
@@ -55,9 +57,8 @@ Dos detalles de Windows que no dependen del programa: en modo claro la **barra d
 
 | Grupo | Para qué |
 |---|---|
+| **Estado y compatibilidad** | Lo de la captura, y por eso va primero: versión, qué config se está usando, **las carpetas de trabajo con su ruta entera** (importa: pueden estar en cualquier sitio, ver [las carpetas](#las-carpetas)), las herramientas instaladas, qué hay en `Proceso\` y cuántos vídeos hay a la entrada y a la salida. Aquí mismo está *Comprobar compatibilidad GPU*, que prueba NVENC en las versiones de FFmpeg que tengas instaladas, sin reinstalar nada: dice qué códecs por GPU traga tu tarjeta de verdad. |
 | **Herramientas** | Instalar o cambiar de versión de FFmpeg, aacgain, MKVToolNix y 7zr. |
-| **Estado** | Lo de la captura: versión, qué config se está usando, carpetas, herramientas instaladas, qué hay en `Proceso\` y cuántos vídeos hay a la entrada y a la salida. |
-| **Compatibilidad** | Prueba NVENC en las versiones de FFmpeg que tengas instaladas, sin reinstalar nada: dice qué códecs por GPU traga tu tarjeta de verdad. |
 | **Pruebas** | Las baterías de test del proyecto. Cada una se abre en su propia consola. |
 | **Configuración** | El editor de `config.json` (abajo), tus **perfiles propios** ([página 2](02-preparar.md#tus-propios-perfiles)) y *Restablecer* (deja una copia `.bak`). |
 | **Limpieza** | Borrar jobs, bloqueos y temporales de `Proceso\`. |
