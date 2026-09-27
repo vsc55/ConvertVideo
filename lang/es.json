@@ -548,6 +548,8 @@
   "cola.acc.start.1": "Codificar solo este",
   "cola.acc.start.n": "Codificar solo estos {0}",
   "cola.amedias": "{0} a medias: borra la salida para rehacerlo",
+  "cola.atajo.seguro": "¿Seguro que quieres «{0}»? Lo has pedido con el teclado.",
+  "cola.atajo.tip": "{0} ({1})",
   "cola.btn.cancelar": "Cancelar ahora",
   "cola.btn.convertido": "Convertido",
   "cola.btn.editar": "Editar job",

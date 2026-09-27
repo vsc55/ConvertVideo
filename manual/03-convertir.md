@@ -121,6 +121,26 @@ La línea con los puntitos que separa la lista de las pestañas **se arrastra**:
 
 ¿Cuántos workers? Cada uno es un proceso aparte con su propio ffmpeg, y todos comparten la misma GPU y el mismo disco, así que subir el número no multiplica la velocidad: a partir de cierto punto solo se estorban. Lo sensato es probar con dos y mirar la velocidad (`1.8x` y compañía) en la columna de progreso antes de subir más.
 
+## Atajos de teclado
+
+| Tecla | Qué hace |
+|---|---|
+| **F5** | Actualizar la lista. |
+| **F2** | Lo mismo que el botón *Editar job*: con el archivo **ya preparado** abre su job para retocarlo; si **no** lo está, abre su editor preguntando el perfil (o sea, lo prepara); y con **varias filas marcadas** que tengan job, la **edición en bloque**. Si no hay nada que editar, el botón está apagado y la tecla no hace nada. |
+| **Intro** | Lo mismo que `F2`, cuando el foco está en la lista. |
+| **F6** | Preparar pendientes. |
+| **F9** | Iniciar las conversiones. |
+| **Esc** | Parar (los workers terminan el archivo en curso y no cogen más). **Pregunta antes**: es la tecla que se pulsa sin pensar para cerrar cualquier cosa, y aquí pararía la cola. |
+| **Ctrl+A** | Marcar todas las filas (con el foco en la lista). |
+| **Ctrl+1 / 2 / 3** | Ir a *Resumen del archivo* / *Log* / *Opciones*. |
+| **Ctrl+O** | Abrir la carpeta `Original\`. |
+| **Ctrl+D** | Abrir la carpeta `Convertido\`. |
+| **Ctrl+T** | Cambiar el tema (claro/oscuro). |
+
+Un atajo hace **exactamente lo mismo que su botón**, incluido no hacer nada cuando el botón está apagado: `F9` no arranca nada si ya hay workers, y `Esc` no pregunta si no hay nada que parar. Cada botón lo dice en su ayuda emergente (*Actualizar la lista (F5)*).
+
+Los avisos también se contestan con el teclado: el **primer botón** arranca con el foco (y es el que responde a **Intro**), **Tab** va a los demás y **Esc** cierra sin elegir, que siempre es la opción segura.
+
 ## Cerrar con conversiones en marcha
 
 Cada worker es un **proceso aparte**: cerrar la ventana **no** lo para, seguiría codificando sin nada a la vista. Por eso, si cierras con workers vivos, se pregunta:

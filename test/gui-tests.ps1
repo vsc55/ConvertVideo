@@ -909,6 +909,49 @@ if (-not $sta) {
 }
 
 # ================================================================================================
+# UN AVISO SE CONTESTA CON EL TECLADO. Escape cierra sin elegir (lo prometia la ayuda de
+# Show-CvGuiChoice y no lo hacia nadie: no habia manejador, asi que un aviso abierto con una tecla
+# solo se podia quitar con el raton) y el PRIMER boton arranca con el foco, que es el que contesta
+# a Intro. Se conduce con un temporizador: un modal sin nadie que lo cierre colgaria la bateria.
+Write-Host "`nGui - avisos con el teclado" -ForegroundColor Cyan
+if (-not $sta) {
+    Write-Skip 'Aviso con teclado' 'el host no es STA (usa -Sta)'
+} elseif (-not (Initialize-CvGui)) {
+    Write-Skip 'Aviso con teclado' 'sin entorno grafico'
+} else {
+    $script:dlgAccept = ''
+    $script:dlgFoco   = ''
+    $script:dlgEsperas = 0
+    $tD = New-Object System.Windows.Forms.Timer
+    $tD.Interval = 250
+    $tD.Add_Tick({
+        try {
+            $d = @([System.Windows.Forms.Application]::OpenForms | Where-Object { $_.Name -eq 'cvConfirm' })[0]
+            if ($null -eq $d) {
+                $script:dlgEsperas++
+                if ($script:dlgEsperas -gt 40) { $tD.Stop() }
+                return
+            }
+            $tD.Stop()
+            $script:dlgAccept = "$($d.AcceptButton.Name)"
+            $script:dlgFoco   = "$($d.ActiveControl.Name)"
+            # Escape DE VERDAD sobre el dialogo (OnKeyDown es protegido: reflexion).
+            $ka = New-Object object[] 1
+            $ka[0] = (New-Object System.Windows.Forms.KeyEventArgs([System.Windows.Forms.Keys]::Escape)).psobject.BaseObject
+            [void]$d.GetType().GetMethod('OnKeyDown', [System.Reflection.BindingFlags]'Instance, NonPublic').Invoke($d, $ka)
+            [System.Windows.Forms.Application]::DoEvents()
+            if (-not $d.IsDisposed -and $d.Visible) { $d.Close() }   # red de seguridad
+        } catch { $tD.Stop(); try { $d.Close() } catch { } }
+    })
+    $tD.Start()
+    $resp = Show-CvGuiConfirm -Title 'cv-test' -Message 'Prueba de teclado'
+    $tD.Stop()
+    Assert-Eq   'Aviso: Intro contesta lo primero'   'cvConfirm_si' $script:dlgAccept
+    Assert-Eq   'Aviso: y ese boton arranca con el foco' 'cvConfirm_si' $script:dlgFoco
+    Assert-Eq   'Aviso: Escape lo cierra y es que NO'  $false $resp
+}
+
+# ================================================================================================
 # MINIMIZAR AL AREA DE NOTIFICACION (Add-CvGuiTrayIcon), con una ventana de verdad: que al
 # minimizar se esconda y aparezca el icono, que se vuelva desde su menu, que la casilla mande (si
 # esta apagada, minimizar es minimizar de siempre) y que el rotulo se recorte -NotifyIcon.Text

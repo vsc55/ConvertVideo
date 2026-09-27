@@ -548,6 +548,8 @@
   "cola.acc.start.1": "Encode only this one",
   "cola.acc.start.n": "Encode only these {0}",
   "cola.amedias": "{0} half done: delete the output to redo it",
+  "cola.atajo.seguro": "Are you sure you want to \"{0}\"? You asked for it with the keyboard.",
+  "cola.atajo.tip": "{0} ({1})",
   "cola.btn.cancelar": "Cancel now",
   "cola.btn.convertido": "Converted",
   "cola.btn.editar": "Edit job",

@@ -401,6 +401,21 @@ Assert-Eq   'Listado vacio: carpeta vacia de verdad, se vacia' $false (Test-CvQu
 Assert-Eq   'Listado vacio: carpeta que ya no esta, se vacia' $false (Test-CvQueueKeepRows -Rows 0 -Items 23 -DirExists $false -RealFiles 0)
 Assert-Eq   'Listado vacio: si la lista ya estaba vacia, nada' $false (Test-CvQueueKeepRows -Rows 0 -Items 0 -DirExists $true -RealFiles 5)
 Assert-Eq   'Listado con filas: no aplica'                  $false (Test-CvQueueKeepRows -Rows 23 -Items 23 -DirExists $true -RealFiles 23)
+
+# Y con QUE se cuenta: la misma regla del listado, no "cuantos ficheros hay". Contando cualquier
+# cosa, un .srt al lado de los videos hacia creer que el listado mentia y la ultima fila no se
+# borraba nunca: el archivo ya no estaba y su fila seguia en la lista (medido en la ventana).
+$exts = @('*.mkv', '*.mp4')
+Assert-Eq 'Recuento: cuenta los videos'            2 (Get-CvQueueRealCount -Paths @('D:\o\a.mkv', 'D:\o\b.mp4') -Filters $exts)
+Assert-Eq 'Recuento: un .srt al lado no cuenta'    1 (Get-CvQueueRealCount -Paths @('D:\o\a.mkv', 'D:\o\a.srt') -Filters $exts)
+Assert-Eq 'Recuento: solo restos = carpeta vacia'  0 (Get-CvQueueRealCount -Paths @('D:\o\a.srt', 'D:\o\Thumbs.db') -Filters $exts)
+Assert-Eq 'Recuento: sin nada, cero'               0 (Get-CvQueueRealCount -Paths @() -Filters $exts)
+# La trampa 8.3 de Windows ('*.mp4' casa '.mp4v' con -Filter): aqui se compara con -like, que no.
+Assert-Eq 'Recuento: .mp4v no es .mp4'             0 (Get-CvQueueRealCount -Paths @('D:\o\a.mp4v') -Filters $exts)
+# Y el caso entero, que es el que se veia: borrado el ultimo video, queda un .srt -> la lista se vacia.
+Assert-Eq 'Recuento: lo que queda no son videos'   0 (Get-CvQueueRealCount -Paths @('D:\o\Serie_1x01.srt') -Filters $exts)
+Assert-True 'Vaciar: con un .srt suelto, la lista SI se vacia' `
+    (-not (Test-CvQueueKeepRows -Rows 0 -Items 1 -DirExists $true -RealFiles (Get-CvQueueRealCount -Paths @('D:\o\Serie_1x01.srt') -Filters $exts)))
 Assert-Eq   'Progreso: ocupa lo que sobra'       400 (Get-CvQueueProgressWidth -ClientWidth 1100 -OtherWidths 700)
 Assert-Eq   'Progreso: ventana estrecha -> minimo' 220 (Get-CvQueueProgressWidth -ClientWidth 800 -OtherWidths 700)
 Assert-Eq   'Progreso: minimo a medida'          300 (Get-CvQueueProgressWidth -ClientWidth 400 -OtherWidths 700 -Min 300)
@@ -624,6 +639,38 @@ foreach ($par in @(
 
 
 # ================================================================================================
+Write-Host "`nAtajos de teclado de la cola" -ForegroundColor Cyan
+
+$ata = Get-CvQueueShortcuts
+Assert-True 'Atajos: hay catalogo'                    ($ata.Count -ge 4)
+Assert-True 'Atajos: todos con tecla y rotulo'        (@($ata | Where-Object { "$($_.Key)" -eq '' -or "$($_.Label)" -eq '' }).Count -eq 0)
+# Dos atajos con la MISMA combinacion serian una lotería: gana el primero y el otro no existe.
+$combos = @($ata | ForEach-Object { "{0}|{1}" -f $_.Key, [bool]$_.Ctrl })
+Assert-Eq   'Atajos: ninguna combinacion repetida'    $combos.Count @($combos | Sort-Object -Unique).Count
+# Cada entrada hace UNA cosa: pulsar un boton o una accion propia, no las dos ni ninguna.
+Assert-True 'Atajos: cada uno hace una sola cosa'     (@($ata | Where-Object { ("$($_.Button)" -ne '') -eq ("$($_.Action)" -ne '') }).Count -eq 0)
+Assert-True 'Atajos: los botones se llaman cv*'       (@($ata | Where-Object { "$($_.Button)" -ne '' -and -not "$($_.Button)".StartsWith('cv') }).Count -eq 0)
+
+# La resolucion: la tecla sola no es la tecla con Control, y al reves.
+Assert-Eq   'Atajos: F5 es actualizar'                'cvRefresh' "$((Find-CvQueueShortcut -Key 'F5').Button)"
+Assert-Eq   'Atajos: F2 es editar el job'             'cvPrepareGui' "$((Find-CvQueueShortcut -Key 'F2').Button)"
+Assert-Eq   'Atajos: F9 arranca'                      'cvStart' "$((Find-CvQueueShortcut -Key 'F9').Button)"
+Assert-Eq   'Atajos: Esc para'                        'cvStop'  "$((Find-CvQueueShortcut -Key 'Escape').Button)"
+Assert-True 'Atajos: y Esc pregunta antes'            ([bool](Find-CvQueueShortcut -Key 'Escape').Ask)
+Assert-Eq   'Atajos: Ctrl+F5 no es F5'                $null (Find-CvQueueShortcut -Key 'F5' -Ctrl $true)
+Assert-Eq   'Atajos: una tecla cualquiera, nada'      $null (Find-CvQueueShortcut -Key 'F12')
+# Lo que un campo de texto necesita para si solo vale con el foco en la LISTA.
+Assert-Eq   'Atajos: Ctrl+A fuera de la lista, nada'  $null (Find-CvQueueShortcut -Key 'A' -Ctrl $true)
+Assert-Eq   'Atajos: y en la lista, seleccionar todo' 'marcar-todas' "$((Find-CvQueueShortcut -Key 'A' -Ctrl $true -InList $true).Action)"
+# Las pestanas se piden POR NOMBRE, no por numero: 'tab0' no dice a donde va.
+Assert-Eq   'Atajos: Ctrl+2 va a la pestana log'      'log' "$((Find-CvQueueShortcut -Key 'D2' -Ctrl $true).Tab)"
+$pest = @($ata | Where-Object { "$($_.Action)" -eq 'tab' })
+Assert-Eq   'Atajos: tres pestanas con atajo'         3 $pest.Count
+Assert-True 'Atajos: y todas con un nombre conocido'  (@($pest | Where-Object { @('resumen', 'log', 'opciones') -notcontains "$($_.Tab)" }).Count -eq 0)
+Assert-Eq   'Atajos: Intro fuera de la lista, nada'   $null (Find-CvQueueShortcut -Key 'Return')
+
+
+# ================================================================================================
 Write-Host "`nFinal del recorrido de preparar" -ForegroundColor Cyan
 
 # Todo bien: en verde, y si la casilla lo pedia, la ventana se cierra sola.
@@ -799,6 +846,42 @@ if (-not $sta) {
             foreach ($k in 0..($lv.Items.Count - 1)) { $lv.Items[$k].Selected = ($lv.Items[$k].SubItems[2].Text -eq 'En cola') }
             $f.Controls.Find('cvRefresh', $true)[0].PerformClick()
             $script:sumText = "$($sumBox.Text)"
+            # ATAJOS, con la tecla de verdad sobre la ventana (OnKeyDown es protegido: reflexion).
+            # Los botones tienen que existir -si no, el atajo no haría nada- y los que se prueban
+            # aqui son los que NO abren dialogos: uno modal dejaria la bateria esperando un clic.
+            $script:ataFaltan = @()
+            foreach ($a in (Get-CvQueueShortcuts)) {
+                if ("$($a.Button)" -eq '') { continue }
+                if ($f.Controls.Find("$($a.Button)", $true).Count -ne 1) { $script:ataFaltan += "$($a.Button)" }
+            }
+            $onKeyForm = $f.GetType().GetMethod('OnKeyDown', [System.Reflection.BindingFlags]'Instance, NonPublic')
+            $pulsa = {
+                param($Keys)
+                $ka = New-Object object[] 1
+                $ka[0] = (New-Object System.Windows.Forms.KeyEventArgs($Keys)).psobject.BaseObject
+                [void]$onKeyForm.Invoke($f, $ka)
+                [System.Windows.Forms.Application]::DoEvents()
+            }
+            # Ctrl+A con el foco en la lista: se marcan todas.
+            $lv.Focus() | Out-Null
+            $f.ActiveControl = $lv
+            & $pulsa ([System.Windows.Forms.Keys]::A -bor [System.Windows.Forms.Keys]::Control)
+            $script:ataTodas = ($lv.SelectedItems.Count -eq $lv.Items.Count -and $lv.Items.Count -gt 0)
+            # Ctrl+2: a la pestana del log. Y Ctrl+1 para dejarlo como estaba.
+            & $pulsa ([System.Windows.Forms.Keys]::D2 -bor [System.Windows.Forms.Keys]::Control)
+            # La pagina que se ve, reconocida por lo que lleva dentro (su .Text esta vacio: las
+            # pestanas son PROPIAS y el rotulo vive en la tira, no en la pagina).
+            $paginaAhora = Get-CvGuiTabPage -Tabs $f.Controls.Find('cvTabs', $true)[0]
+            $script:ataTabLog = ($null -ne $paginaAhora -and $paginaAhora.Controls.Find('cvLogText', $true).Count -eq 1)
+            & $pulsa ([System.Windows.Forms.Keys]::D1 -bor [System.Windows.Forms.Keys]::Control)
+            # Esc con 'Parar' APAGADO: no hace nada y, sobre todo, NO pregunta -si preguntara,
+            # esta bateria se quedaria colgada esperando un clic en el dialogo-. Se APAGA a mano
+            # para que el caso no dependa de si en ese momento habia workers de mentira.
+            $bStop = $f.Controls.Find('cvStop', $true)[0]
+            $bStop.Enabled = $false
+            & $pulsa ([System.Windows.Forms.Keys]::Escape)
+            $script:ataStopOff = (-not $bStop.Enabled)
+            $script:ataVivo = (-not $f.IsDisposed)
             # Doble bufer: sin el, el refresco de cada segundo hace parpadear la lista. Se comprueba
             # la propiedad de verdad (es protegida, se lee por reflexion) y no solo que se llamara.
             $dbFlags = [System.Reflection.BindingFlags]::Instance -bor [System.Reflection.BindingFlags]::NonPublic
@@ -905,6 +988,11 @@ if (-not $sta) {
     Assert-True 'Ventana: progreso no baja del minimo' ($script:progW -ge 220)
     Assert-Eq   'Ventana: pestanas en orden' 'Resumen del archivo|Log|Opciones' $script:tabNames
     Assert-Eq   'Ventana: arranca en el resumen'  'Resumen del archivo' $script:tabActive
+    Assert-Eq   'Atajos: los botones del catalogo estan en la ventana' '' (@($script:ataFaltan) -join ', ')
+    Assert-True 'Atajos: Ctrl+A marca todas las filas'  $script:ataTodas
+    Assert-True 'Atajos: Ctrl+2 va a la pestana del log' $script:ataTabLog
+    Assert-True 'Atajos: con Parar apagado, Esc no pregunta' $script:ataStopOff
+    Assert-True 'Atajos: y Esc entonces no hace nada'   $script:ataVivo
     Assert-True 'Ventana: ofrece contar las lineas' $script:hasCount
     Assert-True 'Ventana: el divisor se puede arrastrar' $script:splitOk
     Assert-True 'Ventana: el resumen se lleva ~la mitad' ($script:splitFrac -ge 0.35 -and $script:splitFrac -le 0.7)

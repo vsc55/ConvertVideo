@@ -703,14 +703,18 @@ function Show-CvConvertWindow {
         $live    = @($workers | Where-Object { $_.Alive })
         # Un listado de Original\ que sale VACIO teniendo archivos a la vista es casi siempre un
         # tropiezo, no una carpeta vacia (ver Test-CvQueueKeepRows): se mira la carpeta de otra forma
-        # -sin filtros ni FileInfo- y, si sigue habiendo ficheros, se deja la ventana como estaba.
+        # -a lo bruto, sin FileInfo- y, si sigue habiendo VIDEOS, se deja la ventana como estaba.
+        # Ojo con el "videos": contando cualquier fichero, un .srt al lado bastaba para no vaciar
+        # nunca la lista al borrar el ultimo archivo (por eso se cuenta con los mismos filtros).
         if (@($rows).Count -eq 0 -and $lv.Items.Count -gt 0) {
             $existe = $false
             $reales = 0
             try {
                 $dirOrig = "$($Context.Original)"
                 $existe = [System.IO.Directory]::Exists($dirOrig)
-                if ($existe) { $reales = @([System.IO.Directory]::EnumerateFiles($dirOrig)).Count }
+                if ($existe) {
+                    $reales = Get-CvQueueRealCount -Paths ([System.IO.Directory]::EnumerateFiles($dirOrig)) -Filters $Context.Extensions
+                }
             } catch { $existe = $true; $reales = 1 }   # si ni eso se puede mirar, mejor no tocar nada
             if (Test-CvQueueKeepRows -Rows 0 -Items $lv.Items.Count -DirExists $existe -RealFiles $reales) {
                 $st.Vacios++
@@ -1281,6 +1285,66 @@ function Show-CvConvertWindow {
         # se tiran las entradas de archivos que ya no estan (borrados, renombrados o movidos).
         if ([int]$Context.GuiQueueDoneProbe -gt 0) { [void](Save-CvDoneBorderCache -Context $Context) }
     })
+
+    # ---- Atajos de teclado (el catalogo manda: Get-CvQueueShortcuts) ----
+    # KeyPreview: la ventana ve la tecla ANTES que el control que tenga el foco, asi que F5 vale
+    # estes donde estes. Lo que un campo de texto necesita para si (Ctrl+A, Intro) esta marcado en
+    # el catalogo como 'solo en la lista' y ahi no se le roba.
+    $form.KeyPreview = $true
+    $form.Add_KeyDown({
+        param($sender, $e)
+        try {
+            # Con el foco EN LA LISTA: se pregunta al control, no al formulario. Form.ActiveControl
+            # devuelve el contenedor de arriba (aqui el divisor), no el control que de verdad tiene
+            # el foco, asi que comparando con el la lista nunca era "la lista" (medido).
+            $enLista = [bool]$lv.Focused
+            $at = Find-CvQueueShortcut -Key "$($e.KeyCode)" -Ctrl $e.Control -InList $enLista
+            if ($null -eq $at) { return }
+            if ("$($at.Action)" -ne '') {
+                switch ("$($at.Action)") {
+                    'marcar-todas' {
+                        foreach ($it in @($lv.Items)) { $it.Selected = $true }
+                        & $updateSummary $false
+                        & $updateButtons
+                    }
+                    'tab' {
+                        $pagina = switch ("$($at.Tab)") {
+                            'resumen'  { $tabSum }
+                            'log'      { $tabLog }
+                            'opciones' { $tabOpt }
+                            default    { $null }
+                        }
+                        if ($null -eq $pagina) { return }
+                        [void](Select-CvGuiTab -Tabs $tabs -Page $pagina)
+                    }
+                    default { return }
+                }
+                $e.Handled = $true
+                $e.SuppressKeyPress = $true
+                return
+            }
+            $ctl = @($form.Controls.Find("$($at.Button)", $true))
+            if ($ctl.Count -ne 1) { return }
+            # El atajo hace lo MISMO que el boton, incluido no hacer nada si esta apagado.
+            if (-not $ctl[0].Enabled) { return }
+            $e.Handled = $true
+            $e.SuppressKeyPress = $true
+            if ([bool]$at.Ask) {
+                if (-not (Show-CvGuiConfirm -Title "$($ctl[0].Text)" -Message (Get-CvText -Key 'cola.atajo.seguro' -Values @("$($ctl[0].Text)")))) { return }
+            }
+            $ctl[0].PerformClick()
+        } catch { }
+    })
+    # Y que se sepan: cada boton con atajo lo dice en su ayuda emergente.
+    foreach ($at in (Get-CvQueueShortcuts)) {
+        if ("$($at.Button)" -eq '') { continue }
+        $ctl = @($form.Controls.Find("$($at.Button)", $true))
+        if ($ctl.Count -ne 1) { continue }
+        $tipAhora = "$($tipBar.GetToolTip($ctl[0]))"
+        if ($tipAhora -notmatch [regex]::Escape("$($at.Label)")) {
+            $tipBar.SetToolTip($ctl[0], (Get-CvText -Key 'cola.atajo.tip' -Values @($tipAhora, "$($at.Label)")))
+        }
+    }
 
     # Tema de la SESION (lo fija el lanzador con lo que diga la config, y lo cambia el boton
     # "Tema" de la cola): asi una ventana que se abre DESPUES de cambiarlo sale ya con el nuevo.

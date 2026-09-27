@@ -140,6 +140,96 @@ function Test-CvQueueKeepRows {
     return ($RealFiles -gt 0)               # hay ficheros pero el listado no los vio: tropiezo
 }
 
+function Get-CvQueueShortcuts {
+    <#
+        Los ATAJOS de teclado de la ventana de la cola, como DATOS: la ventana solo los engancha.
+        Anadir uno es anadir una fila aqui.
+
+        Cada entrada:
+          Key    - la tecla (nombre de System.Windows.Forms.Keys: 'F5', 'Escape', 'D1'...)
+          Ctrl   - con Control pulsado
+          Label  - como se escribe en la ayuda del boton ('F5', 'Ctrl+A'): NO se traduce, son teclas
+          Button - nombre del boton que se pulsa (el mismo que si lo pulsaras con el raton, asi que
+                   respeta que este APAGADO: un atajo no puede hacer lo que el boton no deja)
+          Action - en vez de un boton, algo propio de la ventana ('marcar-todas', 'tab')
+          Tab    - con Action 'tab', a QUE pestana se va ('resumen', 'log', 'opciones')
+          Ask    - pide confirmacion antes (ver Escape, abajo)
+          List   - solo cuando el foco esta en la LISTA. Para las teclas que significan otra cosa
+                   dentro de un campo de texto: Ctrl+A ahi es "selecciona el texto" e Intro, un
+                   salto de linea; robarselas seria peor que no tener el atajo.
+
+        ESCAPE lleva Ask a proposito. Es la tecla que se pulsa sin pensar para cerrar lo que sea, y
+        aqui pararia la cola: se pregunta antes. Si el boton 'Parar' esta apagado (no hay nada en
+        marcha), la tecla no hace nada y no pregunta.
+    #>
+    $items = @(
+        @{ Key = 'F5';     Label = 'F5';     Button = 'cvRefresh' }
+        @{ Key = 'F2';     Label = 'F2';     Button = 'cvPrepareGui' }
+        @{ Key = 'Return'; Label = 'Intro';  Button = 'cvPrepareGui'; List = $true }
+        @{ Key = 'F6';     Label = 'F6';     Button = 'cvPrepareAll' }
+        @{ Key = 'F9';     Label = 'F9';     Button = 'cvStart' }
+        @{ Key = 'Escape'; Label = 'Esc';    Button = 'cvStop'; Ask = $true }
+        @{ Key = 'T'; Ctrl = $true; Label = 'Ctrl+T'; Button = 'cvTheme' }
+        @{ Key = 'O'; Ctrl = $true; Label = 'Ctrl+O'; Button = 'cvDirOriginal' }
+        @{ Key = 'D'; Ctrl = $true; Label = 'Ctrl+D'; Button = 'cvDirConvertido' }
+        @{ Key = 'A';  Ctrl = $true; Label = 'Ctrl+A'; Action = 'marcar-todas'; List = $true }
+        @{ Key = 'D1'; Ctrl = $true; Label = 'Ctrl+1'; Action = 'tab'; Tab = 'resumen' }
+        @{ Key = 'D2'; Ctrl = $true; Label = 'Ctrl+2'; Action = 'tab'; Tab = 'log' }
+        @{ Key = 'D3'; Ctrl = $true; Label = 'Ctrl+3'; Action = 'tab'; Tab = 'opciones' }
+    )
+    return ,$items
+}
+
+function Find-CvQueueShortcut {
+    <#
+        PURO. El atajo que corresponde a una tecla, o $null. -Key es el nombre de la tecla
+        (KeyEventArgs.KeyCode) y -Ctrl si estaba Control pulsado; -InList, si el foco esta en la
+        lista (las entradas marcadas List solo valen ahi).
+
+        Con Control pulsado NO valen los atajos sin Ctrl, y al reves: si no, F5 y Ctrl+F5 serian lo
+        mismo y Ctrl+D dispararia tambien el atajo de 'D' si algun dia lo hubiera.
+    #>
+    param(
+        [string]$Key = '',
+        [bool]$Ctrl = $false,
+        [bool]$InList = $false,
+        $Items = $null
+    )
+    # Sin @() sobre la llamada: el catalogo devuelve ',$items' y envolverlo lo deja en UN elemento
+    # -el array entero- (ver ref-gotchas.md; van cinco veces).
+    $lista = $(if ($null -ne $Items) { @($Items) } else { Get-CvQueueShortcuts })
+    foreach ($a in $lista) {
+        if ("$($a.Key)" -ne "$Key") { continue }
+        if ([bool]$a.Ctrl -ne $Ctrl) { continue }
+        if ([bool]$a.List -and -not $InList) { continue }
+        return $a
+    }
+    return $null
+}
+
+function Get-CvQueueRealCount {
+    <#
+        PURO. Cuantos de esos ficheros CONTARIA la cola: la misma regla que el listado (-like sobre
+        el nombre contra cada filtro, '*.mkv'), no "cuantos ficheros hay".
+
+        Existe por un caso muy concreto. Cuando el listado de Original\ sale vacio hay que decidir si
+        la carpeta esta vacia de verdad o el disco tropezo (Test-CvQueueKeepRows), y para eso se
+        vuelve a mirar la carpeta a lo bruto. Contando TODO lo que hubiera dentro, un .srt al lado de
+        los videos -o un Thumbs.db- bastaba para creer que el listado mentia: al borrar el ULTIMO
+        archivo, su fila se quedaba en la lista para siempre y la cola no se vaciaba nunca.
+    #>
+    param($Paths = @(), [string[]]$Filters = @('*'))
+    $n = 0
+    foreach ($p in @($Paths)) {
+        $nombre = [System.IO.Path]::GetFileName("$p")
+        if ("$nombre" -eq '') { continue }
+        foreach ($f in @($Filters)) {
+            if ($nombre -like $f) { $n++; break }
+        }
+    }
+    return $n
+}
+
 function Get-CvQueueDoneProbeBudget {
     <#
         PURO. Cuantos archivos ya convertidos se pueden analizar en ESTE refresco para deducirles los

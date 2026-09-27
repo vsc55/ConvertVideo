@@ -755,6 +755,12 @@ function Show-CvGuiChoice {
         que va de tooltip). Devuelve el Value del pulsado, o '' si se cierra con la X o con Escape:
         quien llama decide que significa eso (normalmente, no hacer nada).
 
+        SE CONTESTA CON EL TECLADO: Escape cierra sin elegir -lo decia esta ayuda desde el principio
+        y no lo hacia nadie: no habia CancelButton ni manejador, asi que un aviso abierto con una
+        tecla solo se podia quitar con el raton-, el PRIMER boton arranca con el foco y es el que
+        contesta a Intro, y con Tab se va a los demas. El primero es siempre la salida principal
+        (en los avisos de cerrar, la menos destructiva).
+
         Los botones van con AutoSize: un ancho fijo corta el texto en cuanto cambia la fuente o el
         DPI (ver ref-gotchas.md), y aqui los textos son largos a proposito.
     #>
@@ -803,6 +809,7 @@ function Show-CvGuiChoice {
     $flow.Margin        = New-Object System.Windows.Forms.Padding(0)
     $grid.Controls.Add($flow, 0, 1)
 
+    $primero = $null
     foreach ($o in $opts) {
         $b = New-Object System.Windows.Forms.Button
         $b.Text         = "$($o.Text)"
@@ -818,7 +825,21 @@ function Show-CvGuiChoice {
         $val = "$($o.Value)"
         $b.Add_Click({ $pick.Value = $val; $f.Close() }.GetNewClosure())
         $flow.Controls.Add($b)
+        if ($null -eq $primero) { $primero = $b }
     }
+    if ($null -ne $primero) {
+        $f.AcceptButton = $primero
+        $f.ActiveControl = $primero
+    }
+    # Escape = cerrar sin elegir. Con KeyPreview lo ve el dialogo aunque el foco este en un boton.
+    $f.KeyPreview = $true
+    $f.Add_KeyDown({
+        param($emisor, $tecla)
+        if ($tecla.KeyCode -eq [System.Windows.Forms.Keys]::Escape) {
+            $tecla.SuppressKeyPress = $true
+            $emisor.Close()
+        }
+    })
     [void](Set-CvGuiTheme -Form $f)   # tema de la sesion
     [void]$f.ShowDialog()
     $f.Dispose()
