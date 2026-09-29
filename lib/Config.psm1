@@ -168,8 +168,9 @@ function Test-CvAskConfigKey {
         gui.askConfigKey, hay que preguntar con que configuracion trabajar? Pura: la parte que se
         puede probar sin teclado ni ventanas.
 
-        Un valor que no este en el catalogo se trata como 'off': mejor no preguntar nunca que
-        preguntar siempre por una errata en el config.
+        Un valor fuera del catalogo NO llega aqui desde los arranques: Get-CvStartupPrefs lo lleva
+        antes al valor de fabrica, como pasa con cualquier otra opcion de la configuracion. Si aun asi
+        llega (una llamada directa), se trata como 'off': ante la duda, no preguntar.
     #>
     param([string]$Setting = 'shift', $Keys = $null)
     if ($null -eq $Keys) { return $false }
@@ -1051,7 +1052,6 @@ function Get-CvConfigHelp {
         'test/enabled' = (Get-CvText -Key 'cfg.help.test.enabled')
         'test/minutes' = (Get-CvText -Key 'cfg.help.test.minutes')
         'test/betaDownmix' = (Get-CvText -Key 'cfg.help.test.betaDownmix')
-
 
         'console' = (Get-CvText -Key 'cfg.help.console')
         'console/background' = (Get-CvText -Key 'cfg.help.console.background')

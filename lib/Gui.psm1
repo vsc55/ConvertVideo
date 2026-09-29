@@ -37,6 +37,17 @@ function New-CvGuiFont {
     New-Object System.Drawing.Font('Consolas', $Size)
 }
 
+function Get-CvGuiLayoutSuffix {
+    <#
+        Lo que convierte el nombre de un config en el de su fichero de layout: 'config.json' ->
+        'config.gui.json'. Fuente UNICA: Get-CvGuiLayoutPath lo usa para NOMBRARLO, y el selector de
+        configuraciones (Get-CvSetupConfigCandidates) para NO ofrecerlo como si fuera un config -encaja
+        con 'config*.json' y salia en la lista; elegirlo arrancaba el programa sobre un fichero de
+        tamanos de ventana-.
+    #>
+    return '.gui.json'
+}
+
 function Get-CvGuiLayoutPath {
     <#
         Fichero donde se apunta COMO QUEDARON las ventanas: junto al config en uso y con su mismo
@@ -51,7 +62,7 @@ function Get-CvGuiLayoutPath {
     if ([string]::IsNullOrWhiteSpace($cfg)) { $cfg = Get-CvDefaultConfigPath -Root "$($Context.Root)" }
     $dir = Split-Path -Parent $cfg
     if ([string]::IsNullOrWhiteSpace($dir)) { $dir = "$($Context.Root)" }
-    return (Join-Path $dir ("{0}.gui.json" -f [System.IO.Path]::GetFileNameWithoutExtension($cfg)))
+    return (Join-Path $dir ("{0}{1}" -f [System.IO.Path]::GetFileNameWithoutExtension($cfg), (Get-CvGuiLayoutSuffix)))
 }
 
 function Get-CvGuiLayout {

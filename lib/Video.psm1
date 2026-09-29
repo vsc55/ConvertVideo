@@ -250,17 +250,19 @@ function Resolve-CvCropAutoDecision {
     $que  = @()
     if ($redH -gt 0) { $que += (Get-CvText -Key 'vd.pct.alto' -Values @($redH)) }
     if ($redW -gt 0) { $que += (Get-CvText -Key 'vd.pct.ancho' -Values @($redW)) }
+    # 'alto y ancho' / 'height and width': la conjuncion tambien cambia de idioma.
+    $yy   = ' {0} ' -f (Get-CvText -Key 'comun.y')
     if ($redW -gt $MaxCropPct -or $redH -gt $MaxCropPct) {
         return @{
             Decision = 'manual'
             Crop     = "$crop"
-            Reason   = (Get-CvText -Key 'vd.crop.grande' -Values @($crop, ($que -join ' y '), $MaxCropPct))
+            Reason   = (Get-CvText -Key 'vd.crop.grande' -Values @($crop, ($que -join $yy), $MaxCropPct))
         }
     }
     return @{
         Decision = 'crop'
         Crop     = "$crop"
-        Reason   = (Get-CvText -Key 'vd.crop.barras' -Values @($crop, ($que -join ' y '), @($g).Count))
+        Reason   = (Get-CvText -Key 'vd.crop.barras' -Values @($crop, ($que -join $yy), @($g).Count))
     }
 }
 

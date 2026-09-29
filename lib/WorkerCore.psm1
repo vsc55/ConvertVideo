@@ -694,7 +694,10 @@ function Get-CvQueueStatus {
     # disco ocupado codificando- esa diferencia es que la lista responda o no.
     $salidas = @{}
     foreach ($o in @(Get-ChildItem -LiteralPath $Context.Convertido -File -ErrorAction SilentlyContinue)) {
-        $salidas[$o.BaseName] = $o
+        # Por el nombre COMPLETO: por el nombre sin extension, 'x_fix.mp4' (de cuando la salida era
+        # mp4) o cualquier 'x_fix.<lo que sea>' contaba como la salida 'x_fix.mkv' y la cola decia
+        # "hecho" mientras el worker, que mira la ruta exacta, pensaba otra cosa.
+        $salidas[$o.Name] = $o
     }
     $proceso = @{}
     foreach ($p in @(Get-ChildItem -LiteralPath $Context.Proceso -File -ErrorAction SilentlyContinue)) {
@@ -706,7 +709,7 @@ function Get-CvQueueStatus {
     foreach ($f in @(Get-CvFiles -Dir $Context.Original -Filters $Context.Extensions -Exact)) {
         $name   = $f.BaseName
         $outPath = Get-OutputPath $Context $name
-        $oInfo  = $salidas[[System.IO.Path]::GetFileNameWithoutExtension($outPath)]
+        $oInfo  = $salidas[(Split-Path -Leaf $outPath)]
         $done   = ($null -ne $oInfo)
         $lock   = Join-Path $Context.Proceso ("{0}.lock" -f $name)
         $lInfo  = $proceso[("{0}.lock" -f $name)]

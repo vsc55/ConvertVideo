@@ -260,6 +260,26 @@ $bulkPar = Get-CvQueueBulkActions -Rows @($rPar)
 Assert-Eq   'Cancelado: se puede purgar'        1 @($bulkPar.Purge).Count
 Assert-Eq   'Cancelado: texto de purgar'        'Eliminar la salida a medias (se rehace)' $bulkPar.PurgeText
 Assert-Eq   'Cancelado: purgadas'               1 (Remove-CvQueueOutput -Context $ctx -Names @('Serie_1x03'))
+
+# ...y desde que las salidas se escriben en su .part (Get-CvPartialPath), una codificacion CORTADA ya
+# no deja nada con el nombre final: lo que queda es el .part, que no cuenta como salida. El archivo
+# vuelve a 'en cola' y el worker lo rehace solo, sin que haya que purgar nada a mano.
+$outFinal = Get-OutputPath $ctx 'Serie_1x03'
+$outPart  = Get-CvPartialPath -Path $outFinal
+Set-Content -Path $outPart -Value 'cortado a medias' -Encoding UTF8
+$rCut = @(Get-CvQueueStatus -Context $ctx) | Where-Object { $_.Name -eq 'Serie_1x03' }
+Assert-Eq   'Cortado (.part): vuelve a la cola'   'queued' $rCut.State
+Assert-Eq   'Cortado (.part): sin salida final'   $false (Test-Path -LiteralPath $outFinal)
+Remove-Item -Force -LiteralPath $outPart
+# La salida se busca por su nombre EXACTO: una 'x_fix.mp4' de cuando la salida era mp4 (o cualquier
+# 'x_fix.<otra cosa>') no es la 'x_fix.mkv' que espera el worker, y la cola no puede decir 'hecho'.
+$outOtra = Join-Path $ctx.Convertido 'Serie_1x03_fix.mp4'
+if ("$($ctx.OutExt)" -ne 'mp4') {
+    Set-Content -Path $outOtra -Value 'otra extension' -Encoding UTF8
+    $rOtra = @(Get-CvQueueStatus -Context $ctx) | Where-Object { $_.Name -eq 'Serie_1x03' }
+    Assert-Eq 'Otra extension: no es la salida' 'queued' $rOtra.State
+    Remove-Item -Force -LiteralPath $outOtra
+}
 Assert-True 'Cancelado: la salida ya no esta'   (-not (Test-Path -LiteralPath $outMedio))
 Assert-Eq   'Cancelado: vuelve a la cola'       'queued' (@(Get-CvQueueStatus -Context $ctx) | Where-Object { $_.Name -eq 'Serie_1x03' }).State
 # Y lo ya HECHO (salida sin job) no se ofrece purgar: ahi no hay nada roto.

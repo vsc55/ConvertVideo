@@ -7,7 +7,7 @@ Es la fase **WORKER** con ratón, y también la de **PREPARAR** para el caso nor
 | Lanzador | Qué hace |
 |---|---|
 | **`Convert-gui.cmd`** | Va **directo** con la configuración de siempre, sin preguntar… **salvo que mantengas Mayús** mientras arranca (unos 2 s, hasta que salga la pregunta): entonces se comporta como el de abajo. La tecla se cambia en `gui.askConfigKey` (`shift` de fábrica, `ctrl`, `any`, `off`). |
-| **`extras\Convert-gui-Config.cmd`** | **Pregunta** siempre con qué configuración trabajar (es este mismo con `-AskConfig`): lista los `config*.json` de `config\` (`config.json`, `config.debug.json`…) y deja buscar otro en disco. Es el equivalente de elegir entre `Convert.cmd` y `Convert-Debug.cmd` sin cambiar de lanzador. |
+| **`extras\Convert-gui-Config.cmd`** | **Pregunta** siempre con qué configuración trabajar (es este mismo con `-AskConfig`): lista los `config*.json` de `config\` (`config.json`, `config.debug.json`…) y deja buscar otro en disco. Es el equivalente de elegir entre `Convert.cmd` y `extras\Convert-Debug.cmd` sin cambiar de lanzador. |
 
 Con **`-Config <ruta>`** no pregunta ninguno de los dos, ni con la tecla: dar una ruta es más concreto que una tecla.
 
@@ -45,7 +45,7 @@ Estados (catálogo único `Get-CvQueueStates`, en `lib\WorkerCore.psm1`):
 | **En cola** | Tiene job y nadie lo ha reclamado. | `Iniciar`. |
 | **Codificando** | Lo tiene un worker vivo. | Mirar el progreso. |
 | **Bloqueo huérfano** | Quedó un `.lock` de un worker que ya no existe. | Menú contextual → *Liberar el bloqueo huérfano* (o lo roba solo el siguiente worker). |
-| **Sin terminar** | Existe la salida **pero el job sigue ahí**: la conversión no acabó (se canceló, se cerró la ventana, se fue la luz), así que lo que hay en `Convertido\` está **a medias**. | Menú contextual → *Eliminar la salida a medias*: vuelve a la cola y se rehace. |
+| **Sin terminar** | Existe la salida **pero el job sigue ahí**: la conversión no acabó, así que lo que hay en `Convertido\` está **a medias**. Desde la 4.7.3 una codificación cortada ya no deja esto (ver abajo); sale con salidas de versiones anteriores o copiadas a mano. | Menú contextual → *Eliminar la salida a medias*: vuelve a la cola y se rehace. |
 | **Hecho** | Existe `Convertido\<nombre>_fix.<ext>` **y ya no queda job**. | — |
 
 ## De dónde sale cada dato
@@ -53,6 +53,8 @@ Estados (catálogo único `Get-CvQueueStates`, en `lib\WorkerCore.psm1`):
 Casi todo el estado de la cola **ya está en disco** y la ventana solo lo cruza (`Get-CvQueueStatus`), sin lanzar `ffprobe`: el job (`Proceso\<n>.job.json`), el bloqueo (`<n>.lock`, que guarda `PID`+equipo — ver [ref-jobs.md](ref-jobs.md)) y la salida (`Convertido\<n>_fix.<ext>`).
 
 Ahí está la señal que distingue **hecho** de **cortado a medias**: el worker borra el `.job.json` **solo cuando termina bien**, así que *salida + job todavía presente* significa que la conversión no acabó. Importa más de lo que parece, porque el worker **salta** los archivos que ya tienen salida: mientras ese resto esté ahí, ese vídeo no se rehace nunca.
+
+Por eso, desde la 4.7.3, **la salida no existe con su nombre hasta que está completa**: se escribe en `Convertido\<nombre>_fix.<ext>.part` y se renombra al acabar (`Get-CvPartialPath` / `Complete-CvOutput`). Si la codificación se corta —el botón *Cortar*, cerrar la consola, un apagón— lo que queda es el `.part`, que **no cuenta como salida**: el archivo vuelve a *En cola* y el siguiente worker lo rehace solo (ffmpeg sobrescribe el `.part`). Un `.part` solo se queda huérfano si ese vídeo no se vuelve a convertir nunca. La salida se busca además por su **nombre exacto**: una `<nombre>_fix.mp4` de cuando la salida era mp4 no es la `_fix.mkv` que espera el worker.
 
 Lo único que **no** está en disco es el avance dentro de un archivo, así que cada worker lo publica en **`Proceso\<pid>.worker.json`**: archivo en curso, paso, %, ETA y velocidad. Lo escribe `Update-CvWorkerProgress` desde `Invoke-ToolProgress`, con **los mismos números que pinta la consola**, así que las dos caras enseñan lo mismo. Es best-effort: si falla la escritura, el worker sigue codificando como si nada.
 

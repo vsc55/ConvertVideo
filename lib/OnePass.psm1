@@ -1,11 +1,11 @@
 <#
-    OnePass.psm1 - Ejecucion en UNA sola pasada de ffmpeg (BETA).
+    OnePass.psm1 - Ejecucion en UNA sola pasada de ffmpeg (RC, activada de serie).
 
     Funde las tres etapas del pipeline clasico (Audio -> Video -> Multiplex, cada una un proceso ffmpeg
     con temporales .m4a/.mka/.mkv) en un UNICO comando ffmpeg con -filter_complex: reencoda el video
     (crop/scale), recodifica y sincroniza el audio (adelay + downmix + loudnorm) y copia subtitulos,
-    adjuntos y capitulos del original, escribiendo directamente Convertido\<name>_fix.mkv. Ahorra los
-    temporales intermedios y dos arranques de ffmpeg.
+    adjuntos y capitulos del original, escribiendo Convertido\<name>_fix.mkv (en su .part hasta que
+    esta completo, ver Get-CvPartialPath). Ahorra los temporales intermedios y dos arranques de ffmpeg.
 
     Solo aplica en un subconjunto de casos (Test-CvOnePassEligible); en el resto se usa el pipeline por
     etapas. Interruptor: encode.onePass (Context.OnePass), ACTIVADO de serie (RC).
@@ -28,14 +28,14 @@ function Test-CvOnePassEligible {
             (Invoke-CvVideoSwap). Ver Get-CvVideoSwapArgs.
     #>
     param([Parameter(Mandatory)]$Context, [Parameter(Mandatory)]$Job, [Parameter(Mandatory)]$Prof)
-    if (-not $Context.OnePass)     { return [pscustomobject]@{ Ok = $false; Reason = 'desactivada (encode.onePass)' } }
-    if ([bool]$Job.video.skip)     { return [pscustomobject]@{ Ok = $false; Reason = 'video en modo copy' } }
-    if ([bool]$Job.audio.skip)     { return [pscustomobject]@{ Ok = $false; Reason = 'audio en modo copy' } }
-    if (-not $Context.SyncAdelay)  { return [pscustomobject]@{ Ok = $false; Reason = 'sincronia clasica (WAV), no adelay' } }
+    if (-not $Context.OnePass)     { return [pscustomobject]@{ Ok = $false; Reason = (Get-CvText -Key 'op.no.off') } }
+    if ([bool]$Job.video.skip)     { return [pscustomobject]@{ Ok = $false; Reason = (Get-CvText -Key 'op.no.vcopy') } }
+    if ([bool]$Job.audio.skip)     { return [pscustomobject]@{ Ok = $false; Reason = (Get-CvText -Key 'op.no.acopy') } }
+    if (-not $Context.SyncAdelay)  { return [pscustomobject]@{ Ok = $false; Reason = (Get-CvText -Key 'op.no.wav') } }
     $codec = "$($Prof.AudioCodec)".ToLower(); if (-not $codec) { $codec = 'aac' }
     $vm = Resolve-CvVolumeMethod -Method $Context.VolumeMethod -Codec $codec
-    if ($vm.Method -notin @('loudnorm','peak')) { return [pscustomobject]@{ Ok = $false; Reason = ("volumen '{0}' (loudnorm/peak)" -f $vm.Method) } }
-    if ([bool]$Job.video.hdr -and ("$($Context.TonemapHdr)".ToLower() -ne 'off')) { return [pscustomobject]@{ Ok = $false; Reason = 'tone-mapping HDR->SDR (requiere hw device)' } }
+    if ($vm.Method -notin @('loudnorm','peak')) { return [pscustomobject]@{ Ok = $false; Reason = (Get-CvText -Key 'op.no.vol' -Values @($vm.Method)) } }
+    if ([bool]$Job.video.hdr -and ("$($Context.TonemapHdr)".ToLower() -ne 'off')) { return [pscustomobject]@{ Ok = $false; Reason = (Get-CvText -Key 'op.no.hdr') } }
     return [pscustomobject]@{ Ok = $true; Reason = '' }
 }
 
@@ -136,10 +136,11 @@ function Get-CvOnePassArgs {
 
 function Invoke-CvOnePass {
     <#
-        Ejecuta la conversion en UNA sola pasada y escribe directamente Convertido\<name>_fix.mkv.
-        Devuelve $true si crea la salida. Muestra progreso en vivo (como Invoke-VideoRun) y, al terminar,
-        limpia las etiquetas DURATION con mkvpropedit (Remove-CvMkvTags). Fail-hard: si ffmpeg falla,
-        borra la salida parcial y devuelve $false (el worker reintenta segun su politica).
+        Ejecuta la conversion en UNA sola pasada y deja Convertido\<name>_fix.mkv. Devuelve $true si
+        crea la salida. Muestra progreso en vivo (como Invoke-VideoRun). Se escribe en el .part de la
+        salida y solo se le da el nombre final al terminar (Complete-CvOutput): asi una codificacion
+        cortada no deja un fichero a medias que el worker daria por hecho. Fail-hard: si ffmpeg falla,
+        borra el .part y devuelve $false (el worker reintenta segun su politica).
     #>
     param(
         [Parameter(Mandatory)]$Context, [Parameter(Mandatory)]$Prof,
@@ -150,6 +151,7 @@ function Invoke-CvOnePass {
     )
     $name = [System.IO.Path]::GetFileNameWithoutExtension($File)
     $out  = Get-OutputPath $Context $name
+    $part = Get-CvPartialPath -Path $out
 
     # Subtitulos: rescatar los ilegibles (WEBVTT) a temporales con mkvextract ANTES del comando; se pasan
     # al emisor como inputs extra y ffmpeg los convierte a srt en la misma pasada. Fail-soft por pista.
@@ -165,23 +167,18 @@ function Invoke-CvOnePass {
     if ($method -eq 'peak') {
         $spec   = Resolve-CvRenderSpec -Context $Context -Prof $Prof -Job $Job -Info $Info
         $target = [double]$Context.PeakTarget
-        $inv    = [System.Globalization.CultureInfo]::InvariantCulture
         $volFilters = @()
         foreach ($tr in $spec.Audio) {
             $measure = @('-i',$File,'-map',("0:{0}" -f $tr.Index),'-vn','-sn','-map_chapters','-1')
             if ($Context.TestLimit -gt 0) { $measure += @('-t',"$($Context.TestLimit)") }
-            Start-CvStep $Context (Get-CvText -Key 'au.vol.an') 'Analizando volumen...'
-            $peak = Get-MaxVolume -Context $Context -InputArgs $measure
-            $peakTxt = if ($null -ne $peak) { '(pico {0} dB)' -f $peak } else { '(pico desconocido)' }
-            Stop-CvStep $Context 'UNA-PASADA' $true -Extra $peakTxt -OkMsg ("[OK] - Volumen analizado {0}" -f $peakTxt)
-            $gain = if ($null -ne $peak -and $peak -lt $target) { [math]::Round($target - $peak, 1) } else { 0.0 }
-            $volFilters += $(if ($gain -gt 0) { 'volume={0}dB:precision=fixed' -f $gain.ToString($inv) } else { '' })
+            # '' si no hay que subir nada: el emisor espera un filtro POR PISTA, en su orden.
+            $volFilters += (Measure-CvPeakGain -Context $Context -Tag 'UNA-PASADA' -InputArgs $measure -Target $target).Filter
         }
     }
     $ff = if ($null -ne $volFilters) {
-        Get-CvOnePassArgs -Context $Context -Prof $Prof -File $File -Info $Info -Job $Job -Out $out -VolumeFilters $volFilters -Subtitles $subs
+        Get-CvOnePassArgs -Context $Context -Prof $Prof -File $File -Info $Info -Job $Job -Out $part -VolumeFilters $volFilters -Subtitles $subs
     } else {
-        Get-CvOnePassArgs -Context $Context -Prof $Prof -File $File -Info $Info -Job $Job -Out $out -Subtitles $subs
+        Get-CvOnePassArgs -Context $Context -Prof $Prof -File $File -Info $Info -Job $Job -Out $part -Subtitles $subs
     }
 
     # Total del progreso: duracion (+ el mayor silencio de sincronia, que alarga la pista), acotado a -t.
@@ -195,22 +192,22 @@ function Invoke-CvOnePass {
     if ($Context.Progress -and -not $Context.Debug -and $total -gt 0) {
         $code = Invoke-ToolProgress -Exe $Context.FFmpeg -Arguments $ff -Context $Context -Label (Get-CvText -Key 'op.pasada') -TotalSeconds $total -Fps $Fps -ShowQ
     } else {
-        Start-CvStep $Context (Get-CvText -Key 'op.codificando') 'Codificando en una sola pasada...'
+        Start-CvStep $Context 'UNA-PASADA' (Get-CvText -Key 'op.codificando')
         $code = Invoke-ToolShow -Exe $Context.FFmpeg -Arguments $ff -Context $Context
     }
     # Borrar los temporales de subtitulos rescatados (se hayan usado o no).
     foreach ($t in @($sx.Temps)) { if (Test-Path -LiteralPath $t) { Remove-Item -Force -LiteralPath $t -ErrorAction SilentlyContinue } }
-    $ok = (($code -eq 0) -and (Test-Path -LiteralPath $out) -and ((Get-Item -LiteralPath $out).Length -gt 0))
+    $ok = (($code -eq 0) -and (Test-Path -LiteralPath $part) -and ((Get-Item -LiteralPath $part).Length -gt 0))
     if (-not $ok) {
-        Stop-CvStep $Context 'UNA-PASADA' $false -FailMsg ("[ERR] - ffmpeg devolvio codigo {0}" -f $code)
+        Stop-CvStep $Context 'UNA-PASADA' $false -FailMsg (Get-CvText -Key 'vd.run.codigo' -Values @($code))
         Show-CvToolError -Context $Context -Category 'UNA-PASADA' -Name $name -Tool 'ffmpeg-onepass'
-        if (Test-Path -LiteralPath $out) { Remove-Item -Force -LiteralPath $out -ErrorAction SilentlyContinue }
+        if (Test-Path -LiteralPath $part) { Remove-Item -Force -LiteralPath $part -ErrorAction SilentlyContinue }
         return $false
     }
-    $mb = Format-CvMb -Bytes (Get-Item -LiteralPath $out).Length
-    Stop-CvStep $Context 'UNA-PASADA' $true -OkMsg ("[OK] - {0}  ({1} MB)" -f (Split-Path $out -Leaf), $mb)
-    # Limpiar las etiquetas DURATION que anade el muxer de Matroska (igual que el multiplex clasico).
-    Remove-CvMkvTags -Context $Context -File $out
+    $mbTxt = Get-CvText -Key 'mx.mb' -Values @((Format-CvMb -Bytes (Get-Item -LiteralPath $part).Length))
+    Stop-CvStep $Context 'UNA-PASADA' $true -OkMsg (Get-CvText -Key 'mx.ok' -Values @((Split-Path $out -Leaf), $mbTxt))
+    # Etiquetas DURATION fuera y, solo entonces, el nombre final (igual que el multiplex por etapas).
+    Complete-CvOutput -Context $Context -Part $part -Final $out
     return $true
 }
 

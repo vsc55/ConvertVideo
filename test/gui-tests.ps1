@@ -454,6 +454,23 @@ Assert-Eq   'Menu: "otro" con su texto'       (Get-CvText -Key 'elegircfg.otro')
 # Las etiquetas son UNICAS: la consola devuelve la fila elegida por su TEXTO (Select-FromList), asi
 # que dos filas iguales serian siempre la primera.
 Assert-Eq   'Menu: sin etiquetas repetidas'   $menu.Count @($menu | Select-Object -ExpandProperty Value -Unique).Count
+
+# 'Por defecto' es EL que se usa sin -Config, no cualquiera que se llame config.json: con uno en
+# config\ y otro heredado en la raiz, solo el de config\ lo es (antes salian los dos marcados).
+$defs = @($c4 | Where-Object { $_.IsDefault })
+Assert-Eq   'Configs: un solo por defecto'      1 $defs.Count
+Assert-Eq   'Configs: y es el de config'        (Join-Path 'config' 'config.json') $defs[0].Display
+Assert-Eq   'Configs: el de la raiz no lo es'   '' "$(@($c4 | Where-Object { $_.Display -eq 'config.json' })[0].Text)"
+
+# Los ficheros de LAYOUT de las ventanas ('config.gui.json') encajan con config*.json pero no son
+# configs: elegirlos arrancaba el programa sobre un fichero de tamanos de ventana.
+$layout = Join-Path $tmpRoot ('config' + (Get-CvGuiLayoutSuffix))
+Set-Content -Path $layout -Value '{}' -Encoding UTF8
+$c6 = @(Get-CvSetupConfigCandidates -Root $tmpRoot)
+Assert-Eq   'Configs: el layout no sale'        0 @($c6 | Where-Object { $_.Name -like ('*' + (Get-CvGuiLayoutSuffix)) }).Count
+Remove-Item -Force -LiteralPath $layout
+# Y el sufijo es el MISMO con el que se nombra el layout (fuente unica).
+Assert-True 'Layout: nombre con el sufijo'      ((Split-Path -Leaf (Get-CvGuiLayoutPath -Context ([pscustomobject]@{ ConfigPath = 'C:\x\config.json'; Root = 'C:\x' }))) -eq ('config' + (Get-CvGuiLayoutSuffix)))
 Remove-Item -LiteralPath (Join-Path $tmpRoot 'config') -Recurse -Force -ErrorAction SilentlyContinue
 
 # ================================================================================================

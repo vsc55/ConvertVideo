@@ -200,6 +200,7 @@ function Invoke-Multiplex {
     )
     $name  = [System.IO.Path]::GetFileNameWithoutExtension($File)
     $out   = Get-OutputPath $Context $name
+    $part  = Get-CvPartialPath -Path $out      # se escribe aqui; el nombre final, al terminar
     $tmp   = Get-CvTempPaths -Context $Context -Name $name
     $vTmp  = $tmp.Video
 
@@ -236,7 +237,7 @@ function Invoke-Multiplex {
 
     $plan = [pscustomobject]@{
         File       = $File
-        Out        = $out
+        Out        = $part
         VideoSrc   = $videoSrc
         Vmap       = $vmap
         TempAudio  = $tempAudio
@@ -258,18 +259,17 @@ function Invoke-Multiplex {
     $code = Invoke-ToolShow -Exe $Context.FFmpeg -Arguments $ffArgs -Context $Context
     # Borrar los temporales de subtitulos rescatados (se hayan usado o no).
     foreach ($t in @($sx.Temps)) { if (Test-Path -LiteralPath $t) { Remove-Item -Force -LiteralPath $t -ErrorAction SilentlyContinue } }
-    $ok = (($code -eq 0) -and (Test-Path -LiteralPath $out) -and ((Get-Item -LiteralPath $out).Length -gt 0))
-    $mbTxt = if ($ok) { ("({0} MB)" -f (Format-CvMb -Bytes (Get-Item -LiteralPath $out).Length)) } else { '' }
-    Stop-CvStep $Context 'MULTIPLEX' $ok -Extra $mbTxt -OkMsg ("[OK] - {0}  {1}" -f (Split-Path $out -Leaf), $mbTxt) -FailMsg ("[ERR] - ffmpeg devolvio codigo {0}" -f $code)
+    $ok = (($code -eq 0) -and (Test-Path -LiteralPath $part) -and ((Get-Item -LiteralPath $part).Length -gt 0))
+    $mbTxt = if ($ok) { Get-CvText -Key 'mx.mb' -Values @((Format-CvMb -Bytes (Get-Item -LiteralPath $part).Length)) } else { '' }
+    Stop-CvStep $Context 'MULTIPLEX' $ok -Extra $mbTxt -OkMsg (Get-CvText -Key 'mx.ok' -Values @((Split-Path $out -Leaf), $mbTxt)) -FailMsg (Get-CvText -Key 'vd.run.codigo' -Values @($code))
     if (-not $ok) {
-        # Borrar la salida parcial para no darla por buena ni bloquear el reintento.
-        if (Test-Path -LiteralPath $out) { Remove-Item -Force -LiteralPath $out -ErrorAction SilentlyContinue }
+        # Borrar el .part: ni se da por bueno ni estorba al reintento.
+        if (Test-Path -LiteralPath $part) { Remove-Item -Force -LiteralPath $part -ErrorAction SilentlyContinue }
         return $false
     }
-    # Limpiar las etiquetas DURATION que anade el muxer de Matroska (mkvpropedit).
-    Remove-CvMkvTags -Context $Context -File $out
-    # ...y reponer la marca del video original, que esa limpieza borra con todo lo demas.
-    if ($VideoFromSource) { Set-CvMkvVideoMark -Context $Context -File $out }
+    # Etiquetas DURATION fuera, la marca del video original si toca (esa limpieza la borra con todo
+    # lo demas) y, solo entonces, el nombre final.
+    Complete-CvOutput -Context $Context -Part $part -Final $out -VideoMark:$VideoFromSource
     return $true
 }
 
@@ -315,32 +315,54 @@ function Invoke-CvVideoSwap {
         [Parameter(Mandatory)][string]$OutFile,
         [int]$VideoIndex = -1
     )
-    $name = [System.IO.Path]::GetFileNameWithoutExtension($File)
-    $tmp  = Join-Path $Context.Proceso ("{0}.swap.mkv" -f $name)
+    # El remux se escribe en el .part de la salida, JUNTO a ella: asi sustituirla es renombrar. Con el
+    # temporal en Proceso\ -que puede estar en otro disco (paths.*)- 'mover' era COPIAR el fichero
+    # entero con el nombre final, y habiendo borrado ya la salida buena antes de empezar.
+    $tmp  = Get-CvPartialPath -Path $OutFile
     if (Test-Path -LiteralPath $tmp) { Remove-Item -Force -LiteralPath $tmp -ErrorAction SilentlyContinue }
     $ffArgs = Get-CvVideoSwapArgs -Context $Context -OutFile $OutFile -SrcFile $File -TmpFile $tmp -VideoIndex $VideoIndex
     Start-CvStep $Context 'MULTIPLEX' (Get-CvText -Key 'mx.cambiando')
     $code = Invoke-ToolShow -Exe $Context.FFmpeg -Arguments $ffArgs -Context $Context
     $ok = (($code -eq 0) -and (Test-Path -LiteralPath $tmp) -and ((Get-Item -LiteralPath $tmp).Length -gt 0))
     if (-not $ok) {
-        Stop-CvStep $Context 'MULTIPLEX' $false -FailMsg ("[AVISO] - no se pudo cambiar el video (ffmpeg {0}); se deja la salida recodificada" -f $code)
+        Stop-CvStep $Context 'MULTIPLEX' $false -FailMsg (Get-CvText -Key 'mx.swap.no' -Values @($code))
         if (Test-Path -LiteralPath $tmp) { Remove-Item -Force -LiteralPath $tmp -ErrorAction SilentlyContinue }
         return $false
     }
+    $mbTxt = Get-CvText -Key 'mx.mb' -Values @((Format-CvMb -Bytes (Get-Item -LiteralPath $tmp).Length))
+    Stop-CvStep $Context 'MULTIPLEX' $true -Extra $mbTxt -OkMsg (Get-CvText -Key 'mx.swap.ok' -Values @($mbTxt))
+    # El mismo remate que el multiplex: etiquetas, marca y el nombre final (aqui, SUSTITUYENDO la
+    # salida recodificada). Si no se puede renombrar, la salida buena sigue ahi, intacta.
     try {
-        Remove-Item -Force -LiteralPath $OutFile -ErrorAction Stop
-        Move-Item -LiteralPath $tmp -Destination $OutFile -Force -ErrorAction Stop
+        Complete-CvOutput -Context $Context -Part $tmp -Final $OutFile -VideoMark
     } catch {
-        Stop-CvStep $Context 'MULTIPLEX' $false -FailMsg ("[AVISO] - no se pudo sustituir la salida: {0}" -f $_.Exception.Message)
+        Write-CvLog 'MULTIPLEX' (Get-CvText -Key 'mx.swap.nosust' -Values @($_.Exception.Message))
         if (Test-Path -LiteralPath $tmp) { Remove-Item -Force -LiteralPath $tmp -ErrorAction SilentlyContinue }
         return $false
     }
-    $mbTxt = ("({0} MB)" -f (Format-CvMb -Bytes (Get-Item -LiteralPath $OutFile).Length))
-    Stop-CvStep $Context 'MULTIPLEX' $true -Extra $mbTxt -OkMsg ("[OK] - video ORIGINAL puesto en la salida  {0}" -f $mbTxt)
-    # Misma pareja que en el multiplex: limpiar etiquetas y reponer la marca (la limpieza la borra).
-    Remove-CvMkvTags -Context $Context -File $OutFile
-    Set-CvMkvVideoMark -Context $Context -File $OutFile
     return $true
+}
+
+function Complete-CvOutput {
+    <#
+        Da por TERMINADA una salida escrita en su .part (Get-CvPartialPath): le limpia las etiquetas,
+        le pone la marca de video original si toca y SOLO ENTONCES le da su nombre final. El orden
+        importa: hasta el ultimo paso, el nombre final no existe, y el worker no lo da por hecho.
+
+        Es el remate de los tres sitios que escriben la salida -el multiplexado por etapas, la una
+        pasada y el cambio de video por el original-, que antes lo hacian cada uno a su manera.
+    #>
+    param(
+        [Parameter(Mandatory)]$Context,
+        [Parameter(Mandatory)][string]$Part,
+        [Parameter(Mandatory)][string]$Final,
+        [switch]$VideoMark
+    )
+    Remove-CvMkvTags -Context $Context -File $Part
+    if ($VideoMark) { Set-CvMkvVideoMark -Context $Context -File $Part }
+    # Misma carpeta: es un renombrado, no una copia. -Force por si queda una salida vieja (TEST_,
+    # o rehacer a mano un archivo ya convertido).
+    Move-Item -LiteralPath $Part -Destination $Final -Force -ErrorAction Stop
 }
 
 function Set-CvMkvVideoMark {

@@ -556,7 +556,10 @@ function Get-CvSetupConfigCandidates {
     $make = {
         param([string]$Path)
         $name = Split-Path -Leaf $Path
-        $txt  = if ($name -eq 'config.json') { (Get-CvText -Key 'elegircfg.pordefecto') }
+        # 'Por defecto' es EL que se usa sin -Config (Get-CvDefaultConfigPath), no cualquiera que se
+        # llame config.json: con uno heredado en la raiz y otro en config\, los dos salian marcados.
+        $isDef = ($Path -eq $def)
+        $txt  = if ($isDef) { (Get-CvText -Key 'elegircfg.pordefecto') }
                 elseif ($name -eq 'config.debug.json') { (Get-CvText -Key 'elegircfg.depuracion') }
                 else { '' }
         # Relativa a la raiz cuando cuelga de ella; si esta en otro disco, la ruta entera.
@@ -573,7 +576,7 @@ function Get-CvSetupConfigCandidates {
             Name      = $name
             Display   = $disp
             Exists    = $existe
-            IsDefault = ($name -eq 'config.json')
+            IsDefault = $isDef
             Text      = $txt
             Label     = $lbl
         }
@@ -583,6 +586,8 @@ function Get-CvSetupConfigCandidates {
     $dirs = @((Get-CvConfigDir -Root $Root), $Root)   # el sitio nuevo primero, la raiz por compatibilidad
     foreach ($f in @($dirs | ForEach-Object { Get-ChildItem -LiteralPath $_ -Filter 'config*.json' -File -ErrorAction SilentlyContinue } | Sort-Object Name)) {
         if ($seen.ContainsKey($f.FullName.ToLower())) { continue }
+        # Los ficheros de layout de las ventanas encajan con 'config*.json' pero NO son configs.
+        if ($f.Name.EndsWith((Get-CvGuiLayoutSuffix), [System.StringComparison]::OrdinalIgnoreCase)) { continue }
         $seen[$f.FullName.ToLower()] = $true
         $out += (& $make $f.FullName)
     }

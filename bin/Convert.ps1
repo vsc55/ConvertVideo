@@ -581,7 +581,7 @@ while ($didAny) {
             # Se ha tirado el video recodificado y se usa el del original (solo puede pasar en el
             # pipeline por etapas; se declara aqui porque el resumen de mas abajo lo mira).
             $vOriginal = $false
-            # Ejecucion en UNA sola pasada (BETA) si el job es elegible; si no, pipeline por etapas.
+            # Ejecucion en UNA sola pasada (RC, activada de serie) si el job es elegible; si no, por etapas.
             # Indice de la pista de video elegida (congelado en PREPARAR); jobs antiguos sin el campo -> -1.
             $vIdxOne = $(if ($null -ne $job.video.index) { [int]$job.video.index } else { -1 })
             # Y su pista, para saber de que tamano es la imagen de origen (un escalado al MISMO

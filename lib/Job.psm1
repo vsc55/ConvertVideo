@@ -218,5 +218,25 @@ function Get-OutputPath {
     Join-Path $Context.Convertido ("{0}_fix.{1}" -f $Name, $Context.OutExt)
 }
 
+function Get-CvPartialPath {
+    <#
+        Donde se ESCRIBE una salida mientras no esta terminada: <salida>.part, en la MISMA carpeta.
+
+        La salida con su nombre final tiene que existir SOLO cuando esta completa, porque el worker
+        da por hecho un archivo en cuanto ve su _fix.mkv (y no vuelve a mirarlo). Escribiendo
+        directamente con el nombre final, una codificacion cortada -el boton Cortar de la cola mata
+        el worker, o se cierra la consola, o se va la luz- dejaba un fichero a medias que parecia
+        terminado y bloqueaba el reintento. Con la una-pasada activada de serie, ese fichero se
+        escribe durante TODA la codificacion, no solo durante el multiplexado.
+
+        En la misma carpeta y no en Proceso\: renombrar dentro de un disco es instantaneo, pero
+        Proceso\ y Convertido\ pueden estar en discos distintos (paths.*), y entonces 'mover' seria
+        COPIAR el fichero entero con su nombre final, que es justo el problema. A ffmpeg la extension
+        le da igual (los emisores fuerzan -f matroska) y a mkvpropedit tambien (comprobado).
+    #>
+    param([Parameter(Mandatory)][string]$Path)
+    return ($Path + '.part')
+}
+
 
 Export-ModuleMember -Function *

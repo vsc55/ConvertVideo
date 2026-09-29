@@ -73,7 +73,7 @@ function Start-CvSession {
 }
 
 function Get-CvScriptDir {
-    <# La carpeta de los scripts del programa (Convert.ps1, setup.ps1...): <raiz>in. #>
+    <# La carpeta de los scripts del programa (Convert.ps1, setup.ps1...): <raiz>\bin. #>
     param([Parameter(Mandatory)][string]$Root)
     return (Join-Path $Root 'bin')
 }

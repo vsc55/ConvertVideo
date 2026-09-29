@@ -450,6 +450,14 @@ Assert-Eq 'encode.multiAudio def true'    $true  (Get-CvConfigDefaultValue 'enco
 Assert-True 'help encode/audio/multiAudio'   ((Get-CvConfigHelp).Contains('encode/audio/multiAudio'))
 Assert-Eq 'test.betaMultiAudio ya no existe' $null (Get-CvConfigDefaultValue 'test/betaMultiAudio')
 Assert-Eq 'test.betaAv1 ya no existe'  $null (Get-CvConfigDefaultValue 'test/betaAv1')
+# La salida se escribe en su .part y solo al terminar se le da el nombre final: el worker da por hecho
+# un archivo en cuanto ve su _fix.mkv, y una codificacion cortada lo dejaba a medias con ese nombre.
+$pFin  = 'E:\Conv\Serie_1x01_fix.mkv'
+$pPart = Get-CvPartialPath -Path $pFin
+Assert-Eq   'Parcial: junto a la salida'        (Split-Path -Parent $pFin) (Split-Path -Parent $pPart)
+Assert-True 'Parcial: no es la salida'          ($pPart -ne $pFin)
+Assert-Eq   'Parcial: mismo nombre + .part'     'Serie_1x01_fix.mkv.part' (Split-Path -Leaf $pPart)
+
 # Una pasada: promocionada de beta a RC (27/09/2026). Sale de 'test' -que es el modo de pruebas- y
 # pasa a encode.onePass, ACTIVADA de serie; el gate real sigue siendo Test-CvOnePassEligible.
 Assert-Eq 'test.betaOnePass ya no existe' $null (Get-CvConfigDefaultValue 'test/betaOnePass')

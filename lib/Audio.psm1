@@ -68,6 +68,41 @@ function Resolve-CvAudioTrackPlan {
     }
 }
 
+function Measure-CvPeakGain {
+    <#
+        Mide el pico de UNA pista (volumedetect) y calcula cuanto hay que subirla hasta el objetivo
+        del volumen 'peak'. Devuelve @{ Peak; Gain; Filter }: Filter es 'volume=XdB:precision=fixed',
+        o '' si no hay que subir nada (solo se AMPLIFICA; si el pico ya supera el objetivo no se toca).
+        Pinta el paso "Analizando volumen..." con el pico medido.
+
+        La usan los DOS caminos -por etapas (Invoke-AudioRun) y una pasada (Invoke-CvOnePass)-. Antes
+        era la misma cuenta escrita dos veces, y la copia de la una-pasada llevaba ademas los textos en
+        castellano a pelo. -Tag es la etiqueta del log de quien llama ('AUDIO' / 'UNA-PASADA').
+    #>
+    param(
+        [Parameter(Mandatory)]$Context,
+        [Parameter(Mandatory)][string]$Tag,
+        [Parameter(Mandatory)][string[]]$InputArgs,
+        [double]$Target = 0
+    )
+    # Recorre TODO el audio: puede tardar, y por eso va como paso (con su OK) y no en silencio.
+    Start-CvStep $Context $Tag (Get-CvText -Key 'au.vol.an')
+    $peak = Get-MaxVolume -Context $Context -InputArgs $InputArgs
+    $txt  = if ($null -ne $peak) { (Get-CvText -Key 'au.vol.pico') -f $peak } else { (Get-CvText -Key 'au.vol.nopico') }
+    Stop-CvStep $Context $Tag $true -Extra $txt -OkMsg (Get-CvText -Key 'au.vol.ok' -Values @($txt))
+    $gain = 0.0
+    if ($null -ne $peak -and $peak -lt $Target) { $gain = [math]::Round($Target - $peak, 1) }
+    $filter = ''
+    if ($gain -gt 0) {
+        $filter = 'volume={0}dB:precision=fixed' -f $gain.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+    }
+    [pscustomobject]@{
+        Peak   = $peak
+        Gain   = $gain
+        Filter = $filter
+    }
+}
+
 function Get-CvDownmixPan {
     <#
         Filtro 'pan' del downmix 5.1->estereo con VOZ REFORZADA, de los coeficientes {Center;Front;
@@ -817,16 +852,10 @@ function Invoke-AudioRun {
         if ($Context.TestLimit -gt 0 -and -not $fromWav) { $measureArgs += @('-t',"$($Context.TestLimit)") }
         # Medir el pico recorre TODO el audio (volumedetect): puede tardar. Paso con ✓ para que
         # no parezca colgado entre "Resolucion" y "Aplicando ganancia".
-        Start-CvStep $Context 'AUDIO' (Get-CvText -Key 'au.vol.an')
-        $peak = Get-MaxVolume -Context $Context -InputArgs $measureArgs
-        $peakTxt = if ($null -ne $peak) { (Get-CvText -Key 'au.vol.pico') -f $peak } else { (Get-CvText -Key 'au.vol.nopico') }
-        Stop-CvStep $Context 'AUDIO' $true -Extra $peakTxt -OkMsg (Get-CvText -Key 'au.vol.ok' -Values @($peakTxt))
-        $gain = 0.0
-        if ($null -ne $peak -and $peak -lt $target) { $gain = [math]::Round($target - $peak, 1) }
-        if ($gain -gt 0) {
-            Write-CvInfoStep $Context 'AUDIO' (Get-CvText -Key 'au.vol.gan' -Values @($gain))
-            $gtxt = $gain.ToString([System.Globalization.CultureInfo]::InvariantCulture)
-            $mainFilter = 'volume={0}dB:precision=fixed' -f $gtxt
+        $pk = Measure-CvPeakGain -Context $Context -Tag 'AUDIO' -InputArgs $measureArgs -Target $target
+        if ($pk.Gain -gt 0) {
+            Write-CvInfoStep $Context 'AUDIO' (Get-CvText -Key 'au.vol.gan' -Values @($pk.Gain))
+            $mainFilter = $pk.Filter
         } elseif ($Context.Debug) { Write-CvLog 'AUDIO' (Get-CvText -Key 'au.vol.sin') }
     }
     elseif ($method -eq 'loudnorm') {
