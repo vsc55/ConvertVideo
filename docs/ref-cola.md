@@ -45,7 +45,7 @@ Estados (catálogo único `Get-CvQueueStates`, en `lib\WorkerCore.psm1`):
 | **En cola** | Tiene job y nadie lo ha reclamado. | `Iniciar`. |
 | **Codificando** | Lo tiene un worker vivo. | Mirar el progreso. |
 | **Bloqueo huérfano** | Quedó un `.lock` de un worker que ya no existe. | Menú contextual → *Liberar el bloqueo huérfano* (o lo roba solo el siguiente worker). |
-| **Sin terminar** | Existe la salida **pero el job sigue ahí**: la conversión no acabó, así que lo que hay en `Convertido\` está **a medias**. Desde la 4.7.3 una codificación cortada ya no deja esto (ver abajo); sale con salidas de versiones anteriores o copiadas a mano. | Menú contextual → *Eliminar la salida a medias*: vuelve a la cola y se rehace. |
+| **Sin terminar** | Existe la salida **pero el job sigue ahí**: la conversión no acabó, así que lo que hay en `Convertido\` está **a medias**. Desde la 4.7.4 una codificación cortada ya no deja esto (ver abajo); sale con salidas de versiones anteriores o copiadas a mano. | Menú contextual → *Eliminar la salida a medias*: vuelve a la cola y se rehace. |
 | **Hecho** | Existe `Convertido\<nombre>_fix.<ext>` **y ya no queda job**. | — |
 
 ## De dónde sale cada dato
@@ -54,7 +54,7 @@ Casi todo el estado de la cola **ya está en disco** y la ventana solo lo cruza 
 
 Ahí está la señal que distingue **hecho** de **cortado a medias**: el worker borra el `.job.json` **solo cuando termina bien**, así que *salida + job todavía presente* significa que la conversión no acabó. Importa más de lo que parece, porque el worker **salta** los archivos que ya tienen salida: mientras ese resto esté ahí, ese vídeo no se rehace nunca.
 
-Por eso, desde la 4.7.3, **la salida no existe con su nombre hasta que está completa**: se escribe en `Convertido\<nombre>_fix.<ext>.part` y se renombra al acabar (`Get-CvPartialPath` / `Complete-CvOutput`). Si la codificación se corta —el botón *Cortar*, cerrar la consola, un apagón— lo que queda es el `.part`, que **no cuenta como salida**: el archivo vuelve a *En cola* y el siguiente worker lo rehace solo (ffmpeg sobrescribe el `.part`). Un `.part` solo se queda huérfano si ese vídeo no se vuelve a convertir nunca. La salida se busca además por su **nombre exacto**: una `<nombre>_fix.mp4` de cuando la salida era mp4 no es la `_fix.mkv` que espera el worker.
+Por eso, desde la 4.7.4, **la salida no existe con su nombre hasta que está completa**: se escribe en `Convertido\<nombre>_fix.<ext>.part` y se renombra al acabar (`Get-CvPartialPath` / `Complete-CvOutput`). Si la codificación se corta —el botón *Cortar*, cerrar la consola, un apagón— lo que queda es el `.part`, que **no cuenta como salida**: el archivo vuelve a *En cola* y el siguiente worker lo rehace solo (ffmpeg sobrescribe el `.part`). Un `.part` solo se queda huérfano si ese vídeo no se vuelve a convertir nunca. La salida se busca además por su **nombre exacto**: una `<nombre>_fix.mp4` de cuando la salida era mp4 no es la `_fix.mkv` que espera el worker.
 
 Lo único que **no** está en disco es el avance dentro de un archivo, así que cada worker lo publica en **`Proceso\<pid>.worker.json`**: archivo en curso, paso, %, ETA y velocidad. Lo escribe `Update-CvWorkerProgress` desde `Invoke-ToolProgress`, con **los mismos números que pinta la consola**, así que las dos caras enseñan lo mismo. Es best-effort: si falla la escritura, el worker sigue codificando como si nada.
 

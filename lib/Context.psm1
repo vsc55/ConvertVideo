@@ -5,7 +5,7 @@
 
 function Get-CvVersion {
     <# Version del proyecto (fuente unica; la usan Convert.ps1 y setup.ps1). #>
-    '4.7.3'
+    '4.7.4'
 }
 
 function Get-CvAppName {
