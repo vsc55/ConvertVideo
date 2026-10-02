@@ -5,7 +5,7 @@
 
 function Get-CvVersion {
     <# Version del proyecto (fuente unica; la usan Convert.ps1 y setup.ps1). #>
-    '4.7.4'
+    '4.7.5'
 }
 
 function Get-CvAppName {
@@ -235,7 +235,13 @@ function New-CvContext {
         # encima, Resolve-CvCropAutoDecision lo propone pero pide confirmacion.
         BorderAutoMaxCropPct = [Math]::Min(100, [Math]::Max(1, [int]$cfg.encode.video.border.autoMaxCropPct))
         BorderAutoDuration = [Math]::Max(1, [int]$cfg.encode.video.border.autoDuration)
-        BorderMinCropPct  = [Math]::Max(0.0, [double]$cfg.encode.video.border.minCropPct)   # 0.0 (no 0) para forzar el overload double y no truncar un valor fraccionario
+        BorderMinCropPct  = [Math]::Max(0.0, [double]$cfg.encode.video.border.minCropPct)
+        # Lo que NO se mira al buscar bordes, segun el tipo de video (Resolve-CvBorderZone).
+        BorderEndSkip     = [Math]::Max(0, [int]$cfg.encode.video.border.endSkip)
+        BorderFilmMinutes = [Math]::Max(1, [int]$cfg.encode.video.border.filmMinutes)
+        BorderStartFilm   = [Math]::Max(0, [int]$cfg.encode.video.border.startFilm)
+        BorderEndSkipFilm = [Math]::Max(0, [int]$cfg.encode.video.border.endSkipFilm)
+        BorderAutoSkipFactor = [Math]::Max(1.0, [double]$cfg.encode.video.border.autoSkipFactor)   # 0.0 (no 0) para forzar el overload double y no truncar un valor fraccionario
         # Previsualizacion ffplay: inicio (0 = principio) y duracion de la muestra (0 = sin limite).
         PreviewStart   = [Math]::Max(0, [int]$cfg.preview.start)
         PreviewSeconds = [Math]::Max(0, [int]$cfg.preview.seconds)

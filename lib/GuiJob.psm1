@@ -319,9 +319,12 @@ function Get-CvJobScanValues {
         [Parameter(Mandatory)]$Context,
         [string]$Start = '',
         [string]$Duration = '',
-        [string]$Samples = ''
+        [string]$Samples = '',
+        # Duracion del video: el inicio de red es el de su TIPO (episodio o pelicula).
+        [double]$VideoDuration = 0
     )
-    $s = Get-CvJobScanNumber -Text $Start    -Default ([int]$Context.BorderStart)   -Min 0
+    $ini = [int](Resolve-CvBorderZone -Context $Context -VideoDuration $VideoDuration).Head
+    $s = Get-CvJobScanNumber -Text $Start    -Default $ini   -Min 0
     $d = Get-CvJobScanNumber -Text $Duration -Default ([int]$Context.BorderDur)     -Min (Get-CvCropSampleWindow -Duration 0)
     $m = Get-CvJobScanNumber -Text $Samples  -Default ([int]$Context.BorderSamples) -Min 1
     $fixed = @()

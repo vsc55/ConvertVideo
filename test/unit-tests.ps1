@@ -271,6 +271,15 @@ Assert-Eq 'border/autoSamples def'   3 (Get-CvConfigDefaultValue 'encode/video/b
 Assert-Eq 'border/autoDuration def'  15 (Get-CvConfigDefaultValue 'encode/video/border/autoDuration')
 Assert-Eq 'border/autoMaxCropPct def' 40 (Get-CvConfigDefaultValue 'encode/video/border/autoMaxCropPct')
 Assert-True 'help border/autoMaxCropPct' ((Get-CvConfigHelp).Contains('encode/video/border/autoMaxCropPct'))
+# Lo que no se mira al buscar bordes, por tipo de video (Resolve-CvBorderZone).
+Assert-Eq 'border/endSkip def'        180 (Get-CvConfigDefaultValue 'encode/video/border/endSkip')
+Assert-Eq 'border/filmMinutes def'    70  (Get-CvConfigDefaultValue 'encode/video/border/filmMinutes')
+Assert-Eq 'border/startFilm def'      300 (Get-CvConfigDefaultValue 'encode/video/border/startFilm')
+Assert-Eq 'border/endSkipFilm def'    600 (Get-CvConfigDefaultValue 'encode/video/border/endSkipFilm')
+Assert-Eq 'border/autoSkipFactor def' 2   (Get-CvConfigDefaultValue 'encode/video/border/autoSkipFactor')
+foreach ($kb in 'endSkip','filmMinutes','startFilm','endSkipFilm','autoSkipFactor') {
+    Assert-True "help border/$kb" ((Get-CvConfigHelp).Contains("encode/video/border/$kb"))
+}
 Assert-True 'help customProfile/audioHz'      ((Get-CvConfigHelp).Contains('customProfile/audioHz'))
 # Paridad estricta: customProfile debe traer TODOS los campos que acepta un perfil de profiles[].
 $cpKeys = @((Get-CvConfigDefaults).customProfile.Keys)
@@ -392,7 +401,7 @@ Assert-Eq   'all sin duplicados'       $all.Count ($all | Select-Object -Unique)
 # ================================================================================================
 Write-Host "`nFuentes unicas (Context / Profile)" -ForegroundColor Cyan
 Assert-Eq 'Get-CvAppName' 'ConvertVideo' (Get-CvAppName)
-Assert-Eq 'Get-CvVersion' '4.7.4'        (Get-CvVersion)
+Assert-Eq 'Get-CvVersion' '4.7.5'        (Get-CvVersion)
 Assert-Eq 'perfiles de serie = 13' 13 ((Get-CvProfiles | ForEach-Object { $_.Profiles } | Measure-Object).Count)
 # Los perfiles de serie con changeSize '1920:-2' (RESIZE fijo) deben ser solo-reduce (NoUpscale).
 $rzProfs = @(Get-CvProfiles | ForEach-Object { $_.Profiles } | Where-Object { "$($_.ChangeSize)" -ne '' })
@@ -2231,6 +2240,60 @@ $dBig = & $decAuto @('1200:500:360:290') 1920 1080
 Assert-Eq 'Auto: recorte enorme -> a mano' 'manual' $dBig.Decision
 Assert-True 'Auto: dice cuanto quitaria'   ($dBig.Reason -match '% de alto')
 Assert-Eq 'Auto: con tope alto, se aplica' 'crop' (& $decAuto @('1200:500:360:290') 1920 1080 90).Decision
+
+# --- REGRESION (cinco capitulos reales de una serie en HDTV, 1080p con barras de 108 px): el ultimo
+# tramo caia SIEMPRE en la promo final, a 16:9 completo. La union lo daba por "sin barras" y ninguno
+# se recortaba solo. Votos reales del escaneo rapido (3 tramos) y del completo (4).
+$dCap  = Resolve-CvCropAutoDecision -Groups @(@{ Crop = '1920:864:0:108'; Count = 2 }, @{ Crop = '1920:1072:0:4'; Count = 1 }) -Width 1920 -Height 1080 -MinCropPct 2 -MaxCropPct 40
+Assert-Eq   'Desacuerdo: no es un "no" silencioso' 'manual' $dCap.Decision
+Assert-Eq   'Desacuerdo: propone el de la mayoria' '1920:864:0:108' $dCap.Crop
+Assert-Eq   'Desacuerdo: dice cuantos lo ven'       (Get-CvText -Key 'vd.crop.desacuerdo' -Values @('1920:864:0:108', 2, 3)) $dCap.Reason
+Assert-Eq   'Desacuerdo: tambien con 3 de 4'       'manual' (Resolve-CvCropAutoDecision -Groups @(@{ Crop = '1920:864:0:108'; Count = 3 }, @{ Crop = '1920:1072:0:4'; Count = 1 }) -Width 1920 -Height 1080 -MinCropPct 2 -MaxCropPct 40).Decision
+# Pero NO cuando la mayoria solo ve ruido de borde: eso sigue siendo "sin barras".
+Assert-Eq   'Desacuerdo: mayoria de ruido -> sin barras' 'none' (Resolve-CvCropAutoDecision -Groups @(@{ Crop = '1916:1076:2:2'; Count = 3 }, @{ Crop = '1920:1080:0:0'; Count = 1 }) -Width 1920 -Height 1080 -MinCropPct 2 -MaxCropPct 40).Decision
+# Ni en un empate: sin mayoria no hay nada que proponer (el caso de "un punto a pantalla completa manda").
+Assert-Eq   'Desacuerdo: empate -> sin barras' 'none' (Resolve-CvCropAutoDecision -Groups @(@{ Crop = '1920:864:0:108'; Count = 2 }, @{ Crop = '1920:1072:0:4'; Count = 2 }) -Width 1920 -Height 1080 -MinCropPct 2 -MaxCropPct 40).Decision
+
+# QUE parte del video se mira (Resolve-CvBorderZone): episodio o pelicula por la duracion, y el
+# rapido salta autoSkipFactor veces mas.
+$zCtx = [pscustomobject]@{
+    BorderStart          = 120
+    BorderEndSkip        = 180
+    BorderFilmMinutes    = 70
+    BorderStartFilm      = 300
+    BorderEndSkipFilm    = 600
+    BorderAutoSkipFactor = 2
+}
+$zEp  = Resolve-CvBorderZone -Context $zCtx -VideoDuration 2898
+Assert-Eq 'Zona: un capitulo es episodio'   'episode' $zEp.Kind
+Assert-Eq 'Zona: episodio, principio'       120 $zEp.Head
+Assert-Eq 'Zona: episodio, final'           180 $zEp.Tail
+$zEpQ = Resolve-CvBorderZone -Context $zCtx -VideoDuration 2898 -Quick
+Assert-Eq 'Zona: el rapido salta el doble'  240 $zEpQ.Head
+Assert-Eq 'Zona: ...tambien al final'       360 $zEpQ.Tail
+$zFi  = Resolve-CvBorderZone -Context $zCtx -VideoDuration 7200
+Assert-Eq 'Zona: dos horas es pelicula'     'film' $zFi.Kind
+Assert-Eq 'Zona: pelicula, principio'       300 $zFi.Head
+Assert-Eq 'Zona: pelicula, creditos largos' 600 $zFi.Tail
+Assert-Eq 'Zona: pelicula rapida, final'    1200 (Resolve-CvBorderZone -Context $zCtx -VideoDuration 7200 -Quick).Tail
+Assert-Eq 'Zona: justo en el umbral, pelicula' 'film' (Resolve-CvBorderZone -Context $zCtx -VideoDuration 4200).Kind
+Assert-Eq 'Zona: sin duracion, episodio'    'episode' (Resolve-CvBorderZone -Context $zCtx -VideoDuration 0).Kind
+
+# Donde EMPIEZA cada tramo (Get-CvBorderSamplePositions). El caso de los capitulos: con el rapido
+# nuevo, ningun tramo toca los 6 ultimos minutos.
+$posCap = @(Get-CvBorderSamplePositions -VideoDuration 2898 -Window 15 -Head 240 -Tail 360 -Samples 3)
+Assert-Eq   'Tramos: tres'                         3 $posCap.Count
+Assert-Eq   'Tramos: el 1o tras la cabecera'       240 $posCap[0]
+Assert-True 'Tramos: el ultimo no entra en el final' (($posCap[2] + 15) -le (2898 - 360))
+# Sin saltar el final, el ultimo tramo caia en los ultimos segundos (lo que medimos: 2882 s).
+Assert-Eq   'Tramos: sin cola, al final del todo'  2882 @(Get-CvBorderSamplePositions -VideoDuration 2898 -Window 15 -Head 120 -Tail 0 -Samples 3)[2]
+# Un video CORTO no se queda sin zona: los saltos encogen en proporcion.
+$posCorto = @(Get-CvBorderSamplePositions -VideoDuration 600 -Window 15 -Head 240 -Tail 360 -Samples 3)
+Assert-True 'Tramos: video corto, repartidos'      ($posCorto[0] -lt $posCorto[2])
+Assert-True 'Tramos: video corto, dentro'          ($posCorto[0] -ge 0 -and ($posCorto[2] + 15) -lt 600)
+Assert-Eq   'Tramos: sin duracion, uno en el inicio' 120 @(Get-CvBorderSamplePositions -VideoDuration 0 -Window 15 -Head 120 -Tail 180 -Samples 3)[0]
+Assert-Eq   'Tramos: mas corto que un tramo -> 0'  0 @(Get-CvBorderSamplePositions -VideoDuration 10 -Window 15 -Head 120 -Tail 180 -Samples 3)[0]
+Assert-Eq   'Tramos: uno solo, en el inicio'       240 @(Get-CvBorderSamplePositions -VideoDuration 2898 -Window 15 -Head 240 -Tail 360 -Samples 1)[0]
 
 # ================================================================================================
 Write-Host "`nIo - ficheros (JSON atomico, UTF-8 sin BOM) y helpers genericos" -ForegroundColor Cyan

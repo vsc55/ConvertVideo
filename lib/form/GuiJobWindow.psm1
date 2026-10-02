@@ -200,7 +200,12 @@ function Show-CvJobWindow {
     $txtScanIni = $vc['cvJobScanStart']
     $txtScanDur = $vc['cvJobScanDur']
     $txtScanNum = $vc['cvJobScanSamples']
-    $txtScanIni.Text = "$([int]$Context.BorderStart)"
+    # El inicio, el del TIPO de este video (una pelicula salta mas cabecera que un episodio). La
+    # ventana puede abrirse SIN la info del video -la lee $analyze, al mostrarse-: hasta entonces la
+    # duracion es 0 (episodio), y $analyze lo rehace con la de verdad si nadie ha tocado el campo.
+    $durVideo = { if ($null -eq $st.Info) { 0.0 } else { [double](Get-MediaDuration $st.Info) } }
+    $st.ScanIniDefault = "$([int](Resolve-CvBorderZone -Context $Context -VideoDuration (& $durVideo)).Head)"
+    $txtScanIni.Text = $st.ScanIniDefault
     $txtScanDur.Text = "$([int]$Context.BorderDur)"
     $txtScanNum.Text = "$([int]$Context.BorderSamples)"
 
@@ -597,7 +602,7 @@ function Show-CvJobWindow {
             # Con los parametros que haya en la fila 'Escaneo' -los de la configuracion si no se han
             # tocado-. Se devuelven a los campos ya normalizados: si se ha tecleado algo que no es un
             # numero se ve con que se ha escaneado de verdad, en vez de usar otra cosa a su espalda.
-            $sv = Get-CvJobScanValues -Context $Context -Start $txtScanIni.Text -Duration $txtScanDur.Text -Samples $txtScanNum.Text
+            $sv = Get-CvJobScanValues -Context $Context -Start $txtScanIni.Text -Duration $txtScanDur.Text -Samples $txtScanNum.Text -VideoDuration (& $durVideo)
             $txtScanIni.Text = "$($sv.Start)"
             $txtScanDur.Text = "$($sv.Duration)"
             $txtScanNum.Text = "$($sv.Samples)"
@@ -886,7 +891,7 @@ function Show-CvJobWindow {
                 & $say $(if ($auto) { (Get-CvText -Key 'job.paso.prescan') } else { (Get-CvText -Key 'job.paso.bordes') })
                 $st.CropScan = $(if ($auto) {
                     Get-CvJobCropCandidates -Context $Context -Info $st.Info -Index ([int]$st.Draft.VideoIndex) `
-                        -Duration ([int]$Context.BorderAutoDuration) -Samples ([int]$Context.BorderAutoSamples)
+                        -Duration ([int]$Context.BorderAutoDuration) -Samples ([int]$Context.BorderAutoSamples) -Quick
                 } else {
                     Get-CvJobCropCandidates -Context $Context -Info $st.Info -Index ([int]$st.Draft.VideoIndex)
                 })
@@ -927,6 +932,11 @@ function Show-CvJobWindow {
                 $lblHead.Text = (Get-CvText -Key 'job.noleido')
                 $bar.Visible  = $false
                 return
+            }
+            # Ya hay duracion: el inicio del escaneo, el de su tipo (salvo que se haya tecleado otro).
+            if ("$($txtScanIni.Text)" -eq "$($st.ScanIniDefault)") {
+                $st.ScanIniDefault = "$([int](Resolve-CvBorderZone -Context $Context -VideoDuration (& $durVideo)).Head)"
+                $txtScanIni.Text = $st.ScanIniDefault
             }
             & $say (Get-CvText -Key 'job.paso.perfiles')
             $st.ProfOpts = @(Get-CvJobProfileOptions -Context $Context)

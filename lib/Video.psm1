@@ -241,6 +241,31 @@ function Resolve-CvCropAutoDecision {
     }
     $crop = Merge-CvCropBoxes -Boxes @($g | ForEach-Object { "$($_.Crop)" }) -Width $Width -Height $Height -MinPct $MinCropPct
     if ("$crop" -eq '') {
+        # La UNION dice que no hay barras. Pero si la MAYORIA de los tramos ve unas barras que por si
+        # solas pasan el minimo, eso no es ruido: es una CONTRADICCION entre tramos -unos creditos a
+        # pantalla completa, un corte publicitario, o al reves, planos oscuros que parecen barras-, y
+        # la union no puede saber cual de los dos lados miente. Decidir "sin barras" en silencio era
+        # justo el fallo que no se ve: se deja para que lo mire una persona, con el recorte propuesto.
+        # Los votos, leidos a mano: si un grupo es una HASHTABLE, '.Count' es su numero de claves (2)
+        # y no la clave Count -y Measure-Object -Property Count tambien lee eso-. Con pscustomobject
+        # da igual, pero aqui llegan de las dos formas.
+        $votos = { param($x) if ($x -is [System.Collections.IDictionary]) { [int]$x['Count'] } else { [int]$x.Count } }
+        $tot = 0
+        $top = $null
+        $topN = -1
+        foreach ($x in $g) {
+            $n = & $votos $x
+            $tot += $n
+            if ($n -gt $topN) { $top = $x; $topN = $n }
+        }
+        $topCrop = Merge-CvCropBoxes -Boxes @("$($top.Crop)") -Width $Width -Height $Height -MinPct $MinCropPct
+        if ($g.Count -gt 1 -and "$topCrop" -ne '' -and (2 * $topN) -gt $tot) {
+            return @{
+                Decision = 'manual'
+                Crop     = "$topCrop"
+                Reason   = (Get-CvText -Key 'vd.crop.desacuerdo' -Values @($topCrop, $topN, $tot))
+            }
+        }
         return @{ Decision = 'none'; Crop = ''; Reason = (Get-CvText -Key 'vd.crop.ruido') }
     }
     $q  = "$crop" -split ':'
@@ -266,6 +291,87 @@ function Resolve-CvCropAutoDecision {
     }
 }
 
+function Resolve-CvBorderZone {
+    <#
+        PURO. QUE parte del video se mira al buscar bordes negros: cuantos segundos se saltan al
+        PRINCIPIO (Head) y al FINAL (Tail). Fuente unica: la usan la consola, el autodescubrimiento de
+        la ventana y el boton 'Detectar bordes' del editor, a traves de Find-CropDetectSamples.
+
+        Hay que saltarse los DOS extremos porque ahi no esta la imagen: al principio, logos, cabeceras
+        y negros; al final, los CREDITOS -o la promo de la cadena en una captura de TV-, casi siempre a
+        pantalla completa. Y la decision automatica UNE lo que ve cada tramo (Merge-CvCropBoxes), asi
+        que un solo tramo en los creditos basta para concluir que no hay barras. Paso de verdad: cinco
+        capitulos de una serie en HDTV, con barras de 108 px arriba y abajo, todos con su ultimo tramo
+        en la promo final a 16:9 completo, y ninguno se recortaba solo. Antes solo se saltaba el
+        principio (border.start); el final se miraba hasta el ultimo segundo.
+
+          - TIPO por duracion: desde border.filmMinutes es una PELICULA (border.startFilm /
+            border.endSkipFilm: cabecera y creditos mas largos); por debajo, un EPISODIO (border.start /
+            border.endSkip). Duracion desconocida = episodio.
+          - El escaneo RAPIDO (-Quick, detectBorder 'auto') salta border.autoSkipFactor veces mas: son
+            pocos tramos y cortos, y uno mal colocado decide por todos.
+
+        Devuelve @{ Kind = 'film'|'episode'; Head; Tail } en segundos. Si el video es demasiado corto
+        para saltarse todo eso, lo resuelve Get-CvBorderSamplePositions (encoge los saltos).
+    #>
+    param([Parameter(Mandatory)]$Context, [double]$VideoDuration = 0, [switch]$Quick)
+    $film = ($VideoDuration -gt 0) -and ($VideoDuration -ge (60.0 * [double]$Context.BorderFilmMinutes))
+    $head = if ($film) { [double]$Context.BorderStartFilm } else { [double]$Context.BorderStart }
+    $tail = if ($film) { [double]$Context.BorderEndSkipFilm } else { [double]$Context.BorderEndSkip }
+    if ($Quick) {
+        $f = [Math]::Max(1.0, [double]$Context.BorderAutoSkipFactor)
+        $head = $head * $f
+        $tail = $tail * $f
+    }
+    # Floor(x + 0.5) y no [int]: [int] redondea al par (ref-gotchas).
+    [pscustomobject]@{
+        Kind = $(if ($film) { 'film' } else { 'episode' })
+        Head = [int][Math]::Floor([Math]::Max(0.0, $head) + 0.5)
+        Tail = [int][Math]::Floor([Math]::Max(0.0, $tail) + 0.5)
+    }
+}
+
+function Get-CvBorderSamplePositions {
+    <#
+        PURO. El segundo donde EMPIEZA cada tramo de un escaneo de bordes: -Samples tramos de -Window
+        segundos repartidos por igual entre -Head (lo que se salta al principio) y el final menos -Tail.
+
+        Si el video es demasiado corto para saltarse todo eso, los saltos se ENCOGEN en proporcion
+        hasta dejar libre al menos la mitad del video: mejor mirar cerca de los extremos que mirar
+        siempre el mismo punto. Duracion desconocida: un tramo en -Head, como siempre.
+
+        Emite los segundos uno a uno (no ',$array'): el llamador los recoge con @().
+    #>
+    param(
+        [double]$VideoDuration = 0,
+        [int]$Window = 5,
+        [int]$Head = 0,
+        [int]$Tail = 0,
+        [int]$Samples = 1
+    )
+    if ($Samples -lt 1) { $Samples = 1 }
+    if ($Head -lt 0) { $Head = 0 }
+    if ($Tail -lt 0) { $Tail = 0 }
+    if ($VideoDuration -le 0) { return [int]$Head }
+    # El ultimo segundo en el que puede EMPEZAR un tramo de -Window segundos.
+    $room = [double]$VideoDuration - $Window - 1
+    if ($room -le 0) { return 0 }
+    $h = [double]$Head
+    $t = [double]$Tail
+    if (($h + $t) -gt ($room / 2)) {
+        $k = ($room / 2) / ($h + $t)
+        $h = $h * $k
+        $t = $t * $k
+    }
+    $first = [int][Math]::Floor($h)
+    $last  = [int][Math]::Floor($room - $t)
+    if ($last -lt $first) { $last = $first }
+    if ($Samples -eq 1) { return $first }
+    for ($i = 0; $i -lt $Samples; $i++) {
+        [int][Math]::Floor($first + ($last - $first) * $i / ($Samples - 1))
+    }
+}
+
 function Get-CvCropSampleWindow {
     <#
         Los segundos que escanea CADA punto de la deteccion de bordes. Tiene suelo: por debajo de 5 s
@@ -287,17 +393,22 @@ function Find-CropDetectSamples {
     #>
     param(
         [Parameter(Mandatory)]$Context, [Parameter(Mandatory)][string]$File,
-        [int]$Start = -1, [int]$Duration = -1, [double]$VideoDuration = 0, [int]$Index = -1, [int]$Samples = -1
+        [int]$Start = -1, [int]$Duration = -1, [double]$VideoDuration = 0, [int]$Index = -1, [int]$Samples = -1,
+        # Segundos del FINAL que no se miran (-1 = los de la zona). -Quick = el escaneo rapido.
+        [int]$Tail = -1,
+        [switch]$Quick
     )
-    if ($Start -lt 0)    { $Start = [int]$Context.BorderStart }
+    # QUE parte se mira: sin -Start/-Tail explicitos, la zona de este tipo de video y escaneo.
+    $zone = Resolve-CvBorderZone -Context $Context -VideoDuration $VideoDuration -Quick:$Quick
+    if ($Start -lt 0)    { $Start = [int]$zone.Head }
+    if ($Tail -lt 0)     { $Tail = [int]$zone.Tail }
     if ($Duration -lt 0) { $Duration = [int]$Context.BorderDur }
     if ($Samples -lt 1)  { $Samples = [int]$Context.BorderSamples }
     if ($Samples -lt 1)  { $Samples = 1 }
-    # Si el video es mas corto que el inicio configurado, llevar el inicio dentro del contenido.
-    $Start = Get-CvSafeStart -Start $Start -Duration $VideoDuration -Window 5
 
     if ($Samples -le 1 -or $VideoDuration -le 0) {
-        $c = Find-CropDetect -Context $Context -File $File -Start $Start -Duration $Duration -Index $Index
+        $p0 = @(Get-CvBorderSamplePositions -VideoDuration $VideoDuration -Window $Duration -Head $Start -Tail $Tail -Samples 1)[0]
+        $c = Find-CropDetect -Context $Context -File $File -Start $p0 -Duration $Duration -Index $Index
         $g = if ($c) {
             @([pscustomobject]@{
                 Crop  = $c
@@ -311,10 +422,8 @@ function Find-CropDetectSamples {
     }
 
     $win = Get-CvCropSampleWindow -Duration $Duration           # cada punto escanea $Duration (no se reparte)
-    $lastStart = [Math]::Max($Start, [int]($VideoDuration - $win - 1))
     $crops = @()
-    for ($i = 0; $i -lt $Samples; $i++) {
-        $p = [int]($Start + ($lastStart - $Start) * $i / ($Samples - 1))
+    foreach ($p in @(Get-CvBorderSamplePositions -VideoDuration $VideoDuration -Window $win -Head $Start -Tail $Tail -Samples $Samples)) {
         $c = Find-CropDetect -Context $Context -File $File -Start $p -Duration $win -Index $Index
         if ($c) { $crops += $c }
     }
@@ -628,7 +737,8 @@ function Invoke-VideoAsk {
     if ($borderOn -or $borderAuto) {
         # Duracion del video (para repartir los puntos de escaneo entre inicio y final).
         $vdur  = Get-MediaDuration $Info
-        $start = [int]$Context.BorderStart
+        # Desde donde se mira en el escaneo completo: depende de si es episodio o pelicula.
+        $start = [int](Resolve-CvBorderZone -Context $Context -VideoDuration $vdur).Head
         $dur   = [int]$Context.BorderDur
         $runInteractive = $borderOn
 
@@ -638,7 +748,7 @@ function Invoke-VideoAsk {
             #  - barras con mayoria fiable (mismo voto que el modo normal) -> aplica el recorte solo;
             #  - ambiguo (sin mayoria) -> pasa al modo interactivo (menu).
             Write-CvLog 'VIDEO' (Get-CvText -Key 'vd.auto.comp') -Indent 3
-            $ag = @((Find-CropDetectSamples -Context $Context -File $Info.format.filename -Start $start -Duration ([int]$Context.BorderAutoDuration) -VideoDuration $vdur -Index $res.Index -Samples ([int]$Context.BorderAutoSamples)).Groups)
+            $ag = @((Find-CropDetectSamples -Context $Context -File $Info.format.filename -Duration ([int]$Context.BorderAutoDuration) -VideoDuration $vdur -Index $res.Index -Samples ([int]$Context.BorderAutoSamples) -Quick).Groups)
             # La decision es de Resolve-CvCropAutoDecision (fuente unica, la misma que usa la ventana).
             $dec = Resolve-CvCropAutoDecision -Groups $ag -Width ([int]$vstream.width) -Height ([int]$vstream.height) `
                 -MinCropPct ([double]$Context.BorderMinCropPct) -MaxCropPct ([int]$Context.BorderAutoMaxCropPct)

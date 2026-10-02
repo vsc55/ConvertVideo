@@ -30,6 +30,7 @@ Resultado (sobre los puntos del pre-escaneo):
 | La unión no deja recorte significativo (< `minCropPct`% en los dos ejes) | **No recorta** (sin preguntar) |
 | Queda un recorte normal (≤ `autoMaxCropPct`% de ancho y de alto) | **Aplica el recorte** (sin preguntar) |
 | El recorte sale **desproporcionado** (> `autoMaxCropPct`%, def. 40) | Lo **propone** y pide confirmación: casi siempre significa que ningún punto llegó a ver un plano a pantalla completa |
+| Los puntos se **contradicen**: la unión no deja recorte, pero la **mayoría estricta** ve unas barras que por sí solas pasan `minCropPct` | **Propone** el de la mayoría y pide confirmación. La unión no puede saber qué lado miente —unos créditos o un corte publicitario a pantalla completa, o al revés, planos oscuros que parecen barras—, y decidir «sin barras» en silencio era justo el fallo que no se veía. Un empate (1 contra 1) sigue siendo «sin barras». |
 
 > La decisión vive en **una sola función pura**, `Resolve-CvCropAutoDecision` ([Video.psm1](../lib/Video.psm1)), que usan igual la consola y la ventana.
 >
@@ -47,18 +48,33 @@ ffmpeg -ss <inicio> -to <fin> -i <archivo> [-map 0:<pista>] -vf cropdetect -f nu
 
 ### Por qué en varios puntos
 
-Un solo escaneo al inicio se equivoca a menudo: los primeros minutos pueden ser créditos, un logo, una escena oscura o un plano con formato distinto al del grueso de la película. Por eso se muestrea en **`encode.video.border.samples`** puntos repartidos **uniformemente** entre `encode.video.border.start` y casi el final del vídeo, y cada punto **vota** su recorte.
+Un solo escaneo al inicio se equivoca a menudo: los primeros minutos pueden ser créditos, un logo, una escena oscura o un plano con formato distinto al del grueso de la película. Por eso se muestrea en **`encode.video.border.samples`** puntos repartidos **uniformemente** por el vídeo, **sin sus extremos** (ver *Qué parte del vídeo se mira*), y cada punto **vota** su recorte.
 
-- **`encode.video.border.start`** (def. 120): segundo del primer punto.
+- **`encode.video.border.start`** (def. 120): segundos del principio de un **episodio** que no se miran (el primer punto empieza ahí). Las películas usan `startFilm`, y el final se salta con `endSkip` / `endSkipFilm`.
 - **`encode.video.border.duration`** (def. 120): segundos que escanea **cada** punto. No es un presupuesto que se reparta: con `samples=6` son **6 escaneos de `duration` segundos** cada uno (más puntos = más tiempo total de análisis, pero cada muestra conserva su ventana completa).
 - **`encode.video.border.samples`** (def. 6): número de puntos. Con `1` (o duración desconocida) se comporta como el escaneo único clásico.
 
-Ejemplo de reparto en un vídeo de 46 min (`start=120`, `duration=120`):
+Ejemplo de reparto en un episodio de 46 min (`start=120`, `endSkip=180`, `duration=120`):
 
 | samples | ventana por punto | tiempo total de análisis | puntos de muestreo (s) |
 |---|---|---|---|
-| 3 | 120 s | 360 s | 120, 1380, 2639 |
-| 9 | 120 s | 1080 s | 120, 435, 750, 1065, 1380, 1694, 2009, 2324, 2639 |
+| 3 | 120 s | 360 s | 120, 1289, 2459 |
+| 9 | 120 s | 1080 s | 120, 412, 704, 997, 1289, 1581, 1874, 2166, 2459 |
+
+El último punto termina 3 minutos antes del final (antes empezaba en el 2639 y llegaba hasta el último segundo). El rápido del mismo episodio (3 puntos de 15 s, saltando 240 y 360 s) mira en 240, 1312 y 2384.
+
+### Qué parte del vídeo se mira
+
+Los dos **extremos** no se miran, porque ahí no está la imagen de la película: al principio hay logos, cabeceras y negros; al final, los **créditos** —o la promo de la cadena en una captura de TV—, casi siempre **a pantalla completa**. Y como el modo `auto` **une** lo que ve cada punto, un solo punto en los créditos basta para concluir que no hay barras. Lo que se salta depende de **qué tipo de vídeo es**, que se deduce de su **duración**, y de **qué escaneo** es (`Resolve-CvBorderZone`, [Video.psm1](../lib/Video.psm1), una sola función para la consola, el autodescubrimiento y el editor):
+
+| | Episodio (menos de `filmMinutes`, def. 70 min) | Película (desde `filmMinutes`) |
+|---|---|---|
+| **Escaneo completo** (`detectBorder: true`, botón *Detectar bordes*) | salta `start` (120 s) al principio y `endSkip` (180 s) al final | salta `startFilm` (300 s) y `endSkipFilm` (600 s): cabecera y créditos más largos |
+| **Escaneo rápido** (`detectBorder: 'auto'`) | `autoSkipFactor` (×2) veces más: **240 s y 360 s** | **600 s y 1200 s** |
+
+El rápido salta más porque son **pocos puntos y cortos** (3 de 15 s), y uno mal colocado decide por todos. Si el vídeo es demasiado corto para saltarse todo eso, los saltos **encogen en proporción** hasta dejar libre al menos la mitad del vídeo (`Get-CvBorderSamplePositions`): mejor mirar cerca de los extremos que mirar siempre el mismo punto.
+
+> **El caso que lo destapó** (cinco capítulos de una serie en HDTV 1080p, barras de 108 px arriba y abajo): antes solo se saltaba el principio y el último punto caía **siempre** en los últimos segundos del fichero, en la promo final a 16:9 completo. Los votos del rápido eran `1920:864:0:108` ×2 y `1920:1072:0:4` ×1; la unión daba «sin barras» y **ninguno de los cinco se recortaba solo**. El completo, con 4 puntos, igual: 3 contra 1, mismo resultado. Saltando el final, los cinco salen **unánimes** en `1920:864:0:108`, tanto en el rápido como en el completo, y se recortan solos.
 
 ## Decisión: auto-aceptar o preguntar
 
@@ -101,7 +117,11 @@ flowchart TD
 
 | Clave | Def. | Efecto |
 |---|---|---|
-| `start` | `120` | Segundo del primer punto (se ajusta solo si el vídeo es más corto). |
+| `start` | `120` | Segundos del principio de un **episodio** que no se miran (el primer punto empieza ahí). |
+| `endSkip` | `180` | Segundos del **final** de un episodio que no se miran: créditos o la promo de la cadena. |
+| `filmMinutes` | `70` | Desde estos minutos el vídeo es una **película** para buscar bordes. |
+| `startFilm` / `endSkipFilm` | `300` / `600` | Lo mismo para una película: cabecera y créditos más largos. |
+| `autoSkipFactor` | `2` | Cuántas veces más salta principio y final el escaneo **rápido** (`'auto'`). `1` = lo mismo que el completo. |
 | `duration` | `120` | Segundos que escanea **cada** punto. |
 | `samples` | `6` | Nº de puntos repartidos por el vídeo (`1` = escaneo único clásico). |
 | `autoAcceptPct` | `60` | % de votos del más votado para auto-aceptar. `100` = exigir unanimidad. |

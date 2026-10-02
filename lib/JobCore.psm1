@@ -575,13 +575,16 @@ function Get-CvJobCropCandidates {
         [int]$Index = -1,
         [int]$Start = -1,
         [int]$Duration = -1,
-        [int]$Samples = -1
+        [int]$Samples = -1,
+        # El escaneo RAPIDO (detectBorder 'auto'): salta mas principio y final (Resolve-CvBorderZone).
+        [switch]$Quick
     )
-    $start   = if ($Start    -ge 0) { $Start }    else { [int]$Context.BorderStart }
+    # -Start: el que se pida (el campo del editor); si no, el de la zona del video (-1).
+    $start   = if ($Start    -ge 0) { $Start }    else { -1 }
     $dur     = if ($Duration -ge 0) { $Duration } else { [int]$Context.BorderDur }
     $samples = if ($Samples  -ge 0) { $Samples }  else { [int]$Context.BorderSamples }
     $vdur    = Get-MediaDuration $Info
-    $groups  = @((Find-CropDetectSamples -Context $Context -File "$($Info.format.filename)" -Start $start -Duration $dur -VideoDuration $vdur -Index $Index -Samples $samples).Groups)
+    $groups  = @((Find-CropDetectSamples -Context $Context -File "$($Info.format.filename)" -Start $start -Duration $dur -VideoDuration $vdur -Index $Index -Samples $samples -Quick:$Quick).Groups)
     $tot     = if ($groups.Count -gt 0) { ($groups | Measure-Object -Property Count -Sum).Sum } else { 0 }
     $topPct  = if ($tot -gt 0) { [int][math]::Round(100 * $groups[0].Count / $tot) } else { 0 }
     $margin  = if ($groups.Count -ge 2) { $groups[0].Count - $groups[1].Count } elseif ($groups.Count -eq 1) { $groups[0].Count } else { 0 }
@@ -1172,7 +1175,7 @@ function Get-CvJobAutoPlan {
         if ($auto) {
             & $step (Get-CvText -Key 'plan.prescan')
             $c = Get-CvJobCropCandidates -Context $Context -Info $Info -Index ([int]$draft.VideoIndex) `
-                -Duration ([int]$Context.BorderAutoDuration) -Samples ([int]$Context.BorderAutoSamples)
+                -Duration ([int]$Context.BorderAutoDuration) -Samples ([int]$Context.BorderAutoSamples) -Quick
             $cands = @($c.Groups)
             # MISMA decision que la consola (Resolve-CvCropAutoDecision): aqui solo se traduce a
             # 'se guarda solo' o 'esto lo tiene que ver una persona' (Reasons).

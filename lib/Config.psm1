@@ -479,6 +479,20 @@ function Get-CvConfigDefaults {
                     autoMaxCropPct      = 40
                     autoDuration        = 15
                     minCropPct          = 2
+                    # ZONAS QUE NO SE MIRAN. Al principio hay logos, cabeceras y negros; al final, los
+                    # CREDITOS (o la promo de la cadena en una captura de TV), casi siempre a pantalla
+                    # completa. Y la decision automatica UNE lo que ve cada tramo -una barra es lo que
+                    # esta negro en TODOS-, asi que un solo tramo en los creditos basta para concluir
+                    # que no hay barras. 'start' es lo que se salta al principio de un EPISODIO; esto,
+                    # lo que se salta al final.
+                    endSkip             = 180
+                    # Desde estos minutos el video es una PELICULA, con cabecera y creditos mas largos.
+                    filmMinutes         = 70
+                    startFilm           = 300
+                    endSkipFilm         = 600
+                    # El escaneo RAPIDO (detectBorder 'auto') salta esto VECES mas al principio y al
+                    # final: son pocos tramos y cortos, y uno mal colocado decide por todos.
+                    autoSkipFactor      = 2
                 }
             }
             # --- AUDIO ---
@@ -994,6 +1008,11 @@ function Get-CvConfigHelp {
         'encode/video/border/autoMaxCropPct' = (Get-CvText -Key 'cfg.help.encode.video.border.autoMaxCropPct')
         'encode/video/border/autoDuration' = (Get-CvText -Key 'cfg.help.encode.video.border.autoDuration')
         'encode/video/border/minCropPct' = (Get-CvText -Key 'cfg.help.encode.video.border.minCropPct')
+        'encode/video/border/endSkip' = (Get-CvText -Key 'cfg.help.encode.video.border.endSkip')
+        'encode/video/border/filmMinutes' = (Get-CvText -Key 'cfg.help.encode.video.border.filmMinutes')
+        'encode/video/border/startFilm' = (Get-CvText -Key 'cfg.help.encode.video.border.startFilm')
+        'encode/video/border/endSkipFilm' = (Get-CvText -Key 'cfg.help.encode.video.border.endSkipFilm')
+        'encode/video/border/autoSkipFactor' = (Get-CvText -Key 'cfg.help.encode.video.border.autoSkipFactor')
 
 
         'preview' = (Get-CvText -Key 'cfg.help.preview')
