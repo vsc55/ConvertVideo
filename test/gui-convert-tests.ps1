@@ -102,7 +102,8 @@ $tmpCfg = Join-Path $tmpRoot 'config.json'
 # gui.confirmCloseWithWorkers=false a proposito: la cola sembrada tiene un worker VIVO (este mismo
 # proceso), y con la pregunta activada cerrar la ventana sacaria un dialogo MODAL que dejaria la
 # bateria colgada para siempre. El aviso de cierre se prueba en su propio caso, mas abajo.
-Set-Content -Path $tmpCfg -Value '{ "behavior": { "workers": 2 }, "gui": { "confirmCloseWithWorkers": false } }' -Encoding UTF8
+# previewCropOnAsk apagado: el editor de pruebas no puede abrir un ffplay que nadie va a cerrar.
+Set-Content -Path $tmpCfg -Value '{ "behavior": { "workers": 2 }, "gui": { "confirmCloseWithWorkers": false, "previewCropOnAsk": false } }' -Encoding UTF8
 $ctx = New-CvContext -Root $tmpRoot -ConfigPath $tmpCfg
 
 # PID que seguro NO existe: sirve para fabricar un bloqueo/estado CADUCADO (worker muerto).
@@ -1083,7 +1084,7 @@ if (-not $sta) {
     # "nada modal en la bateria", y lleva contador: a los ~5 s se sale por las bravas antes que
     # dejarla colgada.
     $cfgAsk = Join-Path $tmpRoot 'config.ask.json'
-    Set-Content -Path $cfgAsk -Value '{ "behavior": { "workers": 2 }, "gui": { "confirmCloseWithWorkers": true } }' -Encoding UTF8
+    Set-Content -Path $cfgAsk -Value '{ "behavior": { "workers": 2 }, "gui": { "confirmCloseWithWorkers": true, "previewCropOnAsk": false } }' -Encoding UTF8
     $ctxAsk = New-CvContext -Root $tmpRoot -ConfigPath $cfgAsk
     $script:askSaw = $false
     $script:askBtn = 0
@@ -1847,6 +1848,83 @@ if ($null -eq $jobInfo) {
         Assert-Eq   'Recorrido: perfil aplicado'  'copy' "$($jw.Prof.VideoEncoder)"
         # Y la cola ya lo ve preparado, que es el efecto que se busca.
         Assert-Eq   'Recorrido: la cola lo ve en cola' 'queued' (@(Get-CvQueueStatus -Context $ctxJob) | Where-Object { $_.Name -eq 'Serie_3x01' }).State
+
+        # ------------------------------------------------------------------------------------
+        # NO SE PARA mientras respondes: el analisis va en segundo plano. El PRIMER archivo pide
+        # revision (dos pistas de video: ni con 'copy' se elige sola) y el SEGUNDO no; mientras el
+        # editor del primero esta abierto, el segundo tiene que quedar PREPARADO -antes se quedaba
+        # esperando a que le dieras a guardar-. Solo entonces se guarda el primero.
+        Write-Host "`nGuiJob - preparar pendientes: sigue con el resto mientras revisas uno" -ForegroundColor Cyan
+        Copy-Item -LiteralPath (Join-Path $Root 'test\pistas-video-multiple.mkv') -Destination (Join-Path $ctxJob.Original 'Serie_4x01.mkv') -Force
+        Copy-Item -LiteralPath $fixture -Destination (Join-Path $ctxJob.Original 'Serie_4x02.mkv') -Force
+        $pend2 = @(
+            [pscustomobject]@{
+                Name = 'Serie_4x01'
+                Path = (Join-Path $ctxJob.Original 'Serie_4x01.mkv')
+            }
+            [pscustomobject]@{
+                Name = 'Serie_4x02'
+                Path = (Join-Path $ctxJob.Original 'Serie_4x02.mkv')
+            }
+        )
+        $t2 = New-Object System.Windows.Forms.Timer
+        $t2.Interval = 300
+        $script:bgErr     = ''
+        $script:bgEditors = 0
+        $script:bgWhile   = ''
+        $script:bgWaits   = 0
+        $script:bgRows    = ''
+        $script:bgEdOpen  = $false
+        $t2.Add_Tick({
+            try {
+                $forms = @([System.Windows.Forms.Application]::OpenForms)
+                $pl = @($forms | ForEach-Object { $_.Controls.Find('cvProfList', $true) } | Where-Object { $_ })
+                if ($pl.Count -gt 0) {
+                    $pl[0].SelectedIndex = 0
+                    @($forms | ForEach-Object { $_.Controls.Find('cvProfOk', $true) } | Where-Object { $_ })[0].PerformClick()
+                    return
+                }
+                $sv = @($forms | ForEach-Object { $_.Controls.Find('cvJobSave', $true) } | Where-Object { $_ })
+                $lst = @($forms | ForEach-Object { $_.Controls.Find('cvPrepList', $true) } | Where-Object { $_ })
+                if ($sv.Count -gt 0) {
+                    # El editor del PRIMERO esta abierto: esperar a que el segundo quede preparado.
+                    if (-not $script:bgEdOpen) { $script:bgEdOpen = $true; $script:bgEditors++ }
+                    $row2 = "$($lst[0].Items[1].SubItems[1].Text)"
+                    if ($row2 -ne (Get-CvText -Key 'prep.est.preparado')) {
+                        $script:bgWaits++
+                        if ($script:bgWaits -gt 200) { $t2.Stop(); $script:bgErr = "el segundo no se preparo con el editor abierto (estado: $row2)"; foreach ($fm in $forms) { $fm.Close() } }
+                        return
+                    }
+                    $script:bgWhile = $row2
+                    if (-not $sv[0].Enabled) { $t2.Stop(); $script:bgErr = 'Guardar job desactivado'; foreach ($fm in $forms) { $fm.Close() }; return }
+                    $sv[0].PerformClick()
+                    $script:bgEdOpen = $false
+                    return
+                }
+                $cl = @($forms | ForEach-Object { $_.Controls.Find('cvPrepClose', $true) } | Where-Object { $_ })
+                if ($cl.Count -gt 0 -and "$($cl[0].Text)" -eq (Get-CvText -Key 'comun.cerrar')) {
+                    $script:bgRows = (@($lst[0].Items | ForEach-Object { "{0}={1}" -f $_.Text, $_.SubItems[1].Text }) -join ',')
+                    $t2.Stop()
+                    $cl[0].PerformClick()
+                }
+            } catch {
+                $t2.Stop()
+                $script:bgErr = "$_"
+                foreach ($fm in @([System.Windows.Forms.Application]::OpenForms)) { $fm.Close() }
+            }
+        })
+        $t2.Start()
+        $nPrep2 = Show-CvPrepareWindow -Context $ctxJob -Files $pend2
+        $t2.Stop()
+        Assert-Eq   'En segundo plano: sin excepciones'           '' $script:bgErr
+        Assert-Eq   'En segundo plano: un solo editor (el que pregunta)' 1 $script:bgEditors
+        Assert-Eq   'En segundo plano: el 2o, preparado CON el editor del 1o abierto' (Get-CvText -Key 'prep.est.preparado') $script:bgWhile
+        Assert-Eq   'En segundo plano: los dos preparados'        2 $nPrep2
+        Assert-Eq   'En segundo plano: estado de las filas' ("Serie_4x01={0},Serie_4x02={0}" -f (Get-CvText -Key 'prep.est.preparado')) $script:bgRows
+        $j1 = Get-Item -LiteralPath (Get-CvJobPath -Context $ctxJob -Name 'Serie_4x01')
+        $j2 = Get-Item -LiteralPath (Get-CvJobPath -Context $ctxJob -Name 'Serie_4x02')
+        # Y se ve en el disco: el job del SEGUNDO se escribio antes que el del primero.
+        Assert-True 'En segundo plano: el 2o se guardo antes que el 1o' ($j2.LastWriteTime -le $j1.LastWriteTime)
     }
 }
 

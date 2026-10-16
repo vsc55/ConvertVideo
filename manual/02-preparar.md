@@ -69,7 +69,7 @@ En la cola, el botón **`Preparar pendientes (N)`** recorre todos los archivos q
 
 | Columna | Qué dice |
 |---|---|
-| **Estado** | `preparado` (job escrito), `revisar...` mientras te pregunta, `omitido` si cancelaste su ventana, `error` si el archivo no se puede leer. |
+| **Estado** | `preparado` (job escrito), `en espera` si necesita que lo revises y todavía no le toca, `revisar...` mientras te pregunta, `omitido` si cancelaste su ventana, `error` si el archivo no se puede leer. |
 | **Bordes / tamaño** | `[x] 1920x800` = se han detectado barras y se recortan (el tamaño es el que queda). `[ ] sin barras` = se buscaron y no había. Un tamaño a secas = no hay recorte, pero el escalado cambia el tamaño. Vacío = ni se buscó ni cambia nada (por ejemplo con el vídeo en `copy`). |
 | **Detalle** | `automatico` cuando se resolvió solo, `revisado a mano` cuando lo confirmaste tú, y el motivo cuando se paró a preguntar. Aquí también aparece lo que se detectó y se aplicó solo, como un retardo de audio. |
 
@@ -77,7 +77,7 @@ Abajo, el pie cuenta en qué va y el botón de la derecha dice lo que hace: mien
 
 La casilla **`Cerrar al terminar`** hace que la ventana se cierre sola al acabar el recorrido, y se recuerda para la próxima vez (es la opción `gui.prepareAutoClose`). Con un **error** o si la **cancelas**, se queda abierta aunque esté marcada: ese resumen es el único sitio donde se cuenta lo que ha pasado.
 
-**Solo se para a preguntar en los mismos casos en que se pararía la consola**: varias pistas de vídeo, vídeo anamórfico, ninguna o varias pistas de audio en tu idioma, subtítulos pero ninguno en tu idioma, o un recorte que no está claro. En esos casos abre el editor **ya relleno** y con el motivo escrito arriba; tú confirmas o cambias, y sigue con el siguiente.
+**Solo se para a preguntar en los mismos casos en que se pararía la consola**: varias pistas de vídeo, vídeo anamórfico, ninguna o varias pistas de audio en tu idioma, subtítulos pero ninguno en tu idioma, o un recorte que no está claro. En esos casos abre el editor **ya relleno** y con el motivo escrito arriba; tú confirmas o cambias. **Mientras respondes no se para**: el análisis sigue con el resto en segundo plano, lo que no necesita nada se va guardando, y los que también necesitan que los mires quedan **en espera** y se abren uno detrás de otro según vas guardando. Si se ha parado a **confirmar un recorte** (perfil con detección de bordes completa, o un archivo que empieza por `_`), antes te enseña el vídeo **original** y luego **con el recorte**, igual que la consola; se desactiva con `gui.previewCropOnAsk`. Si ese recorte lo ven **todos** los puntos del escaneo y no hay nada más que revisar en el archivo, al terminar el foco queda en **`Guardar job`**: con **Intro** está hecho (`gui.focusSaveCropPct`).
 
 ## El editor de un archivo
 

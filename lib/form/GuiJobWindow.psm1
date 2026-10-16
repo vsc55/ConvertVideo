@@ -32,7 +32,11 @@ function Show-CvJobWindow {
         [Parameter(Mandatory)][string]$File,
         $Draft = $null,
         $Info = $null,
-        $Reasons = @()
+        $Reasons = @(),
+        # Se abre para CONFIRMAR UN RECORTE (Get-CvJobAutoPlan.CropAsk): se ensena antes, como la consola.
+        [bool]$CropAsk = $false,
+        # ...y el % de los puntos que lo ven (Get-CvJobAutoPlan.CropPct): unanime = el foco a Guardar.
+        [int]$CropPct = 0
     )
     if (-not (Initialize-CvGui)) { return $false }
 
@@ -64,6 +68,9 @@ function Show-CvJobWindow {
         ProfOpts = @()
         Saved    = $false
         CropScan = $null      # bordes ya escaneados (el escaneo NO depende del perfil: se reutiliza)
+        CropAsk    = $CropAsk # hay un recorte por confirmar (lo dice el recorrido, o el analisis de aqui)
+        CropPlayed = $false   # ...y ya se ha ensenado: una sola vez, no a cada cambio de perfil
+        CropPct    = $CropPct # % de los puntos del escaneo que ven ese recorte
         CropKind = ''         # con que parametros se escaneo: 'auto' (pre-escaneo) o 'full'
         CropNote = ''         # que se decidio con esos bordes, para contarlo abajo
         SyncNotes = @()       # retardos de audio detectados (se aplican y se cuentan, como en consola)
@@ -906,10 +913,12 @@ function Show-CvJobWindow {
                     -MinCropPct ([double]$Context.BorderMinCropPct) -MaxCropPct ([int]$Context.BorderAutoMaxCropPct)
                 switch ("$($dec.Decision)") {
                     'crop'   { $st.Draft.Crop = "$($dec.Crop)"; $st.CropNote = "$($dec.Reason)" }
-                    'manual' { $st.Draft.Crop = "$($dec.Crop)"; $st.CropNote = (Get-CvText -Key 'job.recorte.votado' -Values @($dec.Reason)) }
+                    'manual' { $st.Draft.Crop = "$($dec.Crop)"; $st.CropNote = (Get-CvText -Key 'job.recorte.votado' -Values @($dec.Reason)); $st.CropAsk = $true }
                     default  { $st.Draft.Crop = ''; $st.CropNote = "$($dec.Reason)" }
                 }
             } elseif (@($c.Groups).Count -gt 0) {
+                $st.CropAsk = $true   # detectBorder 'true' o '_': la consola lo confirma con preview
+                $st.CropPct = [int]$c.TopPct
                 $st.Draft.Crop = "$($c.Top)"
                 $st.CropNote = (Get-CvText -Key 'job.recorte.prop' -Values @(
                     $c.Top, $c.TopPct, $(if ($c.Reliable) { '' } else { (Get-CvText -Key 'job.recorte.nofiable') })))
@@ -1042,6 +1051,26 @@ function Show-CvJobWindow {
                 $tipHead.SetToolTip($lblHead, ($rs -join [Environment]::NewLine))
             } else {
                 $lblHead.Text = (Get-CvText -Key 'job.preparando' -Values @($Name))
+            }
+
+            # Si se ha parado a CONFIRMAR UN RECORTE, lo mismo que la consola en ese punto: ensenar el
+            # ORIGINAL y luego CON EL RECORTE antes de preguntar (gui.previewCropOnAsk). Una sola vez:
+            # cambiar despues de perfil no vuelve a lanzar el reproductor. Sin recorte que proponer no
+            # hay nada que comparar.
+            if ($st.CropAsk -and -not $st.CropPlayed -and [bool]$Context.GuiPreviewCropOnAsk -and "$($st.Draft.Crop)" -ne '') {
+                $st.CropPlayed = $true
+                $form.Refresh()        # la ventana, ya pintada detras del reproductor
+                & $playVideo ''
+                & $playVideo "$($st.Draft.Crop)"
+            }
+            # Si ese recorte lo ven TODOS los puntos (gui.focusSaveCropPct) y no hay nada mas que
+            # revisar en este archivo, el foco a 'Guardar job': lo normal es que lo des por bueno, y
+            # asi basta con Intro. Con otra pregunta pendiente (el audio, una pista...) no: guardar de
+            # un Intro seria saltarsela.
+            $minPct = [int]$Context.GuiFocusSaveCropPct
+            if ($st.CropAsk -and $minPct -gt 0 -and [int]$st.CropPct -ge $minPct -and @($Reasons).Count -le 1 -and $btnSave.Enabled) {
+                $form.ActiveControl = $btnSave
+                [void]$btnSave.Focus()
             }
         } catch {
             $bar.Visible = $false

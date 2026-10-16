@@ -272,6 +272,11 @@ Assert-Eq 'border/autoDuration def'  15 (Get-CvConfigDefaultValue 'encode/video/
 Assert-Eq 'border/autoMaxCropPct def' 40 (Get-CvConfigDefaultValue 'encode/video/border/autoMaxCropPct')
 Assert-True 'help border/autoMaxCropPct' ((Get-CvConfigHelp).Contains('encode/video/border/autoMaxCropPct'))
 # Lo que no se mira al buscar bordes, por tipo de video (Resolve-CvBorderZone).
+# El editor ensena original + recorte cuando se para a confirmar uno, como la consola.
+Assert-Eq 'gui/previewCropOnAsk def'  $true (Get-CvConfigDefaultValue 'gui/previewCropOnAsk')
+Assert-True 'help gui/previewCropOnAsk' ((Get-CvConfigHelp).Contains('gui/previewCropOnAsk'))
+Assert-Eq 'gui/focusSaveCropPct def'  100 (Get-CvConfigDefaultValue 'gui/focusSaveCropPct')
+Assert-True 'help gui/focusSaveCropPct' ((Get-CvConfigHelp).Contains('gui/focusSaveCropPct'))
 Assert-Eq 'border/endSkip def'        180 (Get-CvConfigDefaultValue 'encode/video/border/endSkip')
 Assert-Eq 'border/filmMinutes def'    70  (Get-CvConfigDefaultValue 'encode/video/border/filmMinutes')
 Assert-Eq 'border/startFilm def'      300 (Get-CvConfigDefaultValue 'encode/video/border/startFilm')
@@ -401,7 +406,7 @@ Assert-Eq   'all sin duplicados'       $all.Count ($all | Select-Object -Unique)
 # ================================================================================================
 Write-Host "`nFuentes unicas (Context / Profile)" -ForegroundColor Cyan
 Assert-Eq 'Get-CvAppName' 'ConvertVideo' (Get-CvAppName)
-Assert-Eq 'Get-CvVersion' '4.7.5'        (Get-CvVersion)
+Assert-Eq 'Get-CvVersion' '4.7.6'        (Get-CvVersion)
 Assert-Eq 'perfiles de serie = 13' 13 ((Get-CvProfiles | ForEach-Object { $_.Profiles } | Measure-Object).Count)
 # Los perfiles de serie con changeSize '1920:-2' (RESIZE fijo) deben ser solo-reduce (NoUpscale).
 $rzProfs = @(Get-CvProfiles | ForEach-Object { $_.Profiles } | Where-Object { "$($_.ChangeSize)" -ne '' })

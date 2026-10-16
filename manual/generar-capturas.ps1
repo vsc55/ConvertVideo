@@ -397,7 +397,9 @@ function New-ShotRoot {
         New-Item -ItemType Directory -Path $tmp -Force | Out-Null
     }
     $cfg = Join-Path $tmp 'config.json'
-    $json = '{ "behavior": { "workers": 2 }, "gui": { ' + $Gui + ' } }'
+    # previewCropOnAsk apagado: un editor que se para a confirmar un recorte abriria ffplay y el guion
+    # se quedaria esperando a que alguien lo cerrara.
+    $json = '{ "behavior": { "workers": 2 }, "gui": { "previewCropOnAsk": false' + $(if ($Gui) { ', ' + $Gui } else { '' }) + ' } }'
     [void](Save-CvTextFile -Path $cfg -Text $json)
     try {
         New-Item -ItemType Junction -Path (Join-Path $tmp 'tools') -Target (Join-Path $Root 'tools') -ErrorAction Stop | Out-Null

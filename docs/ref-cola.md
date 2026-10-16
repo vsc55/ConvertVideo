@@ -78,11 +78,11 @@ Dos caminos, los mismos que en consola.
 
 ### Preparar pendientes (el flujo normal)
 
-Botón **`Preparar pendientes (N)`**. Hace lo mismo que la consola, en el mismo orden:
+Botón **`Preparar pendientes (N)`**. Decide lo mismo que la consola, pero **sin pararse mientras respondes**:
 
 1. **Pregunta el perfil una vez** para todo el lote (mismo catálogo y mismas etiquetas que el menú de consola; *Auto* preseleccionado).
-2. Recorre los archivos **uno a uno** haciendo el **autodiscover** (`Get-CvJobAutoPlan`): pistas, idiomas, subtítulos, escalado y **detección de bordes según el perfil** (`detectBorder` false/auto/true, con los mismos umbrales de votos). Cada fase se escribe en la barra de estado, así que siempre se ve qué está haciendo.
-3. Lo que la consola resolvería sola **se guarda solo** (fila *preparado / automático*). Solo se para a preguntar **en los mismos casos en que preguntaría la consola**, y entonces abre el editor ya relleno y con el motivo escrito arriba:
+2. Hace el **autodiscover** de cada archivo (`Get-CvJobAutoPlan`): pistas, idiomas, subtítulos, escalado y **detección de bordes según el perfil** (`detectBorder` false/auto/true, con los mismos umbrales de votos). Va **en segundo plano** (`Start-CvPrepareAnalysis`: un *runspace* aparte del mismo proceso, porque WinForms solo tiene un hilo y ahí iba todo lo lento), archivo tras archivo, y cada fase se escribe en la barra de estado.
+3. Lo que la consola resolvería sola **se guarda solo** (fila *preparado / automático*), **aunque tengas abierto el editor de otro archivo**. Solo pregunta **en los mismos casos en que preguntaría la consola**: esos archivos quedan *en espera* y su editor —ya relleno y con el motivo escrito arriba— se abre en orden, **en cuanto cierras el anterior**. Antes, al abrirse un editor se paraba todo hasta que le dabas a guardar, y con un lote largo el resto esperaba a que volvieras. Funciona porque el temporizador de la ventana sigue vivo debajo del editor (su bucle de mensajes le despacha los tics): esos tics solo recogen y guardan, nunca abren un segundo editor encima.
 
 | Se para cuando... | Igual que en consola |
 |---|---|

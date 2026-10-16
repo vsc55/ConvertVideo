@@ -5,7 +5,7 @@
 
 function Get-CvVersion {
     <# Version del proyecto (fuente unica; la usan Convert.ps1 y setup.ps1). #>
-    '4.7.5'
+    '4.7.6'
 }
 
 function Get-CvAppName {
@@ -394,6 +394,10 @@ function New-CvContext {
         GuiBringToFront   = [bool]$cfg.gui.bringToFront
         # La ventana de PREPARAR se cierra sola al terminar (ver gui.prepareAutoClose).
         GuiPrepareAutoClose = [bool]$cfg.gui.prepareAutoClose
+        # Reproducir original + recorte cuando el editor se para a confirmar un recorte (como la consola).
+        GuiPreviewCropOnAsk = [bool]$cfg.gui.previewCropOnAsk
+        # % de puntos del escaneo desde el que el foco va a 'Guardar job' (0 = no se mueve).
+        GuiFocusSaveCropPct = [Math]::Min(100, [Math]::Max(0, [int]$cfg.gui.focusSaveCropPct))
         GuiPrepareAutoCloseMs = $(if ([int]$cfg.gui.prepareAutoCloseMs -ge 0) { [int]$cfg.gui.prepareAutoCloseMs } else { [int]$def.gui.prepareAutoCloseMs })
         # La lista persigue al archivo en curso (ver gui.queueFollowWorker).
         GuiQueueFollow     = [bool]$cfg.gui.queueFollowWorker

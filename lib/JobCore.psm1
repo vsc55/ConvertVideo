@@ -560,6 +560,115 @@ function Format-CvJobAudioCell {
     return ($bits -join '  ')
 }
 
+function Start-CvPrepareAnalysis {
+    <#
+        Arranca en SEGUNDO PLANO el autodescubrimiento (Get-CvJobAutoPlan) de una lista de archivos,
+        uno detras de otro, en un runspace aparte del MISMO proceso.
+
+        Es lo que deja seguir a PREPARAR PENDIENTES mientras respondes al editor de un archivo: antes el
+        analisis corria en el hilo de la ventana y, al abrirse el editor (modal), se paraba TODO hasta
+        que le dabas a guardar -con un lote largo, un cuello de botella: el resto esperaba a que
+        volvieras-. WinForms solo tiene un hilo, asi que lo lento (ffprobe/ffmpeg) tiene que ir aparte.
+
+        No escribe NADA: deja cada resultado en -Results y la ventana decide (guardar el job, o ponerlo
+        a esperar su turno en el editor). Tampoco toca controles: el avance va por -Progress.
+          Results : @{ Index; Kind = 'plan'|'noinfo'|'error'; Plan; Info; Error }
+          Progress: @{ Index; Step } (Step vacio = empieza ese archivo)
+          Sync    : Cancel (lo pone la ventana) / Finished (lo pone el analisis al acabar) / Fatal
+        Lo que el analisis escribe con Write-Host queda en PowerShell.Streams.Information: la ventana
+        lo vuelca al log de la sesion, que es donde iba cuando corria en su hilo.
+
+        Devuelve @{ PowerShell; Runspace; Async; Sync; Results; Progress }. Pararlo:
+        Stop-CvPrepareAnalysis; recogerlo al acabar: Complete-CvPrepareAnalysis.
+    #>
+    param(
+        [Parameter(Mandatory)]$Context,
+        [Parameter(Mandatory)]$Prof,
+        [Parameter(Mandatory)]$Items
+    )
+    $sync     = [hashtable]::Synchronized(@{ Cancel = $false; Finished = $false; Fatal = '' })
+    $results  = New-Object 'System.Collections.Concurrent.ConcurrentQueue[object]'
+    $progress = New-Object 'System.Collections.Concurrent.ConcurrentQueue[object]'
+    # Como TEXTO y no como scriptblock de aqui: un scriptblock queda atado al runspace donde se
+    # crea, y este tiene que compilarse y correr en el nuevo.
+    $script = @'
+param($Lib, $Lang, $Context, $Prof, $Items, $Sync, $Results, $Progress)
+try {
+    foreach ($m in @(Get-ChildItem -LiteralPath $Lib -Filter '*.psm1' -File)) {
+        Import-Module $m.FullName -Force
+    }
+    [void](Set-CvLanguage -Lang $Lang)
+    Set-CvMarkStyle -Ascii $Context.AsciiMarks
+    for ($i = 0; $i -lt @($Items).Count; $i++) {
+        if ($Sync.Cancel) { break }
+        $f = @($Items)[$i]
+        $Progress.Enqueue([pscustomobject]@{ Index = $i; Step = '' })
+        try {
+            $info = Get-MediaInfo -Context $Context -File "$($f.Path)"
+            if ($null -eq $info) {
+                $Results.Enqueue([pscustomobject]@{ Index = $i; Kind = 'noinfo' })
+                continue
+            }
+            # Regla del prefijo '_': fuerza la deteccion de bordes, igual que en consola.
+            $force = "$($f.Name)".StartsWith('_')
+            $idx = $i
+            $paso = { param($t) $Progress.Enqueue([pscustomobject]@{ Index = $idx; Step = "$t" }) }.GetNewClosure()
+            $plan = Get-CvJobAutoPlan -Context $Context -Prof $Prof -Info $info -File "$($f.Path)" -ForceBorder $force -OnStep $paso
+            $Results.Enqueue([pscustomobject]@{ Index = $i; Kind = 'plan'; Plan = $plan; Info = $info })
+        } catch {
+            $Results.Enqueue([pscustomobject]@{ Index = $i; Kind = 'error'; Error = "$($_.Exception.Message)" })
+        }
+    }
+} catch {
+    $Sync.Fatal = "$($_.Exception.Message)"
+} finally {
+    $Sync.Finished = $true
+}
+'@
+    $rs = [runspacefactory]::CreateRunspace()
+    $rs.Open()
+    $ps = [powershell]::Create()
+    $ps.Runspace = $rs
+    [void]$ps.AddScript($script)
+    # Los modulos, de donde esta el CODIGO (la carpeta de este mismo modulo) y no de la raiz de
+    # trabajo: esa puede no tener lib\ -la de las baterias, por ejemplo- y el analisis entero caia con
+    # 'Set-CvLanguage no se reconoce'.
+    foreach ($a in @("$PSScriptRoot", (Get-CvLanguage), $Context, $Prof, @($Items), $sync, $results, $progress)) {
+        [void]$ps.AddArgument($a)
+    }
+    $async = $ps.BeginInvoke()
+    [pscustomobject]@{
+        PowerShell = $ps
+        Runspace   = $rs
+        Async      = $async
+        Sync       = $sync
+        Results    = $results
+        Progress   = $progress
+    }
+}
+
+function Stop-CvPrepareAnalysis {
+    <#
+        Para el analisis de fondo (Start-CvPrepareAnalysis): lo marca para no empezar el siguiente
+        archivo y le pide que corte. SIN esperar: si en ese momento hay un ffmpeg escaneando bordes, la
+        espera seria la de ese escaneo, y la ventana no puede quedarse colgada mientras. El runspace
+        termina por su cuenta.
+    #>
+    param($Handle)
+    if ($null -eq $Handle) { return }
+    $Handle.Sync.Cancel = $true
+    try { [void]$Handle.PowerShell.BeginStop($null, $null) } catch { }
+}
+
+function Complete-CvPrepareAnalysis {
+    <# Recoge un analisis de fondo YA TERMINADO y libera su runspace. #>
+    param($Handle)
+    if ($null -eq $Handle) { return }
+    try { [void]$Handle.PowerShell.EndInvoke($Handle.Async) } catch { }
+    try { $Handle.PowerShell.Dispose() } catch { }
+    try { $Handle.Runspace.Dispose() } catch { }
+}
+
 function Get-CvJobCropCandidates {
     <#
         Escanea bordes negros y devuelve los recortes candidatos con sus VOTOS (Find-CropDetectSamples,
@@ -1113,7 +1222,9 @@ function Get-CvJobAutoPlan {
         Es la parte LENTA (varios ffmpeg), de ahi -OnStep: un scriptblock al que se le pasa un texto
         de progreso para que la UI diga por donde va en vez de parecer colgada.
 
-        Devuelve @{ Draft; Manual; Reasons; Notes; CropCandidates }. 'Notes' son cosas que se han
+        Devuelve @{ Draft; Manual; Reasons; Notes; CropCandidates; CropAsk; CropPct }. CropAsk = la
+        consola se pararia aqui a confirmar un recorte (y lo ensenaria antes): el editor hace lo mismo.
+        CropPct = el % de los puntos que ven ese recorte (0 si no viene del escaneo completo). 'Notes' son cosas que se han
         decidido solas y conviene contar (el retardo de audio detectado), pero que NO obligan a
         revisar el archivo: la consola tambien las aplica sola cuando expira su pregunta.
     #>
@@ -1167,6 +1278,10 @@ function Get-CvJobAutoPlan {
 
     # ---- Bordes (lo lento): solo si se recodifica y el perfil lo pide ----
     $cands = @()
+    # Si la consola, en este punto, se pararia a CONFIRMAR un recorte (y lo ensenaria antes). Va como
+    # dato y no se deduce de Reasons: esos son textos, y en otro idioma ya no se reconocerian.
+    $cropAsk = $false
+    $cropPct = 0          # % de los puntos que ven el recorte propuesto (escaneo completo)
     $dbv  = "$($Prof.DetectBorder)".ToLower()
     $on   = ($dbv -eq 'true') -or $ForceBorder
     $auto = ($dbv -eq 'auto') -and -not $ForceBorder
@@ -1189,6 +1304,7 @@ function Get-CvJobAutoPlan {
                 # "confirmalo antes de aplicarlo: confirma el recorte", y ademas en castellano
                 # pasara lo que pasara, porque era un literal en el codigo.
                 $reasons += "$($dec.Reason)"
+                $cropAsk = $true
             } else {
                 $draft.Crop = ''
             }
@@ -1201,6 +1317,8 @@ function Get-CvJobAutoPlan {
                 # Con detectBorder=true la consola SIEMPRE confirma el recorte con preview: aqui se
                 # propone y se marca como intervencion, para no recortar por nuestra cuenta.
                 $reasons += (Get-CvText -Key 'plan.recorte' -Values @($c.Top, $c.TopPct))
+                $cropAsk = $true
+                $cropPct = [int]$c.TopPct
             }
         }
     }
@@ -1211,6 +1329,8 @@ function Get-CvJobAutoPlan {
         Reasons        = @($reasons)
         Notes          = @($notes)
         CropCandidates = @($cands)
+        CropAsk        = [bool]$cropAsk
+        CropPct        = [int]$cropPct
     }
 }
 

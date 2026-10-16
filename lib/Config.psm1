@@ -819,6 +819,15 @@ function Get-CvConfigDefaults {
             # que config*.json trabajar en vez de abrir directo el de siempre: es Convert-gui-Config.cmd
             # sin cambiar de lanzador. Catalogo en Get-CvAskConfigKeys ('off' = nunca).
             askConfigKey       = 'shift'
+            # Cuando el editor del job se para a CONFIRMAR UN RECORTE (perfil con detectBorder 'true', o
+            # un archivo que empieza por '_'), reproducir antes el ORIGINAL y luego CON EL RECORTE, como
+            # hace la consola en ese mismo punto. Con $false, solo pregunta: los botones 'Ver original'
+            # y 'Ver recorte' siguen ahi.
+            previewCropOnAsk   = $true
+            # ...y si ese recorte lo ven al menos este % de los puntos del escaneo, y no hay nada mas
+            # que revisar en ese archivo, el foco queda en 'Guardar job': Intro lo guarda. 0 = no
+            # mover el foco.
+            focusSaveCropPct   = 100
             prepareAutoClose   = $false
             # Cuanto se ve el resumen antes de que la ventana se cierre sola (ms). Cerrar en el
             # mismo momento en que acaba no deja leer ni el 100% ni lo que se ha preparado.
@@ -1103,6 +1112,8 @@ function Get-CvConfigHelp {
         'gui/minimizeToTray' = (Get-CvText -Key 'cfg.help.gui.minimizeToTray')
         'gui/trayBalloonMs' = (Get-CvText -Key 'cfg.help.gui.trayBalloonMs')
         'gui/askConfigKey' = (Get-CvText -Key 'cfg.help.gui.askConfigKey')
+        'gui/previewCropOnAsk' = (Get-CvText -Key 'cfg.help.gui.previewCropOnAsk')
+        'gui/focusSaveCropPct' = (Get-CvText -Key 'cfg.help.gui.focusSaveCropPct')
         'gui/prepareAutoClose' = (Get-CvText -Key 'cfg.help.gui.prepareAutoClose')
         'gui/prepareAutoCloseMs' = (Get-CvText -Key 'cfg.help.gui.prepareAutoCloseMs')
         'gui/setupWidth' = (Get-CvText -Key 'cfg.help.gui.setupWidth')
