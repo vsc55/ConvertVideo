@@ -85,7 +85,7 @@ function Show-CvJobWindow {
     $form.Text          = (Get-CvText -Key 'job.tit' -Values @($Name))
     $form.StartPosition = 'CenterParent'
     $form.Size          = New-Object System.Drawing.Size(1000, 880)
-    $form.MinimumSize   = New-Object System.Drawing.Size(820, 700)
+    $form.MinimumSize   = New-Object System.Drawing.Size(940, 700)   # la barra del audio entera
 
     $grid = New-Object System.Windows.Forms.TableLayoutPanel
     $grid.Dock        = 'Fill'
@@ -261,6 +261,7 @@ function Show-CvJobWindow {
     $btnDef  = $ac['cvJobAudioDefault']
     $btnPlay = $ac['cvJobAudioPlay']
     $btnPlaySync = $ac['cvJobAudioPlaySync']
+    $btnSyncDet  = $ac['cvJobAudioSyncDetect']
 
     # ---------- Subtitulos ----------
     $gbS = New-Object System.Windows.Forms.GroupBox
@@ -742,6 +743,47 @@ function Show-CvJobWindow {
             return
         }
         & $playAudio ([double]$r.Sync)
+    })
+    # Vuelve a medir la sincronia de las pistas MARCADAS, con la misma funcion que el autodescubrimiento
+    # (Set-CvJobDraftAudioSync -Force: pisa lo que tuvieran, tambien un 0). Hace falta porque al
+    # marcar OTRA pista -la segunda del mismo idioma, p. ej.- esa no se habia medido nunca.
+    $btnSyncDet.Add_Click({
+        if ($null -eq $st.Info) { return }   # sin analizar no hay pistas que medir
+        & $commitAudio
+        $marcadas = @($st.Audio | Where-Object { $_.Keep })
+        if ($marcadas.Count -eq 0) {
+            $lblMsg.ForeColor = (Get-CvGuiCurrentPalette).Warn
+            $lblMsg.Text = (Get-CvText -Key 'job.sync.ninguna')
+            return
+        }
+        $notas = @()
+        $form.Enabled = $false
+        $form.Cursor  = [System.Windows.Forms.Cursors]::WaitCursor
+        try {
+            $lblMsg.ForeColor = (Get-CvGuiCurrentPalette).Muted
+            $lblMsg.Text = (Get-CvText -Key 'job.sync.midiendo' -Values @($marcadas.Count))
+            $lblMsg.Refresh()
+            $sel = @{
+                File      = $File
+                AudioSkip = [bool]$st.Draft.AudioSkip
+                Audio     = $marcadas
+            }
+            $notas = @(Set-CvJobDraftAudioSync -Context $Context -Draft $sel -Info $st.Info -Force)
+            & $renderAudio
+            & $armAudio
+            if ($null -ne $st.EditA) {
+                $st.Loading = $true
+                try { $txtSync.Text = (Format-CvNumber $st.EditA.Sync) } finally { $st.Loading = $false }
+            }
+        }
+        finally {
+            $form.Cursor  = [System.Windows.Forms.Cursors]::Default
+            $form.Enabled = $true
+        }
+        # Despues de validar: $validate reescribe el mensaje y se comeria el resultado de la medida.
+        & $validate
+        $lblMsg.ForeColor = (Get-CvGuiCurrentPalette).Muted
+        $lblMsg.Text = $(if ($notas.Count -gt 0) { $notas -join ' | ' } else { Get-CvText -Key 'job.sync.nada' -Values @($marcadas.Count) })
     })
 
     $lvS.Add_ItemChecked({

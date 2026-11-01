@@ -202,7 +202,10 @@ function Get-CvStreamEndPts {
         '-v', 'error'
         '-select_streams', $Stream
         '-show_entries', 'packet=pts_time'
-        '-read_intervals', ("{0}%+45" -f $from)
+        # Hasta el FINAL ('desde%'), no 'desde%+45': ffprobe cuenta esos 45 s desde el fotograma
+        # clave ANTERIOR a 'desde', y con claves espaciadas (cada 25 s) no llegaba al final -paso
+        # con un archivo de prueba: fin de video 294,9 s en uno de 300-.
+        '-read_intervals', ("{0}%" -f $from)
         '-of', 'csv=p=0'
         $File
     ) -Context $Context
@@ -216,18 +219,350 @@ function Get-CvStreamEndPts {
     return 0.0
 }
 
+function Get-CvAudioAheadCheck {
+    <#
+        PURA (sin ffmpeg: se le pasan los fines). Detecta un AUDIO ADELANTADO por la cola: si el audio
+        ACABA >= $Threshold segundos ANTES que el video (con inicios alineados), va adelantado ~esa
+        diferencia y habria que RETRASARLO.
+
+        $Max (encode.audio.syncMaxAhead, 0 = sin tope): una diferencia MAYOR no se toma por desfase.
+        Paso de verdad: un Bluray cuyo video sigue 127 s despues de acabar el audio (creditos sin
+        sonido); tomarlo por desfase retrasaba TODO el audio dos minutos. Un desfase real son pocos
+        segundos (el caso que dio origen a la deteccion: 5,1 s).
+
+        Devuelve @{ Delay; Diff; TooLong }: Delay = retardo sugerido (centesimas) o 0; Diff = cuanto
+        acaba antes (0 sin datos); TooLong = acaba antes, pero mas que el tope (no se propone nada).
+    #>
+    param([double]$VideoEnd, [double]$AudioEnd, [double]$Threshold, [double]$Max = 0)
+    $res = @{
+        Delay   = 0.0
+        Diff    = 0.0
+        TooLong = $false
+    }
+    if ($Threshold -le 0 -or $VideoEnd -le 0 -or $AudioEnd -le 0) { return $res }
+    $diff = [Math]::Round($VideoEnd - $AudioEnd, 2)
+    $res.Diff = $diff
+    if ($diff -lt $Threshold) { return $res }
+    if ($Max -gt 0 -and $diff -gt $Max) {
+        $res.TooLong = $true
+        return $res
+    }
+    $res.Delay = $diff
+    return $res
+}
+
 function Resolve-CvAudioAhead {
     <#
-        Detecta un AUDIO ADELANTADO por la cola: si el audio ACABA >= $Threshold segundos ANTES que el
-        video (con inicios alineados), el audio va adelantado ~esa diferencia y habria que RETRASARLO.
-        Devuelve el retardo sugerido (redondeado a centesimas) o 0 si no aplica (umbral 0, datos
-        invalidos, o el audio no acaba suficientemente antes). PURA (sin ffmpeg): se le pasan los fines.
+        PURA. El retardo sugerido por Get-CvAudioAheadCheck (0 si no aplica: umbral 0, datos
+        invalidos, no acaba suficientemente antes, o acaba antes que el tope -Max).
     #>
-    param([double]$VideoEnd, [double]$AudioEnd, [double]$Threshold)
-    if ($Threshold -le 0 -or $VideoEnd -le 0 -or $AudioEnd -le 0) { return 0.0 }
-    $diff = $VideoEnd - $AudioEnd
-    if ($diff -ge $Threshold) { return [Math]::Round($diff, 2) }
-    return 0.0
+    param([double]$VideoEnd, [double]$AudioEnd, [double]$Threshold, [double]$Max = 0)
+    return [double](Get-CvAudioAheadCheck -VideoEnd $VideoEnd -AudioEnd $AudioEnd -Threshold $Threshold -Max $Max).Delay
+}
+
+function Get-CvSyncPreviewAt {
+    <#
+        PURA. Segundo desde el que se escucha una pista CON RETARDO: pasado el propio retardo (+5 s),
+        porque los primeros $Delay segundos de la pista retrasada son silencio -empezar en 0 con un
+        retardo grande era oir silencio y creer que la pista estaba muda-, y hacia el 15 % del video
+        (sin pasar de 60 s antes del final), donde ya hay dialogo. Fuente UNICA: consola y editor.
+    #>
+    param([double]$Delay, [double]$Duration = 0)
+    $at = [Math]::Max($Delay + 5, [Math]::Min($Duration * 0.15, [Math]::Max(0, $Duration - 60)))
+    return [int][Math]::Floor([Math]::Max(0.0, $at))
+}
+
+# ---- Comprobacion CRUZADA de la sincronia contra otra pista del mismo archivo ----
+# "El audio acaba antes que el video" no distingue una pista DESPLAZADA de una pista solo mas CORTA
+# (un doblaje que no trae la musica de los creditos). Paso de verdad: dos Bluray cuyas pistas en
+# espanol acababan 127 s y 13 s antes, y la inglesa justo con el video; comparadas, el espanol iba a la
+# par con el ingles en toda la pelicula. Doblaje y original comparten musica y efectos, asi que los
+# CAMBIOS de energia del sonido coinciden: se busca el desplazamiento con el que mejor encajan.
+# El calculo va en C#: en PowerShell son millones de multiplicaciones por punto (minutos).
+if (-not ('CvAudioEnvelope' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+public static class CvAudioEnvelope
+{
+    // Envolvente de energia (log RMS) de audio s16le mono, 'perSec' valores por segundo, y su
+    // derivada: lo que se compara son los CAMBIOS (golpes, cortes), no el volumen de cada pista.
+    public static double[] FromS16(byte[] raw, int rate, int perSec)
+    {
+        int n = raw.Length / 2;
+        int step = Math.Max(1, rate / perSec);
+        int bins = n / step;
+        if (bins < 2) { return new double[0]; }
+        double[] env = new double[bins];
+        for (int b = 0; b < bins; b++)
+        {
+            double s = 0;
+            int o = b * step;
+            for (int i = 0; i < step; i++)
+            {
+                int j = 2 * (o + i);
+                short v = (short)(raw[j] | (raw[j + 1] << 8));
+                s += (double)v * v;
+            }
+            env[b] = Math.Log(1 + Math.Sqrt(s / step));
+        }
+        double[] d = new double[bins - 1];
+        for (int i = 0; i < bins - 1; i++) { d[i] = env[i + 1] - env[i]; }
+        return d;
+    }
+
+    // Donde encaja mejor 'reference' dentro de 'other' (correlacion de Pearson en cada
+    // desplazamiento). Devuelve { desplazamiento en muestras, correlacion } o { -1, -2 } sin datos.
+    public static double[] BestLag(double[] reference, double[] other)
+    {
+        int n = reference.Length;
+        if (n < 2 || other.Length < n) { return new double[] { -1, -2 }; }
+        double mr = 0;
+        for (int i = 0; i < n; i++) { mr += reference[i]; }
+        mr /= n;
+        double[] r = new double[n];
+        double nr = 0;
+        for (int i = 0; i < n; i++) { r[i] = reference[i] - mr; nr += r[i] * r[i]; }
+        nr = Math.Sqrt(nr);
+        if (nr <= 0) { return new double[] { -1, -2 }; }
+        double best = -2;
+        int bk = -1;
+        for (int k = 0; k + n <= other.Length; k++)
+        {
+            double sw = 0, sww = 0, num = 0;
+            for (int i = 0; i < n; i++)
+            {
+                double y = other[k + i];
+                sw += y;
+                sww += y * y;
+                num += r[i] * y;   // sum(r) = 0: no hace falta restar la media de la ventana
+            }
+            double var = sww - sw * sw / n;
+            if (var <= 0) { continue; }
+            double c = num / (nr * Math.Sqrt(var));
+            if (c > best) { best = c; bk = k; }
+        }
+        return new double[] { bk, best };
+    }
+}
+'@
+}
+
+function Resolve-CvAudioCrossCheck {
+    <#
+        PURA. Veredicto de la comparacion cruzada a partir de los puntos medidos (@{ At; Lag; Corr }).
+        Se fia de un punto por DOS caminos:
+          - encaja bien por si solo (Corr >= $MinCorr);
+          - o coincide con los demas: si la MAYORIA de los puntos (y al menos 2) dan el mismo desfase
+            (a menos del umbral entre si), cuentan aunque cada uno encaje flojo. Por azar, varios
+            puntos buscando en una ventana de cientos de segundos no caen en el mismo sitio; paso de
+            verdad: 5 puntos con encajes de 0,15 a 0,56 y los 5 en -0,02 s / +0,03 s.
+        Con los fiables, la MEDIANA del desfase (un punto raro no la mueve). Lag < 0 = el sonido de la
+        pista llega ANTES que el de la referencia (va adelantada).
+          'aligned' = |desfase| < umbral: va a la par, solo es mas corta -> sin retardo;
+          'ahead'   = adelantada: Delay = lo medido (eso es lo que hay que retrasarla);
+          'late'    = retrasada: un retardo no lo arregla (habria que adelantarla);
+          'unknown' = ningun punto fiable: se decide como antes, solo por el final.
+        Devuelve @{ Verdict; Lag; Delay; Reliable; Total }.
+    #>
+    param($Points, [double]$Threshold, [double]$MinCorr)
+    $all = @($Points | Where-Object { $null -ne $_ })
+    $res = @{
+        Verdict  = 'unknown'
+        Lag      = 0.0
+        Delay    = 0.0
+        Reliable = 0
+        Total    = $all.Count
+    }
+    # El grupo de puntos que mas coinciden entre si (alrededor de cada uno, los que caen a < umbral).
+    $grupo = @()
+    foreach ($p in $all) {
+        $g = @($all | Where-Object { [Math]::Abs([double]$_.Lag - [double]$p.Lag) -lt $Threshold })
+        if ($g.Count -gt $grupo.Count) { $grupo = $g }
+    }
+    $consenso = ($grupo.Count -ge 2 -and $grupo.Count -gt ($all.Count / 2))
+    $fiables = @($all | Where-Object { [double]$_.Corr -ge $MinCorr -or ($consenso -and $grupo -contains $_) })
+    $ok = @($fiables | ForEach-Object { [double]$_.Lag } | Sort-Object)
+    $res.Reliable = $ok.Count
+    if ($ok.Count -eq 0) { return $res }
+    $mid = [int][Math]::Floor($ok.Count / 2)
+    $med = if ($ok.Count % 2) { $ok[$mid] } else { ($ok[$mid - 1] + $ok[$mid]) / 2 }
+    $med = [Math]::Round([double]$med, 2)
+    $res.Lag = $med
+    if ([Math]::Abs($med) -lt $Threshold) {
+        $res.Verdict = 'aligned'
+    } elseif ($med -lt 0) {
+        $res.Verdict = 'ahead'
+        $res.Delay   = -$med
+    } else {
+        $res.Verdict = 'late'
+    }
+    return $res
+}
+
+function Get-CvAudioCrossPoints {
+    <#
+        PURA. Donde medir: $Count puntos repartidos por la zona en la que AMBAS pistas suenan y cabe la
+        ventana de busqueda entera (desde $Pad hasta $AudioEnd - $Window - $Pad). Vacio si no cabe.
+    #>
+    param([double]$AudioEnd, [double]$Window, [double]$Pad, [int]$Count)
+    $lo = $Pad
+    $hi = $AudioEnd - $Window - $Pad
+    if ($Count -le 0 -or $hi -le $lo) { return @() }
+    $out = @()
+    for ($i = 1; $i -le $Count; $i++) {
+        $out += [Math]::Round($lo + ($hi - $lo) * $i / ($Count + 1), 2)
+    }
+    return @($out)
+}
+
+function Get-CvAudioEnvelope {
+    <#
+        Envolvente de un tramo de una pista ($Index = indice absoluto): ffmpeg la decodifica a mono 8 kHz
+        (calidad telefono: de sobra para la ENERGIA, y poco que leer) en un temporal, y C# la reduce a
+        $PerSec valores por segundo.
+    #>
+    param([Parameter(Mandatory)]$Context, [Parameter(Mandatory)][string]$File, [int]$Index, [double]$Start, [double]$Seconds, [int]$PerSec)
+    $rate = 8000
+    $tmp  = Join-Path ([System.IO.Path]::GetTempPath()) ("cv_env_{0}.raw" -f [guid]::NewGuid().ToString('N'))
+    $inv  = [System.Globalization.CultureInfo]::InvariantCulture
+    try {
+        [void](Invoke-ToolCapture -Exe $Context.FFmpeg -Arguments @(
+            '-v', 'error'
+            '-ss', ([double]$Start).ToString($inv)
+            '-t', ([double]$Seconds).ToString($inv)
+            '-i', $File
+            '-map', ("0:{0}" -f $Index)
+            '-ac', '1'
+            '-ar', "$rate"
+            '-f', 's16le'
+            '-y', $tmp
+        ) -Context $Context)
+        if (-not (Test-Path -LiteralPath $tmp)) { return ,([double[]]@()) }
+        return ,([CvAudioEnvelope]::FromS16([System.IO.File]::ReadAllBytes($tmp), $rate, $PerSec))
+    }
+    finally {
+        if (Test-Path -LiteralPath $tmp) { Remove-Item -Force -LiteralPath $tmp -ErrorAction SilentlyContinue }
+    }
+}
+
+function Measure-CvAudioTrackLag {
+    <#
+        Desfase de la pista $Index respecto a la de referencia $RefIndex en el segundo $At: se toma
+        $Window s de la referencia y se busca en la otra +-$Pad s. La envolvente va a 20 valores por
+        segundo: 0,05 s de precision, de sobra frente a un umbral de segundos. Devuelve
+        @{ At; Lag; Corr } o $null si no hay audio que comparar.
+    #>
+    param([Parameter(Mandatory)]$Context, [Parameter(Mandatory)][string]$File, [int]$RefIndex, [int]$Index, [double]$At, [double]$Window, [double]$Pad)
+    $per  = 20
+    $ref  = Get-CvAudioEnvelope -Context $Context -File $File -Index $RefIndex -Start $At -Seconds $Window -PerSec $per
+    $oIni = [Math]::Max(0.0, $At - $Pad)
+    $oth  = Get-CvAudioEnvelope -Context $Context -File $File -Index $Index -Start $oIni -Seconds (($At - $oIni) + $Window + $Pad) -PerSec $per
+    $b = [CvAudioEnvelope]::BestLag([double[]]$ref, [double[]]$oth)
+    if ($b[0] -lt 0) { return $null }
+    return @{
+        At   = $At
+        Lag  = [Math]::Round($oIni + $b[0] / $per - $At, 2)
+        Corr = [Math]::Round($b[1], 2)
+    }
+}
+
+function Get-CvAudioAheadVerdict {
+    <#
+        La decision ENTERA del audio adelantado, para la consola (Invoke-AudioAsk) y las ventanas
+        (Set-CvJobDraftAudioSync): la regla del final (Get-CvAudioAheadCheck: umbral y tope) y, si la
+        pista acaba antes y hay OTRA que llega hasta el final del video, la comprobacion cruzada contra
+        ella (encode.audio.syncCrossCheck), que MIDE el desfase en vez de suponerlo:
+          - va a la par -> no se retrasa (aunque acabe antes: solo es mas corta);
+          - va adelantada -> el retardo es lo medido (aunque pase del tope: ya no es una suposicion);
+          - va retrasada -> no se propone retardo (no lo arregla);
+          - sin referencia o sin ningun punto fiable -> la regla del final, como siempre.
+        $AudioIndexes = indices absolutos de TODAS las pistas de audio (candidatas a referencia).
+        $EndCache: hashtable opcional indice -> fin, para no releer la cola de una pista dos veces.
+        Devuelve @{ Delay; Diff; TooLong; Cross; Ref } (Cross = Resolve-CvAudioCrossCheck o $null).
+    #>
+    param(
+        [Parameter(Mandatory)]$Context,
+        [Parameter(Mandatory)][string]$File,
+        $AudioIndexes = @(),
+        [int]$Index,
+        [double]$VideoEnd,
+        [double]$AudioEnd,
+        [double]$Duration = 0,
+        [hashtable]$EndCache = $null
+    )
+    $umbral = [double]$Context.AudioSyncThreshold
+    $chk = Get-CvAudioAheadCheck -VideoEnd $VideoEnd -AudioEnd $AudioEnd -Threshold $umbral -Max ([double]$Context.AudioSyncMaxAhead)
+    $res = @{
+        Delay   = [double]$chk.Delay
+        Diff    = [double]$chk.Diff
+        TooLong = [bool]$chk.TooLong
+        Cross   = $null
+        Ref     = -1
+    }
+    if (-not [bool]$Context.AudioSyncCrossCheck -or $umbral -le 0 -or $res.Diff -lt $umbral) { return $res }
+    if ($null -eq $EndCache) { $EndCache = @{} }
+
+    # Referencia: otra pista que llegue hasta el final del video (la que mas cerca).
+    $ref = -1
+    $refEnd = 0.0
+    foreach ($i in @($AudioIndexes)) {
+        if ([int]$i -eq $Index) { continue }
+        if (-not $EndCache.ContainsKey([int]$i)) {
+            $EndCache[[int]$i] = Get-CvStreamEndPts -Context $Context -File $File -Stream ("{0}" -f [int]$i) -Duration $Duration -What (Get-CvText -Key 'au.pista.audio' -Values @([int]$i))
+        }
+        $e = [double]$EndCache[[int]$i]
+        if ($e -gt 0 -and ($VideoEnd - $e) -lt $umbral -and $e -gt $refEnd) {
+            $ref = [int]$i
+            $refEnd = $e
+        }
+    }
+    if ($ref -lt 0) {
+        Write-CvLog 'AUDIO' (Get-CvText -Key 'au.cruce.sinref' -Values @($Index)) -Indent 3
+        return $res
+    }
+
+    # Se busca +-(lo que acaba antes + 2 umbrales): caben "a la par" (0) y "desplazada". Lo que acaba
+    # antes, contra el video O contra la referencia (la mayor): si la pista esta desplazada, lo esta
+    # respecto a la referencia, y con el fin del video solo se quedaba corto (paso: 25 s de margen
+    # para un desfase de 30, y encontraba otro encaje en 1,4 s).
+    $win = [double]$Context.AudioSyncCrossWindow
+    $pad = [Math]::Max($res.Diff, $refEnd - $AudioEnd) + 2 * $umbral
+    $ats = @(Get-CvAudioCrossPoints -AudioEnd $AudioEnd -Window $win -Pad $pad -Count ([int]$Context.AudioSyncCrossPoints))
+    if ($ats.Count -eq 0) {
+        Write-CvLog 'AUDIO' (Get-CvText -Key 'au.cruce.corto' -Values @($Index)) -Indent 3
+        return $res
+    }
+    Write-CvLog 'AUDIO' (Get-CvText -Key 'au.cruce.ref' -Values @($Index, $ref, $ats.Count)) -Indent 3
+    $pts = @()
+    foreach ($at in $ats) {
+        $m = Measure-CvAudioTrackLag -Context $Context -File $File -RefIndex $ref -Index $Index -At $at -Window $win -Pad $pad
+        if ($null -eq $m) { continue }
+        Write-CvLog 'AUDIO' (Get-CvText -Key 'au.cruce.punto' -Values @([int]$at, (Format-CvNumber $m.Lag), (Format-CvNumber $m.Corr))) -Indent 3
+        $pts += $m
+    }
+    $v = Resolve-CvAudioCrossCheck -Points $pts -Threshold $umbral -MinCorr ([double]$Context.AudioSyncCrossMinCorr)
+    $res.Cross = $v
+    $res.Ref   = $ref
+    switch ($v.Verdict) {
+        'aligned' {
+            $res.Delay   = 0.0
+            $res.TooLong = $false
+            Write-CvLog 'AUDIO' (Get-CvText -Key 'au.cruce.ok' -Values @($ref, (Format-CvNumber $v.Lag), $v.Reliable, $v.Total)) -Indent 3
+        }
+        'ahead' {
+            $res.Delay   = [double]$v.Delay
+            $res.TooLong = $false
+            Write-CvLog 'AUDIO' (Get-CvText -Key 'au.cruce.ade' -Values @($ref, (Format-CvNumber $v.Delay), $v.Reliable, $v.Total)) -Indent 3
+        }
+        'late' {
+            $res.Delay = 0.0
+            Write-CvLog 'AUDIO' (Get-CvText -Key 'au.cruce.tarde' -Values @($ref, (Format-CvNumber $v.Lag), $v.Reliable, $v.Total)) -Indent 3
+        }
+        default {
+            Write-CvLog 'AUDIO' (Get-CvText -Key 'au.cruce.nada' -Values @((Format-CvNumber $Context.AudioSyncCrossMinCorr))) -Indent 3
+        }
+    }
+    return $res
 }
 
 function Show-CvSyncPreview {
@@ -278,9 +613,15 @@ function Show-AudioPreview {
     )
     $extra = @('-ast', ("a:{0}" -f $AudioPos))
     if ($AudioOnly) { $extra += '-nodisp' }
-    if ($Delay -gt 0) { $extra += @('-af', (Get-CvAdelayFilter -Sync $Delay)) }
     $modo = if ($AudioOnly) { (Get-CvText -Key 'au.solo') } else { (Get-CvText -Key 'au.video') }
-    Write-CvLog 'AUDIO' (Get-CvText -Key 'au.repro' -Values @($Label, $modo)) -Indent 3
+    if ($Delay -gt 0) {
+        $extra += @('-af', (Get-CvAdelayFilter -Sync $Delay))
+        # Sin un inicio pedido, se empieza donde la pista retrasada ya suena (Get-CvSyncPreviewAt).
+        if ($Start -lt 0) { $Start = Get-CvSyncPreviewAt -Delay $Delay -Duration $Duration }
+        Write-CvLog 'AUDIO' (Get-CvText -Key 'au.repro.ret' -Values @($Label, $modo, (Format-CvNumber $Delay), $Start)) -Indent 3
+    } else {
+        Write-CvLog 'AUDIO' (Get-CvText -Key 'au.repro' -Values @($Label, $modo)) -Indent 3
+    }
     Invoke-CvPreview -Context $Context -File $File -ExtraArgs $extra -Label $Label -Start $Start -Seconds $Seconds -Duration $Duration
 }
 
@@ -600,6 +941,7 @@ function Invoke-AudioAsk {
         $videoEnd = Get-CvStreamEndPts -Context $Context -File $file -Stream 'v:0' -Duration $adur -What (Get-CvText -Key 'au.video.pista')
     }
     $tracks = @()
+    $finesAudio = @{}   # fin de cada pista de audio, leido una sola vez (la comprobacion cruzada lo reusa)
     foreach ($s in $sels) {
         $lang = if ($s.Language) { "$($s.Language)" } else { 'und' }
         $sync = 0.0
@@ -631,7 +973,12 @@ function Invoke-AudioAsk {
                 # CASO 2: el audio ACABA antes que el video (inicios alineados) -> parece ADELANTADO; se
                 # sugiere retrasarlo esa diferencia. Se PREGUNTA (default = detectado, con preview A/B).
                 $audioEnd = if ($videoEnd -gt 0) { Get-CvStreamEndPts -Context $Context -File $file -Stream "$($s.Index)" -Duration $adur -What (Get-CvText -Key 'au.pista.audio' -Values @($s.Index)) } else { 0.0 }
-                $ahead = Resolve-CvAudioAhead -VideoEnd $videoEnd -AudioEnd $audioEnd -Threshold $Context.AudioSyncThreshold
+                $chk   = Get-CvAudioAheadVerdict -Context $Context -File $file -AudioIndexes @($aud | ForEach-Object { [int]$_.index }) -Index ([int]$s.Index) `
+                                                 -VideoEnd $videoEnd -AudioEnd $audioEnd -Duration $adur -EndCache $finesAudio
+                $ahead = [double]$chk.Delay
+                if ($chk.TooLong) {
+                    Write-CvLog 'AUDIO' (Get-CvText -Key 'au.sync.largo' -Values @((Format-CvNumber $chk.Diff), $lbl, (Format-CvNumber $Context.AudioSyncMaxAhead))) -Indent 3
+                }
                 if ($ahead -gt 0) {
                     Write-CvLog 'AUDIO' (Get-CvText -Key 'au.sync.antes' -Values @($ahead, $lbl)) -Indent 3
                     # Flujo: (1) preguntar el retardo -> ENTER/timeout usa el detectado (o el ultimo tecleado);
@@ -640,7 +987,7 @@ function Invoke-AudioAsk {
                     # muestreo del preview se recalcula segun el valor (At >= valor -> audio de origen valido).
                     $timeout = Get-CvPromptTimeout $Context 'audioSync'
                     $cur = $ahead
-                    $prevOf = { param($d) Show-CvSyncPreview -Context $Context -File $file -Index ([int]$s.Index) -Delay $d -At ([Math]::Max($d + 5, [Math]::Min($adur * 0.15, [Math]::Max(0, $adur - 60)))) }
+                    $prevOf = { param($d) Show-CvSyncPreview -Context $Context -File $file -Index ([int]$s.Index) -Delay $d -At (Get-CvSyncPreviewAt -Delay $d -Duration $adur) }
                     $res.Manual = $true
                     $decided = $false
                     while (-not $decided) {

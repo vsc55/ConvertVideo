@@ -149,7 +149,7 @@ El valor elegido se **congela** en el job (`audio.sync`); que haya habido pregun
 
 Hay un segundo desfase que **no** tiene retardo inicial (audio y vídeo empiezan en `pts 0`) pero el audio va **adelantado de forma constante**: el sonido llega antes que la imagen. Se "esconde" porque los `start_time` son 0; la pista es que el **audio ACABA varios segundos antes que el vídeo** (el vídeo trae ~N s de más al inicio —logo/intro— que el audio no incluye, así que todo el audio queda N s adelantado).
 
-- **Detección** (`Resolve-CvAudioAhead`): compara el último `pts` del vídeo con el de la pista de audio (leídos baratos por índice cerca del final, `Get-CvStreamEndPts`). Si `fin_vídeo − fin_audio ≥ encode.audio.syncThreshold` (por defecto **2 s**), se sugiere retrasar el audio esa diferencia. Como esa lectura de la cola (un `ffprobe` por índice) **tarda un poco**, avisa en consola: `[SYNC] - Analizando fin de video/audio pista N...` y `[OK]` con el fin detectado al terminar.
+- **Detección** (`Resolve-CvAudioAhead`): compara el último `pts` del vídeo con el de la pista de audio (leídos baratos por índice cerca del final, `Get-CvStreamEndPts`). Si `fin_vídeo − fin_audio ≥ encode.audio.syncThreshold` (por defecto **2 s**), se sugiere retrasar el audio esa diferencia — salvo que pase del **tope** `encode.audio.syncMaxAhead` (por defecto **10 s**): una diferencia mayor no es un desfase, es vídeo **sin sonido al final** (créditos mudos, promos), y no se propone nada; solo se avisa (`[SYNC] - El audio acaba … más que el tope`). La decisión entera es `Get-CvAudioAheadCheck` (pura); `Resolve-CvAudioAhead` devuelve solo el retardo. Como esa lectura de la cola (un `ffprobe` por índice) **tarda un poco**, avisa en consola: `[SYNC] - Analizando fin de video/audio pista N...` y `[OK]` con el fin detectado al terminar.
 - **Pregunta + preview forzoso** (fase PREPARAR), en tres pasos:
     1. **Preguntar el retardo**: `[SYNC] - Retardo a anadir al audio en seg [N] (ENTER=usar N / 0=ninguno / <seg>=otro)`. **ENTER o timeout** (`promptTimeout.audioSync`, 15 s) → el **detectado `N`** (o el último tecleado); `0` → ninguno; teclear otro número → lo fija. **Cualquier** valor —**incluido `0`**— pasa por los pasos 2 y 3 (no hay atajo que salga del loop sin validar).
     2. **Preview forzoso** del valor elegido en el paso 1 (`Show-CvSyncPreview`): **siempre se muestra antes de aceptar**, así nunca se aplica un valor sin haberlo visto/oído. Se reproduce la **fuente directa** con ffplay (no se codifica ningún clip) desde `T` (≈15 % del audio) y **sin límite de tiempo** por defecto — hasta el final o hasta cerrar con `q`/ESC (topable con `preview.syncSeconds > 0`). Con un retardo `> 0`, **dos pases**: el **original** (se oye el desfase) y el **corregido** (mismo punto con el audio retrasado ese valor vía `adelay`, tal cual lo aplica el worker: `vídeo(W)` suena con `audio(W−valor)`; los primeros ~`valor` s de audio son silencio). Con `0`, **un solo pase** "sin retardo" (audio tal cual) para confirmar que ya suena bien (falso positivo).
@@ -167,7 +167,36 @@ flowchart TD
     A --> F["Congelar audio.sync en el .job.json"]
 ```
 
-> **Ojo con los falsos positivos:** un audio con **cola legítimamente más corta** (créditos con música que acaba antes, etc.) también "acaba antes" sin estar desfasado. Por eso NO se aplica a ciegas: se **pregunta** y se ofrece el **preview** para confirmar de oído/vista. Sube `audioSyncThreshold` (o ponlo a `0`) si te da falsos positivos.
+> **Ojo con los falsos positivos:** un audio con **cola legítimamente más corta** (créditos con música que acaba antes, etc.) también "acaba antes" sin estar desfasado. Por eso NO se aplica a ciegas: se **pregunta** y se ofrece el **preview** para confirmar de oído/vista. Sube `audioSyncThreshold` (o ponlo a `0`) si te da falsos positivos. Los grandes los corta el tope `syncMaxAhead`: paso de verdad con un Bluray cuyo vídeo seguía **127 s** tras acabar el audio (créditos mudos y fundido a negro), y otro con **12,9 s** de final en negro; tomados por desfase, retrasaban todo el audio eso.
+
+#### Comprobación cruzada contra otra pista (`encode.audio.syncCrossCheck`)
+
+«Acaba antes que el vídeo» no distingue una pista **desplazada** de una pista solo **más corta**: un doblaje que no trae la música de los créditos acaba antes y va perfectamente sincronizado. Paso de verdad: dos Bluray cuyas pistas en español acababan 130 s y 13 s antes, y la inglesa justo con el vídeo.
+
+Así que, si la pista acaba antes y **otra pista del mismo archivo llega hasta el final**, se comparan las dos (`Get-CvAudioAheadVerdict`, la misma para consola y ventanas). Doblaje y original comparten **música y efectos**, así que los **cambios de energía** del sonido coinciden: en `syncCrossPoints` puntos (5) se toman `syncCrossWindow` s (60) de la referencia y se buscan en la otra pista, desplazándola hasta ± lo que acaba antes (+2 umbrales). El cálculo (envolvente a 20 valores/s, correlación) va en C# (`CvAudioEnvelope`): en PowerShell serían minutos por punto.
+
+| Resultado (`Resolve-CvAudioCrossCheck`, pura) | Qué se hace |
+|---|---|
+| **A la par** (desfase < umbral) | Sin retardo, aunque acabe antes: solo es más corta. |
+| **Adelantada** | El retardo es **lo medido**, aunque pase del tope `syncMaxAhead` (ya no es una suposición). |
+| **Retrasada** | Sin retardo y se avisa: un retardo no lo arregla. |
+| **Sin referencia / ningún punto fiable** | La regla del final de siempre (umbral + tope). |
+
+Un punto es **fiable** si encaja bien por sí solo (`syncCrossMinCorr`, 0,5) **o** si coincide con los demás: la mayoría (y al menos 2) con el mismo desfase cuenta aunque cada uno encaje flojo —por azar, varios puntos buscando en cientos de segundos no caen en el mismo sitio—. Del grupo fiable se toma la **mediana**. Medido: en los dos Bluray, «a la par» (5 de 5 puntos en 0 s; 3 de 5 en 0,15 s); en archivos generados con la pista desplazada, 2,99 s y 30 s exactos (encajes 0,89–0,98).
+
+```mermaid
+flowchart TD
+    E["La pista acaba ≥ umbral antes que el vídeo"] --> R{"¿Otra pista llega<br/>hasta el final?"}
+    R -- no --> F["Regla del final:<br/>retardo = diferencia (si no pasa del tope)"]
+    R -- sí --> M["Comparar en N puntos<br/>(envolvente + correlación)"]
+    M --> V{"Puntos fiables<br/>(encaje o consenso)"}
+    V -- ninguno --> F
+    V -- "mediana ≈ 0" --> A["A la par: sin retardo<br/>(solo es más corta)"]
+    V -- "mediana < 0" --> D["Adelantada: retardo = lo medido"]
+    V -- "mediana > 0" --> T["Retrasada: sin retardo, avisar"]
+```
+
+**En las ventanas** (*Preparar pendientes* y el editor del job) se mide igual (`Set-CvJobDraftAudioSync`, también el *audio que empieza tarde* del caso 1), pero sin preguntar: el retardo detectado se deja **puesto** y el archivo va **a revisar** (`Reasons`), donde *Con el retardo* lo deja oír —desde el mismo punto que la consola, `Get-CvSyncPreviewAt`: pasado el propio retardo, que si no son segundos de silencio— antes de guardar. El botón **Detectar sincronía** del editor vuelve a medir las pistas **marcadas** (con `-Force`, pisando lo que tuvieran): hace falta al marcar otra pista, que nunca se había medido.
 
 ### Aplicación (fase WORKER)
 

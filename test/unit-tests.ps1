@@ -232,6 +232,11 @@ Assert-True 'help encode/video/videoEncoder' ((Get-CvConfigHelp).Contains('encod
 Assert-Eq 'encode/video/qualityCheck def off' 'off' (Get-CvConfigDefaultValue 'encode/video/qualityCheck')
 Assert-True 'help encode/video/qualityCheck'  ((Get-CvConfigHelp).Contains('encode/video/qualityCheck'))
 Assert-Eq 'encode/audio/syncThreshold def 2' 2.0 (Get-CvConfigDefaultValue 'encode/audio/syncThreshold')
+Assert-Eq 'encode/audio/syncMaxAhead def 10' 10.0 (Get-CvConfigDefaultValue 'encode/audio/syncMaxAhead')
+Assert-Eq 'encode/audio/syncCrossCheck def on' $true (Get-CvConfigDefaultValue 'encode/audio/syncCrossCheck')
+Assert-Eq 'encode/audio/syncCrossPoints def 5' 5 (Get-CvConfigDefaultValue 'encode/audio/syncCrossPoints')
+Assert-Eq 'encode/audio/syncCrossWindow def 60' 60 (Get-CvConfigDefaultValue 'encode/audio/syncCrossWindow')
+Assert-Eq 'encode/audio/syncCrossMinCorr def 0.5' 0.5 (Get-CvConfigDefaultValue 'encode/audio/syncCrossMinCorr')
 Assert-Eq 'promptTimeout/audioSync def 15'  15  (Get-CvConfigDefaultValue 'behavior/promptTimeout/audioSync')
 Assert-Eq 'promptTimeout/subtitleLang def 15' 15 (Get-CvConfigDefaultValue 'behavior/promptTimeout/subtitleLang')
 Assert-True 'help promptTimeout/subtitleLang' ((Get-CvConfigHelp).Contains('behavior/promptTimeout/subtitleLang'))
@@ -254,6 +259,10 @@ Assert-Eq 'SubOpen token suelto mode'  'external' (Resolve-CvSubtitleOpen -Mode 
 Assert-Eq 'SubOpen token suelto exe'   'C:\p\se.exe' (Resolve-CvSubtitleOpen -Mode 'C:\p\se.exe').Exe
 Assert-Eq 'SubOpen start ignora exe'   ''         (Resolve-CvSubtitleOpen -Mode 'start' -Exe 'z.exe').Exe
 Assert-True 'help encode/audio/syncThreshold' ((Get-CvConfigHelp).Contains('encode/audio/syncThreshold'))
+Assert-True 'help encode/audio/syncMaxAhead' ((Get-CvConfigHelp).Contains('encode/audio/syncMaxAhead'))
+foreach ($k in 'syncCrossCheck', 'syncCrossPoints', 'syncCrossWindow', 'syncCrossMinCorr') {
+    Assert-True "help encode/audio/$k" ((Get-CvConfigHelp).Contains("encode/audio/$k"))
+}
 # customProfile: paridad de campos con un profiles[] (nuevos defaults + 'auto' en videoEncoder).
 Assert-Eq 'customProfile/detectBorder def' $false      (Get-CvConfigDefaultValue 'customProfile/detectBorder')
 Assert-Eq 'customProfile/changeSize def'   ''           (Get-CvConfigDefaultValue 'customProfile/changeSize')
@@ -1737,6 +1746,65 @@ Assert-Eq 'audioAhead 5.1s'        5.1  (Resolve-CvAudioAhead -VideoEnd 5726.22 
 Assert-Eq 'audioAhead bajo umbral' 0.0  (Resolve-CvAudioAhead -VideoEnd 5726.0 -AudioEnd 5725.5 -Threshold 2.0)
 Assert-Eq 'audioAhead umbral 0'    0.0  (Resolve-CvAudioAhead -VideoEnd 5726.0 -AudioEnd 5700.0 -Threshold 0)
 Assert-Eq 'audioAhead sin datos'   0.0  (Resolve-CvAudioAhead -VideoEnd 0 -AudioEnd 0 -Threshold 2.0)
+# Con tope (encode.audio.syncMaxAhead): un video que sigue 127 s tras acabar el audio (creditos sin
+# sonido, caso real en un Bluray) NO es un desfase; el caso real de 5,1 s si lo sigue siendo.
+Assert-Eq 'audioAhead bajo el tope' 5.1  (Resolve-CvAudioAhead -VideoEnd 5726.22 -AudioEnd 5721.12 -Threshold 2.0 -Max 10)
+Assert-Eq 'audioAhead sobre el tope' 0.0 (Resolve-CvAudioAhead -VideoEnd 5782.04 -AudioEnd 5654.98 -Threshold 2.0 -Max 10)
+Assert-Eq 'audioAhead tope 0 = sin tope' 127.06 (Resolve-CvAudioAhead -VideoEnd 5782.04 -AudioEnd 5654.98 -Threshold 2.0 -Max 0)
+$chkA = Get-CvAudioAheadCheck -VideoEnd 5782.04 -AudioEnd 5654.98 -Threshold 2.0 -Max 10
+Assert-True 'audioAhead: sobre el tope lo dice' $chkA.TooLong
+Assert-Eq   'audioAhead: y cuanto'             127.06 $chkA.Diff
+Assert-Eq   'audioAhead: bajo umbral no es largo' $false (Get-CvAudioAheadCheck -VideoEnd 100 -AudioEnd 99.5 -Threshold 2.0 -Max 10).TooLong
+# Escuchar CON retardo empieza pasado el retardo (antes empezaba en 0: con 127 s, dos minutos de silencio).
+Assert-Eq 'syncPreviewAt: pasado el retardo'  132 (Get-CvSyncPreviewAt -Delay 127.06 -Duration 600)
+Assert-Eq 'syncPreviewAt: hacia el 15%'       900 (Get-CvSyncPreviewAt -Delay 5.1 -Duration 6000)
+Assert-Eq 'syncPreviewAt: video corto'         10 (Get-CvSyncPreviewAt -Delay 5 -Duration 30)
+
+# Comprobacion cruzada contra otra pista: la decision (pura) a partir de los puntos medidos.
+$ptsCx = @(
+    @{ At = 600;  Lag = 0.0;   Corr = 1.0  }
+    @{ At = 1800; Lag = 0.05;  Corr = 0.18 }
+    @{ At = 4200; Lag = 0.0;   Corr = 0.65 }
+)
+$vCx = Resolve-CvAudioCrossCheck -Points $ptsCx -Threshold 2.0 -MinCorr 0.5
+Assert-Eq 'cruce: a la par (caso real)'        'aligned' $vCx.Verdict
+# El flojo (0,18) cuenta tambien: coincide con los otros dos (la mayoria, en ~0 s).
+Assert-Eq 'cruce: cuentan los que coinciden'   3 $vCx.Reliable
+Assert-Eq 'cruce: de los medidos'              3 $vCx.Total
+$vCx = Resolve-CvAudioCrossCheck -Points @(@{ Lag = -3.0; Corr = 0.9 }, @{ Lag = -2.95; Corr = 0.8 }, @{ Lag = 40; Corr = 0.6 }) -Threshold 2.0 -MinCorr 0.5
+Assert-Eq 'cruce: adelantada'                  'ahead' $vCx.Verdict
+Assert-Eq 'cruce: retardo = la mediana'        2.95 $vCx.Delay
+Assert-Eq 'cruce: retrasada'                   'late' (Resolve-CvAudioCrossCheck -Points @(@{ Lag = 6.0; Corr = 0.9 }) -Threshold 2.0 -MinCorr 0.5).Verdict
+Assert-Eq 'cruce: nada fiable'                 'unknown' (Resolve-CvAudioCrossCheck -Points @(@{ Lag = 4.4; Corr = 0.11 }) -Threshold 2.0 -MinCorr 0.5).Verdict
+# Puntos flojos que COINCIDEN entre si cuentan (caso real: 5 puntos de 0,15 a 0,56, todos en ~0 s)...
+$ptsCx = @(
+    @{ Lag = -0.02; Corr = 0.16 }
+    @{ Lag = -0.02; Corr = 0.21 }
+    @{ Lag = -0.02; Corr = 0.56 }
+    @{ Lag = 0.03;  Corr = 0.15 }
+    @{ Lag = -0.02; Corr = 0.37 }
+)
+$vCx = Resolve-CvAudioCrossCheck -Points $ptsCx -Threshold 2.0 -MinCorr 0.5
+Assert-Eq 'cruce: flojos pero de acuerdo'      'aligned' $vCx.Verdict
+Assert-Eq 'cruce: cuentan los cinco'           5 $vCx.Reliable
+# ...pero flojos y cada uno por su lado, no (y uno solo flojo tampoco es mayoria).
+$vCx = Resolve-CvAudioCrossCheck -Points @(@{ Lag = -80; Corr = 0.2 }, @{ Lag = 12; Corr = 0.1 }, @{ Lag = 55; Corr = 0.15 }) -Threshold 2.0 -MinCorr 0.5
+Assert-Eq 'cruce: flojos y dispersos'          'unknown' $vCx.Verdict
+$vCx = Resolve-CvAudioCrossCheck -Points @(@{ Lag = -127; Corr = 0.3 }, @{ Lag = -127.02; Corr = 0.25 }, @{ Lag = 9; Corr = 0.1 }) -Threshold 2.0 -MinCorr 0.5
+Assert-Eq 'cruce: mayoria adelantada'          'ahead' $vCx.Verdict
+Assert-Eq 'cruce: y lo que mide'               127.01 $vCx.Delay
+Assert-Eq 'cruce: sin puntos'                  'unknown' (Resolve-CvAudioCrossCheck -Points @() -Threshold 2.0 -MinCorr 0.5).Verdict
+$atCx = @(Get-CvAudioCrossPoints -AudioEnd 5655 -Window 60 -Pad 131 -Count 5)
+Assert-Eq   'cruce: cinco puntos'              5 $atCx.Count
+Assert-True 'cruce: todos dentro'              ($atCx[0] -ge 131 -and $atCx[4] + 60 + 131 -le 5655)
+Assert-Eq   'cruce: no cabe, ninguno'          0 @(Get-CvAudioCrossPoints -AudioEnd 100 -Window 60 -Pad 50 -Count 5).Count
+# El calculo (C#): una envolvente encontrada dentro de otra desplazada 30 muestras.
+$rndCx = New-Object System.Random 7
+$baseCx = [double[]](1..400 | ForEach-Object { $rndCx.NextDouble() })
+$refCx  = [double[]]$baseCx[100..199]
+$lagCx  = [CvAudioEnvelope]::BestLag($refCx, [double[]]$baseCx[70..399])
+Assert-Eq   'cruce: encuentra el desplazamiento' 30 ([int]$lagCx[0])
+Assert-True 'cruce: con encaje perfecto'         ($lagCx[1] -gt 0.999)
 # Get-CvTonemapFormat
 Assert-Eq 'tonemap main10 hevc -> p010le' 'p010le'  (Get-CvTonemapFormat -VideoProfile 'main10' -VideoEncoder 'hevc_nvenc')
 Assert-Eq 'tonemap main10 x264 -> yuv420p' 'yuv420p' (Get-CvTonemapFormat -VideoProfile 'main10' -VideoEncoder 'libx264')

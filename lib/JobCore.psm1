@@ -962,15 +962,22 @@ function Get-CvJobSummaryLines {
 
 function Set-CvJobDraftAudioSync {
     <#
-        Detecta el AUDIO ADELANTADO de las pistas elegidas y deja el retardo puesto en el borrador.
-        Es lo MISMO que hace la consola al preparar (Invoke-AudioAsk): se compara donde ACABA el video
-        con donde acaba cada pista de audio -con los inicios alineados, un audio que termina antes va
-        adelantado- y se sugiere retrasarlo esa diferencia (Resolve-CvAudioAhead, la misma funcion
-        pura, con el umbral encode.audio.syncThreshold).
+        Mide la SINCRONIA de las pistas de audio elegidas y deja el retardo puesto en el borrador. Es
+        lo MISMO que mira la consola al preparar (Invoke-AudioAsk), con las mismas funciones:
+          - el audio EMPIEZA tarde (Get-AudioInitDelay): con syncAdelay (de fabrica) el offset ya va en
+            los timestamps y se conserva solo -no se toca, solo se cuenta-; en el modo WAV clasico se
+            perderia, y se compensa con ese silencio (lo que hace el ENTER de la consola);
+          - el audio ACABA antes que el video con los inicios alineados = va ADELANTADO, y se sugiere
+            retrasarlo esa diferencia (Get-CvAudioAheadVerdict, la misma decision que la consola: umbral
+            encode.audio.syncThreshold, tope encode.audio.syncMaxAhead y, si hay otra pista que llega al
+            final, la comprobacion CRUZADA contra ella, que mide el desfase en vez de suponerlo).
 
-        La consola lo pregunta con preview A/B; aqui se APLICA -que es lo que hace su ENTER y lo que
-        aplica su timeout- y se DEVUELVE la nota para que la UI lo cuente: el retardo se ve luego en el
-        resumen del archivo y en la columna Audio de la cola, y se puede cambiar en el editor del job.
+        La consola PREGUNTA ese retardo y obliga a escucharlo; aqui se deja PUESTO y Get-CvJobAutoPlan
+        manda el archivo a revisar (Reasons), donde el editor lo deja oir antes de guardar.
+
+        -Force: vuelve a medir TODAS las pistas, pisando lo que tuvieran (el boton 'Detectar sincronia'
+        del editor, para las pistas que marques tu). Sin el, una pista con un retardo ya puesto no se
+        toca.
 
         Es LENTO (lee la cola del fichero con ffprobe, una vez por pista + una por el video), asi que
         va con -OnStep para poder decir por donde va. Devuelve @(notas) -vacio si no hay nada que
@@ -980,30 +987,63 @@ function Set-CvJobDraftAudioSync {
         [Parameter(Mandatory)]$Context,
         [Parameter(Mandatory)]$Draft,
         [Parameter(Mandatory)]$Info,
-        [scriptblock]$OnStep = $null
+        [scriptblock]$OnStep = $null,
+        [switch]$Force
     )
     $notas = @()
-    if ([double]$Context.AudioSyncThreshold -le 0) { return $notas }   # deteccion desactivada
     if ([bool]$Draft.AudioSkip) { return $notas }                      # en copy no se toca el audio
     $tracks = @($Draft.Audio)
     if ($tracks.Count -eq 0) { return $notas }
+    $umbral = [double]$Context.AudioSyncThreshold
     try {
         if ($OnStep) { & $OnStep (Get-CvText -Key 'plan.sync') }
-        $dur = Get-MediaDuration $Info
+        $dur  = Get-MediaDuration $Info
         $file = "$($Draft.File)"
-        $vEnd = Get-CvStreamEndPts -Context $Context -File $file -Stream 'v:0' -Duration $dur -What (Get-CvText -Key 'au.video.pista')
-        if ($vEnd -le 0) { return $notas }
+        $vEnd = 0.0
+        $idxs = @(Get-AudioStreams -Info $Info | ForEach-Object { [int]$_.index })
+        $fines = @{}
+        if ($umbral -gt 0) {
+            $vEnd = Get-CvStreamEndPts -Context $Context -File $file -Stream 'v:0' -Duration $dur -What (Get-CvText -Key 'au.video.pista')
+        }
         foreach ($t in $tracks) {
-            if ([double]$t.Sync -ne 0) { continue }   # ya trae un valor puesto a mano: no se pisa
-            $aEnd  = Get-CvStreamEndPts -Context $Context -File $file -Stream ("{0}" -f [int]$t.Index) -Duration $dur -What (Get-CvText -Key 'au.pista.audio' -Values @($t.Index))
-            $ahead = Resolve-CvAudioAhead -VideoEnd $vEnd -AudioEnd $aEnd -Threshold ([double]$Context.AudioSyncThreshold)
-            if ($ahead -gt 0) {
-                $t.Sync = [double]$ahead
-                $notas += ("Audio adelantado en la pista {0}: se retrasa {1}s" -f $t.Index, (Format-CvNumber $ahead))
+            if (-not $Force -and [double]$t.Sync -ne 0) { continue }   # ya trae un valor puesto a mano: no se pisa
+            $idx  = [int]$t.Index
+            $sync = 0.0
+            $ini  = [double](Get-AudioInitDelay -Context $Context -File $file -Index $idx)
+            if ($ini -gt 0) {
+                if ($Context.SyncAdelay) {
+                    # Informativo: con adelay el offset se conserva solo. Sin pedirlo, solo si se nota.
+                    if ($Force -or ($umbral -gt 0 -and $ini -ge $umbral)) {
+                        $notas += (Get-CvText -Key 'plan.sync.tarde' -Values @($idx, (Format-CvNumber $ini)))
+                    }
+                } else {
+                    $sync = $ini
+                    $notas += (Get-CvText -Key 'plan.sync.wav' -Values @($idx, (Format-CvNumber $ini)))
+                }
             }
+            elseif ($vEnd -gt 0) {
+                $aEnd = Get-CvStreamEndPts -Context $Context -File $file -Stream ("{0}" -f $idx) -Duration $dur -What (Get-CvText -Key 'au.pista.audio' -Values @($idx))
+                $fines[$idx] = $aEnd
+                $chk  = Get-CvAudioAheadVerdict -Context $Context -File $file -AudioIndexes $idxs -Index $idx -VideoEnd $vEnd -AudioEnd $aEnd -Duration $dur -EndCache $fines
+                $vc   = $chk.Cross
+                if ($null -ne $vc -and "$($vc.Verdict)" -eq 'aligned') {
+                    $notas += (Get-CvText -Key 'plan.sync.cruce.ok' -Values @($idx, (Format-CvNumber $chk.Diff), $chk.Ref, (Format-CvNumber $vc.Lag), $vc.Reliable, $vc.Total))
+                } elseif ($null -ne $vc -and "$($vc.Verdict)" -eq 'late') {
+                    $notas += (Get-CvText -Key 'plan.sync.cruce.tarde' -Values @($idx, (Format-CvNumber $vc.Lag), $chk.Ref))
+                } elseif ($null -ne $vc -and "$($vc.Verdict)" -eq 'ahead') {
+                    $sync = [double]$chk.Delay
+                    $notas += (Get-CvText -Key 'plan.sync.cruce.ade' -Values @($idx, (Format-CvNumber $sync), $chk.Ref, $vc.Reliable, $vc.Total))
+                } elseif ($chk.TooLong) {
+                    $notas += (Get-CvText -Key 'plan.sync.largo' -Values @($idx, (Format-CvNumber $chk.Diff), (Format-CvNumber $Context.AudioSyncMaxAhead)))
+                } elseif ([double]$chk.Delay -gt 0) {
+                    $sync = [double]$chk.Delay
+                    $notas += (Get-CvText -Key 'plan.sync.nota' -Values @($idx, (Format-CvNumber $sync)))
+                }
+            }
+            $t.Sync = [double]$sync
         }
     } catch {
-        $notas += ("No se pudo comprobar la sincronia del audio: {0}" -f $_.Exception.Message)
+        $notas += (Get-CvText -Key 'plan.sync.no' -Values @($_.Exception.Message))
     }
     return @($notas)
 }
@@ -1225,8 +1265,8 @@ function Get-CvJobAutoPlan {
         Devuelve @{ Draft; Manual; Reasons; Notes; CropCandidates; CropAsk; CropPct }. CropAsk = la
         consola se pararia aqui a confirmar un recorte (y lo ensenaria antes): el editor hace lo mismo.
         CropPct = el % de los puntos que ven ese recorte (0 si no viene del escaneo completo). 'Notes' son cosas que se han
-        decidido solas y conviene contar (el retardo de audio detectado), pero que NO obligan a
-        revisar el archivo: la consola tambien las aplica sola cuando expira su pregunta.
+        medido y conviene contar (lo que dice Set-CvJobDraftAudioSync). Un retardo de audio
+        detectado, ademas, va a Reasons: la consola lo pregunta y obliga a oirlo antes de aceptarlo.
     #>
     param(
         [Parameter(Mandatory)]$Context,
@@ -1275,6 +1315,13 @@ function Get-CvJobAutoPlan {
 
     # ---- Sincronia del audio (lo lento II): lo mismo que detecta la consola al preparar ----
     $notes = @(Set-CvJobDraftAudioSync -Context $Context -Draft $draft -Info $Info -OnStep $OnStep)
+    # Un retardo detectado se deja PUESTO, pero la consola nunca lo aplica sin hacertelo oir: el
+    # archivo va a revisar, y en el editor se escucha con 'Escuchar con retardo' antes de guardarlo.
+    foreach ($t in @($draft.Audio)) {
+        if ([double]$t.Sync -gt 0) {
+            $reasons += (Get-CvText -Key 'plan.sync.revisa' -Values @([int]$t.Index, (Format-CvNumber ([double]$t.Sync))))
+        }
+    }
 
     # ---- Bordes (lo lento): solo si se recodifica y el perfil lo pide ----
     $cands = @()

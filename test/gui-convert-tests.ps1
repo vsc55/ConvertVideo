@@ -1525,6 +1525,16 @@ if ($null -eq $jobInfo) {
                 [void]$onKey.Invoke($txL, $keyArgs)
                 $script:jobLangBox = "$($txL.Text)"
                 $script:jobLangRow = "$($lvAu.Items[1].SubItems[1].Text)"
+                # 'Detectar sincronia' vuelve a medir las pistas MARCADAS y pisa lo que tuvieran: se le
+                # pone a la 2a un retardo de mentira y, como la fixture esta alineada, vuelve a 0.
+                $txS = $f.Controls.Find('cvJobAudioSync', $true)[0]
+                $txS.Text = '127'
+                [void]$onKey.Invoke($txS, $keyArgs)
+                $script:jobSyncAntes = "$($lvAu.Items[1].SubItems[5].Text)"
+                $f.Controls.Find('cvJobAudioSyncDetect', $true)[0].PerformClick()
+                $script:jobSyncDespues = "$($lvAu.Items[1].SubItems[5].Text)"
+                $script:jobSyncCaja    = "$($txS.Text)"
+                $script:jobSyncMsg     = "$($f.Controls.Find('cvJobMsg', $true)[0].Text)"
                 $bDf.PerformClick()
                 # Conservar tambien el 3er subtitulo (el ingles), que no entraba solo. Y el mismo
                 # Intro en SU barra, que es donde se noto: escribir el idioma y que no se enterara.
@@ -1560,6 +1570,10 @@ if ($null -eq $jobInfo) {
         Assert-True 'Editor: sin recorte no hay nada que ver recortado'   (-not $script:jobCropOn)
         Assert-Eq   'Editor: Intro deja el idioma como se guarda'    'eng' $script:jobLangBox
         Assert-Eq   'Editor: y la lista se entera sin salir del campo' 'eng' $script:jobLangRow
+        Assert-Eq   'Sincronia: el retardo tecleado llega a la lista' '127' $script:jobSyncAntes
+        Assert-Eq   'Sincronia: Detectar lo vuelve a medir (alineada = 0)' (Format-CvNumber 0) $script:jobSyncDespues
+        Assert-Eq   'Sincronia: y la caja de la fila tambien'        (Format-CvNumber 0) $script:jobSyncCaja
+        Assert-True 'Sincronia: y dice que ninguna lo necesita'      ($script:jobSyncMsg -match 'ninguna necesita')
         Assert-Eq   'Editor: Intro tambien en la barra de subtitulos'  'eng' $script:jobSubLangRow
     Assert-Eq   'Editor: estan todos los controles del catalogo' '' (@($script:jobFaltan) -join ', ')
         $saved = Read-CvJobDraft -Context $ctxJob -Name 'Serie_2x01'

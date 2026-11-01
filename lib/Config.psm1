@@ -382,6 +382,15 @@ function Get-CvConfigDefaults {
         #   previsualizar original vs corregido). 0 = desactiva la detección. Timeout de la pregunta:
         #   behavior.promptTimeout.audioSync (15 s). OJO: un audio con cola legítimamente más corta
         #   puede dar un falso positivo; por eso PREGUNTA (y ofrece preview) en vez de aplicarlo a ciegas.
+        # syncMaxAhead (audio): TOPE de esa deteccion, en segundos. Si el audio acaba MAS que esto antes
+        #   que el video, no se toma por desfase (suele ser video sin sonido al final: creditos, promos)
+        #   y no se propone retardo; se avisa. 0 = sin tope.
+        # syncCrossCheck (audio): si una pista acaba antes y OTRA del mismo archivo llega hasta el final,
+        #   se comparan sus sonidos (musica y efectos son comunes a doblaje y original) en varios puntos
+        #   para MEDIR el desfase: a la par = solo es mas corta (sin retardo); desplazada = el retardo
+        #   medido, pase o no del tope. syncCrossPoints = cuantos puntos; syncCrossWindow = segundos
+        #   que se comparan en cada uno; syncCrossMinCorr = encaje minimo (0-1) para fiarse de un punto.
+        #   Sin referencia o sin ningun punto fiable, se decide solo por el final, como antes.
         # qualityCheck: control de calidad de la SALIDA frente al origen tras codificar. 'off' (por
         #   defecto) = no medir; 'ssim' o 'vmaf' = medir esa metrica. Es una pasada extra de ffmpeg que
         #   decodifica AMBOS videos enteros -> LENTO en pelis largas (ssim ~5-9x realtime; vmaf muchisimo
@@ -514,6 +523,11 @@ function Get-CvConfigDefaults {
                 multiAudio    = $true
                 keepTitle     = $false
                 syncThreshold = 2.0
+                syncMaxAhead  = 10.0
+                syncCrossCheck   = $true
+                syncCrossPoints  = 5
+                syncCrossWindow  = 60
+                syncCrossMinCorr = 0.5
                 aacCoder      = 'twoloop'   # coder del encoder AAC nativo (twoloop = mayor calidad)
                 # volume: normalizacion de volumen (metodos y textos en Get-CvVolumeMethods).
                 #   method = 'loudnorm' (por defecto desde v4.5.5): sonoridad EBU R128, iguala el
@@ -977,6 +991,11 @@ function Get-CvConfigHelp {
         'encode/audio/multiAudio' = (Get-CvText -Key 'cfg.help.encode.audio.multiAudio')
         'encode/audio/keepTitle' = (Get-CvText -Key 'cfg.help.encode.audio.keepTitle')
         'encode/audio/syncThreshold' = (Get-CvText -Key 'cfg.help.encode.audio.syncThreshold')
+        'encode/audio/syncMaxAhead' = (Get-CvText -Key 'cfg.help.encode.audio.syncMaxAhead')
+        'encode/audio/syncCrossCheck' = (Get-CvText -Key 'cfg.help.encode.audio.syncCrossCheck')
+        'encode/audio/syncCrossPoints' = ((Get-CvConfigAdvancedMark) + (Get-CvText -Key 'cfg.help.encode.audio.syncCrossPoints'))
+        'encode/audio/syncCrossWindow' = ((Get-CvConfigAdvancedMark) + (Get-CvText -Key 'cfg.help.encode.audio.syncCrossWindow'))
+        'encode/audio/syncCrossMinCorr' = ((Get-CvConfigAdvancedMark) + (Get-CvText -Key 'cfg.help.encode.audio.syncCrossMinCorr'))
         'encode/audio/aacCoder' = (Get-CvText -Key 'cfg.help.encode.audio.aacCoder')
         'encode/subtitles/toSrt' = (Get-CvText -Key 'cfg.help.encode.subtitles.toSrt')
         'encode/subtitles/defaultLang' = (Get-CvText -Key 'cfg.help.encode.subtitles.defaultLang')

@@ -329,6 +329,11 @@ function New-CvContext {
         # Umbral (seg) para detectar audio adelantado (acaba antes que el video); 0 = off. Lo usa
         # Invoke-AudioAsk para avisar/preguntar el retardo. Ver encode.audioSyncThreshold.
         AudioSyncThreshold = [double]([Math]::Max(0.0, [double]$cfg.encode.audio.syncThreshold))
+        AudioSyncMaxAhead  = [double]([Math]::Max(0.0, [double]$cfg.encode.audio.syncMaxAhead))
+        AudioSyncCrossCheck   = [bool]$cfg.encode.audio.syncCrossCheck
+        AudioSyncCrossPoints  = [int]([Math]::Max(0, [int]$cfg.encode.audio.syncCrossPoints))
+        AudioSyncCrossWindow  = [double]([Math]::Max(5.0, [double]$cfg.encode.audio.syncCrossWindow))
+        AudioSyncCrossMinCorr = [double]([Math]::Min(1.0, [Math]::Max(0.0, [double]$cfg.encode.audio.syncCrossMinCorr)))
         # Conservar el titulo del audio de origen en la salida (false = titulo en blanco). Lo aplica
         # Invoke-Multiplex leyendo el titulo del origen por el indice de cada pista.
         AudioKeepTitle = [bool]$cfg.encode.audio.keepTitle

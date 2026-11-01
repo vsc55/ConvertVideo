@@ -118,6 +118,9 @@ function Get-CvJobAudioBarItems {
         # Es la comparacion que la consola ofrecia al detectar un desfase (Show-CvSyncPreview).
         @{ Kind = 'button'; Name = 'cvJobAudioPlay';     Text = (Get-CvText -Key 'job.escuchar');      Width = 130; Gap = 8 }
         @{ Kind = 'button'; Name = 'cvJobAudioPlaySync'; Text = (Get-CvText -Key 'job.escuchar.sync'); Width = 150; Gap = 6 }
+        # Vuelve a MEDIR la sincronia de las pistas MARCADAS (no de la seleccionada): al cambiar de
+        # pista, la nueva no se habia medido nunca -solo la que eligio el borrador-.
+        @{ Kind = 'button'; Name = 'cvJobAudioSyncDetect'; Text = (Get-CvText -Key 'job.sync.detectar'); Width = 150; Gap = 12 }
     )
     return ,$items
 }
