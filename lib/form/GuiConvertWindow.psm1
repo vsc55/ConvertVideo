@@ -432,8 +432,9 @@ function Show-CvConvertWindow {
         LogPath  = ''
         LogStamp = ''      # ruta + tamano + fecha del log ya volcado: si no cambia, no se toca el panel
         Stopping = $false  # hay parada pedida: lo mira el menu contextual
-        Running  = $false  # hay workers vivos: idem (con workers en marcha no se abren mas)
+        Running  = $false  # hay workers vivos
         StartedAt = 0      # ticks del ultimo 'Iniciar': el boton se apaga ya, sin esperar al refresco
+        StartTarget = 0    # cuantos tiene que haber vivos cuando aparezcan los que abrio ese 'Iniciar'
         Workers  = @()     # ultimo estado de los workers (lo usa la ventana de log de un worker)
         SumName  = ''      # archivo cuyo resumen esta pintado
         SumStamp = ''      # huella de lo pintado (archivo + pestana + fecha del job + si hay cues)
@@ -603,6 +604,9 @@ function Show-CvConvertWindow {
     # 'Arrancando': entre que se pulsa Iniciar y el worker publica su estado pasan unos segundos.
     $arrancando = {
         if ([double]$st.StartedAt -le 0) { return $false }
+        # Hasta que aparecen TODOS los que se acaban de abrir (o se agota el margen): con workers ya
+        # vivos al pulsar -completando o reanudando-, 'no hay ninguno' ya no sirve de senal.
+        if ([int]$st.Live -ge [int]$st.StartTarget) { return $false }
         return (((([datetime]::UtcNow.Ticks - $st.StartedAt) / 10000000)) -lt [int]$Context.GuiQueueStartGrace)
     }
 
@@ -620,7 +624,7 @@ function Show-CvConvertWindow {
         $btnStart.Text = $(if ($selQ.Count -gt 0) { Get-CvText -Key 'cola.btn.iniciar.n' -Values @($selQ.Count) } else { Get-CvText -Key 'cola.btn.iniciar' })
         # Cuando se puede arrancar (y por que no), en una funcion pura: Get-CvQueueStartState.
         $ss = Get-CvQueueStartState -Queued ([int]$totals.Queued) -Live ([int]$st.Live) `
-                                    -Stopping ([bool]$st.Stopping) -JustStarted ([bool](& $arrancando))
+                                    -Stopping ([bool]$st.Stopping) -JustStarted ([bool](& $arrancando)) -Max ([int]$numW.Value)
         $btnStart.Enabled = [bool]$ss.Enabled
         $tipBar.SetToolTip($btnStart, "$($ss.Tip)")
         $btnStop.Enabled  = ([int]$st.Live -gt 0) -and (-not [bool]$st.Stopping)
@@ -635,6 +639,8 @@ function Show-CvConvertWindow {
         $btnPrepAll.Enabled = ([int]$totals.Pending -gt 0)
     }
     $lv.Add_SelectedIndexChanged({ $st.Touch = [datetime]::UtcNow.Ticks; & $updateSummary $false; & $updateButtons })
+    # El maximo de workers decide si 'Iniciar' puede completar: subirlo lo enciende al momento.
+    $numW.Add_ValueChanged({ & $updateButtons })
     # Al cambiar de pestana se rehace: si se viene del log, ahora si toca el ffprobe.
     [void](Add-CvGuiTabChanged -Tabs $tabs -Action ({ & $updateSummary $true }.GetNewClosure()))
 
@@ -778,8 +784,9 @@ function Show-CvConvertWindow {
         # pie (cuantos hay, cuantos se estan codificando), recortado a lo que admite.
         [void](Set-CvGuiTrayText -Icon $tray -Text $lblTot.Text)
 
-        # El plazo de gracia del arranque se acaba en cuanto se ve el primer worker.
-        if ($live.Count -gt 0) { $st.StartedAt = 0 }
+        # El plazo de gracia del arranque se acaba cuando se ven TODOS los que se abrieron: con
+        # 'Iniciar' completando, puede haber workers vivos de antes, y 'ya hay alguno' no basta.
+        if ($live.Count -gt 0 -and $live.Count -ge [int]$st.StartTarget) { $st.StartedAt = 0 }
         & $updateButtons
 
         # Selector de logs: se rehace solo si cambio la lista (mantiene la eleccion del usuario).
@@ -872,18 +879,34 @@ function Show-CvConvertWindow {
             Show-CvGuiInfo -Title (Get-CvText -Key 'cola.muchos.tit') -Message (Get-CvText -Key 'cola.muchos.msg' -Values @($only.Count, $cabe.Length, $cabe.Max))
             return
         }
+        # Si habia una PARADA pedida, se anula: los workers en marcha siguen con la cola en vez de
+        # salir al acabar su archivo (la miran ENTRE archivos, asi que llega a tiempo).
+        $eraParada = Test-CvWorkerStop -Context $Context
         Clear-CvWorkerStop -Context $Context
-        # Ni un worker mas que archivos por codificar: ventanas de sobra solo se abren para cerrarse.
-        $n = [Math]::Min([int]$numW.Value, $pend)
+        $st.Stopping = $false
+        if ($eraParada) { Write-CvLog 'COLA' (Get-CvText -Key 'cw.reanuda') }
+        # Los vivos, AHORA (no los del ultimo refresco): 'Iniciar' COMPLETA hasta el maximo y nunca
+        # abre un grupo entero encima. Ni uno mas que archivos por codificar.
+        $vivos = @(Get-CvWorkerStates -Context $Context | Where-Object { $_.Alive }).Count
+        $n = Get-CvQueueStartCount -Max ([int]$numW.Value) -Live $vivos -Pending $pend
+        if ($n -le 0) {
+            Write-CvLog 'COLA' (Get-CvText -Key 'cw.workers.max' -Values @($vivos, [int]$numW.Value))
+            & $refresh
+            return
+        }
         # El boton se apaga AQUI, no en el proximo refresco: entre que el worker nace y publica su
-        # estado pasan unos segundos, y es justo cuando es facil volver a pulsar sin querer.
-        $st.StartedAt = [datetime]::UtcNow.Ticks
+        # estado pasan unos segundos, y es justo cuando es facil volver a pulsar sin querer. Sigue
+        # apagado hasta que aparezcan todos ($arrancando).
+        $st.StartedAt   = [datetime]::UtcNow.Ticks
+        $st.StartTarget = $vivos + $n
         $btnStart.Enabled = $false
         for ($i = 0; $i -lt $n; $i++) {
             [void](Start-CvConvertWorker -Root $Root -CfgPath $CfgPath -Only $only -ShowConsole:$chkCon.Checked)
         }
         if ($only.Count -gt 0) {
             Write-CvLog 'COLA' (Get-CvText -Key 'cw.workers.only' -Values @($n, $only.Count, (($only | Select-Object -First 8) -join ', ')))
+        } elseif ($vivos -gt 0) {
+            Write-CvLog 'COLA' (Get-CvText -Key 'cw.workers.mas' -Values @($vivos, $n, [int]$numW.Value))
         } else {
             Write-CvLog 'COLA' (Get-CvText -Key 'cw.workers.n' -Values @($n, $pend))
         }
@@ -975,9 +998,10 @@ function Show-CvConvertWindow {
         # si no, seria una promesa de algo que todavia no existe.
         $miPlayOut.Text    = $(if ($hayOut -and $r.State -in @('working', 'partial')) { 'Reproducir el CONVERTIDO (a medio hacer)' } else { 'Reproducir el CONVERTIDO' })
         $bulk = Get-CvQueueBulkActions -Rows $sel
-        # 'Codificar solo estos' no aparece durante una parada pedida: nadie va a coger nada.
-        # Misma regla que el boton: con workers en marcha no se abren mas (ellos cogeran lo que haya).
-        $miStart.Enabled = ((@($bulk.Start).Count -gt 0) -and (-not $st.Stopping) -and (-not $st.Running))
+        # 'Codificar solo estos' no aparece durante una parada pedida (anularla es cosa del boton
+        # 'Iniciar'). Y con la misma regla que el: nunca pasa del maximo de workers, asi que solo
+        # se ofrece mientras haya menos que el maximo en marcha (Get-CvQueueStartCount decide cuantos).
+        $miStart.Enabled = ((@($bulk.Start).Count -gt 0) -and (-not $st.Stopping) -and ([int]$st.Live -lt [int]$numW.Value))
         # Cortar SOLO lo elegido: mata el worker de ese archivo y deja los demas trabajando.
         $miKill.Enabled  = (@($bulk.Kill).Count -gt 0)
         $miKill.Text     = $bulk.KillText

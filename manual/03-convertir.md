@@ -49,7 +49,7 @@ Cuatro grupos, separados por una línea:
 | **Carpetas** | **`Original`** y **`Convertido`** las abren en el explorador. |
 | **Vista** | **`Actualizar`**: refresca ya (la lista se refresca sola cada segundo mientras hay algo en marcha, y cada tres cuando no). **`Tema`**: cambia entre claro y oscuro al momento, y lo deja guardado para la próxima vez ([página 1](01-primeros-pasos.md#claro-u-oscuro)). |
 
-Los botones se encienden y se apagan según lo que se puede hacer: con workers vivos no se puede volver a arrancar, y sin nada en cola `Iniciar` está apagado (el tooltip dice por qué).
+Los botones se encienden y se apagan según lo que se puede hacer: `Iniciar` nunca pasa de **Workers en paralelo**: con menos en marcha abre solo los que falten (sube el número y púlsalo para añadir más), con el máximo en marcha se apaga, y sin nada en cola también (el tooltip dice por qué). Si has pulsado `Parar` y te arrepientes, `Iniciar` vuelve a estar disponible al momento: **anula la parada** y los workers que siguen codificando continúan con la cola, sin abrir ninguno de más.
 
 ### Codificar solo unos cuantos
 

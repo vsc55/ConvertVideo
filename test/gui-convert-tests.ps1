@@ -515,17 +515,35 @@ $kB = Get-CvQueueWorkingRange -Rows @(
 Assert-Eq   'En curso: la clave no cambia al bajar de fila' "$($kA.Key)" "$($kB.Key)"
 Assert-True 'En curso: pero si al cambiar de archivo' ("$($kA.Key)" -ne "$((Get-CvQueueWorkingRange -Rows @([pscustomobject]@{ State = 'working'; Name = 'Serie_1x03' })).Key)")
 
-# Cuando se puede pulsar 'Iniciar': con workers YA en marcha NO (volver a pulsarlo abriria otro
-# grupo entero de workers sobre la misma cola).
+# Cuando se puede pulsar 'Iniciar': COMPLETA hasta el maximo de workers (nunca abre un grupo
+# entero encima de los que ya hay), asi que con menos que el maximo en marcha sigue encendido.
 Assert-True 'Iniciar: con cola y sin workers'  (Get-CvQueueStartState -Queued 3 -Live 0).Enabled
-Assert-Eq   'Iniciar: con workers en marcha'   $false (Get-CvQueueStartState -Queued 3 -Live 2).Enabled
-Assert-True 'Iniciar: y dice por que'          ((Get-CvQueueStartState -Queued 3 -Live 2).Tip -match '2 worker')
+Assert-Eq   'Iniciar: con el maximo en marcha' $false (Get-CvQueueStartState -Queued 3 -Live 2 -Max 2).Enabled
+Assert-True 'Iniciar: y dice por que'          ((Get-CvQueueStartState -Queued 3 -Live 2 -Max 2).Tip -match '2 worker')
+Assert-Eq   'Iniciar: con 1 de max 1'          $false (Get-CvQueueStartState -Queued 3 -Live 1).Enabled
+$sIni = Get-CvQueueStartState -Queued 5 -Live 1 -Max 3
+Assert-True 'Iniciar: por debajo del maximo'   $sIni.Enabled
+Assert-Eq   'Iniciar: abre solo los que faltan' 2 $sIni.Open
 Assert-Eq   'Iniciar: sin nada en cola'        $false (Get-CvQueueStartState -Queued 0 -Live 0).Enabled
-Assert-Eq   'Iniciar: con parada pedida'       $false (Get-CvQueueStartState -Queued 3 -Live 0 -Stopping $true).Enabled
+# Con una parada pedida, 'Iniciar' la ANULA (antes se quedaba apagado hasta que terminaban los
+# archivos en curso): con el maximo ya en marcha no abre ninguno, solo deja que sigan.
+$sIni = Get-CvQueueStartState -Queued 3 -Live 2 -Max 2 -Stopping $true
+Assert-True 'Iniciar: con parada pedida'       $sIni.Enabled
+Assert-Eq   'Iniciar: y no abre mas del maximo' 0 $sIni.Open
+$sIni = Get-CvQueueStartState -Queued 3 -Live 1 -Max 2 -Stopping $true
+Assert-Eq   'Iniciar: parada con hueco abre 1' 1 $sIni.Open
+Assert-True 'Iniciar: parada sin workers'      (Get-CvQueueStartState -Queued 3 -Live 0 -Stopping $true).Enabled
 # Recien pulsado: los workers tardan segundos en publicar su estado y el boton NO puede seguir activo
-# en ese hueco (es justo cuando se vuelve a pulsar sin querer).
+# en ese hueco (es justo cuando se vuelve a pulsar sin querer), haya o no otros vivos.
 Assert-Eq   'Iniciar: recien arrancado'        $false (Get-CvQueueStartState -Queued 3 -Live 0 -JustStarted $true).Enabled
 Assert-True 'Iniciar: y lo dice'               ((Get-CvQueueStartState -Queued 3 -Live 0 -JustStarted $true).Tip -match 'arrancando')
+Assert-Eq   'Iniciar: recien completado'       $false (Get-CvQueueStartState -Queued 3 -Live 1 -Max 3 -JustStarted $true).Enabled
+# Cuantos abre: los que faltan hasta el maximo, nunca mas que archivos pendientes, nunca negativo.
+Assert-Eq   'Abre: sin ninguno vivo'           2 (Get-CvQueueStartCount -Max 2 -Live 0 -Pending 5)
+Assert-Eq   'Abre: los que faltan'             1 (Get-CvQueueStartCount -Max 3 -Live 2 -Pending 5)
+Assert-Eq   'Abre: no mas que pendientes'      1 (Get-CvQueueStartCount -Max 4 -Live 0 -Pending 1)
+Assert-Eq   'Abre: con el maximo, ninguno'     0 (Get-CvQueueStartCount -Max 2 -Live 2 -Pending 5)
+Assert-Eq   'Abre: maximo bajado, ninguno'     0 (Get-CvQueueStartCount -Max 1 -Live 3 -Pending 5)
 
 # Con filas marcadas, 'Iniciar' PREGUNTA en vez de dar por hecho que la seleccion era una orden:
 # marcar una fila es tambien como se lee su resumen (paso de verdad: se codifico un solo archivo,
@@ -806,8 +824,12 @@ if (-not $sta) {
             # Botones: hay un archivo en cola -> se puede iniciar; hay un worker vivo -> se puede
             # parar y cancelar. NO se pulsan: 'Iniciar' abriria procesos de verdad y 'Cancelar ahora'
             # sacaria una confirmacion modal que dejaria la bateria colgada.
+            # La cola sembrada tiene UN worker vivo y el maximo es 2: 'Iniciar' completa (abriria 1).
             $script:canStart = $bSt.Enabled
             $script:startText = "$($bSt.Text)"
+            # Con el maximo bajado a 1 ya esta completa: se apaga al momento (sin Actualizar).
+            $nw.Value = 1
+            $script:canStartMax = $bSt.Enabled
             # Con una fila EN COLA marcada, 'Iniciar' pasa a trabajar solo con lo elegido y lo dice.
             foreach ($k in 0..($lv.Items.Count - 1)) {
                 if ($lv.Items[$k].SubItems[2].Text -eq 'En cola') { $lv.Items[$k].Selected = $true }
@@ -821,6 +843,10 @@ if (-not $sta) {
             $menu.Close()
             $script:menuItems = (@($menu.Items | ForEach-Object { "$($_.Text)" }) -join '|')
             $script:menuStart = @($menu.Items | Where-Object { "$($_.Text)" -match 'Codificar solo' })[0].Enabled
+            $nw.Value = 2
+            $menu.Show($lv, (New-Object System.Drawing.Point(5, 5)))
+            $menu.Close()
+            $script:menuStartHueco = @($menu.Items | Where-Object { "$($_.Text)" -match 'Codificar solo' })[0].Enabled
             # Reproducir: con una fila EN COLA (sin salida todavia) solo se puede ver el original.
             $script:playIn1  = @($menu.Items | Where-Object { "$($_.Text)" -match 'Reproducir el ORIGINAL' })[0].Enabled
             $script:playOut1 = @($menu.Items | Where-Object { "$($_.Text)" -match 'Reproducir el CONVERTIDO' })[0].Enabled
@@ -970,9 +996,10 @@ if (-not $sta) {
     Assert-Eq   'Ventana: primer archivo'   'Serie_1x01' $script:firstName
     Assert-Eq   'Ventana: estados en orden' (@('done', 'working', 'queued', 'pending', 'stale' | ForEach-Object { Get-CvQueueStateText -State $_ }) -join ',') $script:states
     Assert-True 'Ventana: resumen con recuento' ($script:totals -match '5 archivo')
-    # REGRESION: la cola sembrada tiene un worker VIVO, asi que 'Iniciar' NO puede estar disponible
-    # (antes lo estaba y cada pulsacion abria otro grupo de workers).
-    Assert-Eq   'Ventana: Iniciar apagado con workers vivos' $false $script:canStart
+    # REGRESION: antes cada pulsacion con un worker VIVO abria otro grupo entero; ahora 'Iniciar'
+    # solo completa hasta el maximo: con 1 de 2 se puede, con 1 de 1 no.
+    Assert-True 'Ventana: Iniciar completa hasta el maximo' $script:canStart
+    Assert-Eq   'Ventana: Iniciar apagado con el maximo en marcha' $false $script:canStartMax
     Assert-Eq   'Ventana: Iniciar sin seleccion'    'Iniciar' $script:startText
     # Opciones: la casilla del video original esta, arranca con lo que diga el config y al marcarla
     # se guarda (los jobs que se preparen despues nacen con ese valor).
@@ -991,7 +1018,8 @@ if (-not $sta) {
     Assert-True 'Tema: el boton lo cambia'       ($script:themeAntes -ne $script:themeDespues)
     Assert-Eq   'Tema: y lo guarda en el config' $script:themeDespues $script:themeGuardado
     Assert-True 'Tema: las ventanas que se abran despues lo usan' $script:themeHereda
-    Assert-Eq   'Menu: Codificar solo estos, apagado con workers vivos' $false $script:menuStart
+    Assert-Eq   'Menu: Codificar solo estos, apagado con el maximo en marcha' $false $script:menuStart
+    Assert-True 'Menu: Codificar solo estos, con hueco si' $script:menuStartHueco
     Assert-True 'Menu: sigue con lo demas'          ($script:menuItems -match 'Quitar de la cola' -and $script:menuItems -match 'Liberar el bloqueo')
     Assert-True 'Menu: ofrece reproducir el original'   ($script:menuItems -match 'Reproducir el ORIGINAL')
     Assert-True 'Menu: ofrece reproducir el convertido' ($script:menuItems -match 'Reproducir el CONVERTIDO')

@@ -416,37 +416,68 @@ function Get-CvQueueBulkActions {
     }
 }
 
+function Get-CvQueueStartCount {
+    <#
+        PURO. Cuantos workers NUEVOS abre 'Iniciar': los que falten hasta el maximo (el numero de la
+        ventana), y nunca mas que archivos haya por codificar -ventanas de sobra solo se abren para
+        cerrarse-. Puede ser 0: con el maximo ya en marcha, 'Iniciar' no abre nada.
+        Fuente UNICA: la usan el estado del boton y el propio arranque.
+    #>
+    param(
+        [int]$Max     = 1,
+        [int]$Live    = 0,
+        [int]$Pending = 0
+    )
+    $faltan = [Math]::Max(0, $Max - $Live)
+    return [int][Math]::Max(0, [Math]::Min($faltan, $Pending))
+}
+
 function Get-CvQueueStartState {
     <#
-        PURO. Si 'Iniciar' se puede pulsar, y por que no cuando no. Se apaga con workers YA en
-        marcha: volver a pulsarlo abriria OTRO grupo entero de workers sobre la misma cola -es facil
-        hacerlo sin querer y no se nota hasta que hay el doble de procesos comiendo GPU-. Para
-        cambiar cuantos hay: parar y volver a arrancar.
+        PURO. Si 'Iniciar' se puede pulsar, que hara, y por que no cuando no.
 
-        Devuelve @{ Enabled; Tip }.
+        'Iniciar' COMPLETA hasta el maximo de workers (Get-CvQueueStartCount): nunca abre un grupo
+        entero encima de los que ya hay. Antes si lo hacia, y por eso se apagaba en cuanto hubiera
+        uno vivo -era facil doblar los procesos sin querer-; con el tope, ese peligro no existe y el
+        boton se puede dejar encendido:
+          - con una PARADA pedida, la anula: los workers en marcha siguen con la cola en vez de salir
+            al acabar su archivo, y se abren los que falten hasta el maximo (pueden ser ninguno);
+          - con workers en marcha y menos que el maximo, abre los que falten;
+          - con el maximo ya en marcha (y sin parada), no hay nada que hacer: se apaga.
+
+        Devuelve @{ Enabled; Tip; Open } (Open = cuantos abriria).
     #>
     param(
         [int]$Queued   = 0,
         [int]$Live     = 0,
         [bool]$Stopping = $false,
-        # Se acaba de pulsar: los workers tardan unos segundos en publicar su estado, y hasta
-        # entonces -Live sigue a 0. Sin esto, el boton se queda encendido justo en la ventana de
-        # tiempo en la que es mas facil volver a pulsarlo.
-        [bool]$JustStarted = $false
+        # Se acaba de pulsar y los workers nuevos aun no han publicado su estado: hasta que aparecen,
+        # -Live no los cuenta y el boton volveria a encenderse justo cuando es mas facil volver a
+        # pulsarlo. Ya no depende de que no haya ninguno vivo: completando, si los hay.
+        [bool]$JustStarted = $false,
+        # El maximo de workers (el numero de la ventana).
+        [int]$Max = 1
     )
-    if ($Stopping) {
-        return @{ Enabled = $false; Tip = (Get-CvText -Key 'cola.ini.parando') }
-    }
-    if ($JustStarted -and $Live -le 0) {
-        return @{ Enabled = $false; Tip = (Get-CvText -Key 'cola.ini.arrancando') }
-    }
-    if ($Live -gt 0) {
-        return @{ Enabled = $false; Tip = (Get-CvText -Key 'cola.ini.yahay' -Values @($Live)) }
+    if ($JustStarted) {
+        return @{ Enabled = $false; Tip = (Get-CvText -Key 'cola.ini.arrancando'); Open = 0 }
     }
     if ($Queued -le 0) {
-        return @{ Enabled = $false; Tip = (Get-CvText -Key 'cola.ini.vacia') }
+        return @{ Enabled = $false; Tip = (Get-CvText -Key 'cola.ini.vacia'); Open = 0 }
     }
-    return @{ Enabled = $true; Tip = (Get-CvText -Key 'cola.ini.ok') }
+    $abre = Get-CvQueueStartCount -Max $Max -Live $Live -Pending $Queued
+    if ($Stopping) {
+        if ($abre -gt 0) {
+            return @{ Enabled = $true; Tip = (Get-CvText -Key 'cola.ini.reanudar.mas' -Values @($Live, $abre, $Max)); Open = $abre }
+        }
+        return @{ Enabled = $true; Tip = (Get-CvText -Key 'cola.ini.reanudar' -Values @($Live, $Max)); Open = 0 }
+    }
+    if ($Live -le 0) {
+        return @{ Enabled = $true; Tip = (Get-CvText -Key 'cola.ini.ok'); Open = $abre }
+    }
+    if ($abre -le 0) {
+        return @{ Enabled = $false; Tip = (Get-CvText -Key 'cola.ini.yahay' -Values @($Live, $Max)); Open = 0 }
+    }
+    return @{ Enabled = $true; Tip = (Get-CvText -Key 'cola.ini.completa' -Values @($abre, $Max)); Open = $abre }
 }
 
 function Get-CvQueueStartScope {
