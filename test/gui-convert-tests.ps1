@@ -72,6 +72,7 @@ $modules = @(
     'form\GuiJobProfileDialog'
     'form\GuiProfileEditorWindow'
     'form\GuiProfilesWindow'
+    'form\GuiSplashWindow'
 )
 foreach ($m in $modules) {
     Import-Module (Join-Path $Lib ("{0}.psm1" -f $m)) -Force
@@ -194,6 +195,9 @@ Write-Host "`nWorkerCore - la cola entera" -ForegroundColor Cyan
 $rows = @(Get-CvQueueStatus -Context $ctx)
 Assert-Eq 'Cola: una fila por video' 5 $rows.Count
 function Get-Row { param([string]$Name) $rows | Where-Object { $_.Name -eq $Name } | Select-Object -First 1 }
+# Posicion de una columna de la cola por su CLAVE (Get-CvQueueColumns), nunca por un numero: anadir
+# una columna delante (la de 'Calidad') descuadraba todos los indices fijos de esta bateria.
+function Get-QCol { param([string]$Key) Get-CvGuiCatalogIndex -Items (Get-CvQueueColumns) -Key $Key }
 Assert-Eq 'Fila hecho'        'done'    (Get-Row 'Serie_1x01').State
 Assert-Eq 'Fila codificando'  'working' (Get-Row 'Serie_1x02').State
 Assert-Eq 'Fila en cola'      'queued'  (Get-Row 'Serie_1x03').State
@@ -213,10 +217,10 @@ $kvFila = [pscustomobject]@{
     BorderGuess = ''
     VideoGuess = 'original'
 }
-Assert-True 'Fila hecho: dice que el video es el original' ((@(Format-CvQueueRow -Row $kvFila)[6]).Contains((Get-CvText -Key 'cola.videooriginal').Trim()))
+Assert-True 'Fila hecho: dice que el video es el original' ((@(Format-CvQueueRow -Row $kvFila)[(Get-QCol 'prog')]).Contains((Get-CvText -Key 'cola.videooriginal').Trim()))
 $kvFila.VideoGuess = ''
 # OJO: -match no distingue mayusculas, y la celda ya dice '% del original'; se busca la marca entera.
-Assert-Eq   'Fila hecho: sin marca no dice nada' $false ((@(Format-CvQueueRow -Row $kvFila)[6]) -match '\[video ORIGINAL\]')
+Assert-Eq   'Fila hecho: sin marca no dice nada' $false ((@(Format-CvQueueRow -Row $kvFila)[(Get-QCol 'prog')]) -match '\[video ORIGINAL\]')
 # La fila que esta en curso trae el progreso del worker que la publica (no hay que buscarlo aparte).
 $r02 = Get-Row 'Serie_1x02'
 Assert-Eq 'Fila en curso: worker'   $PID    $r02.WorkerPid
@@ -256,7 +260,7 @@ Set-Content -Path $outMedio -Value 'a medias' -Encoding UTF8
 $rPar = @(Get-CvQueueStatus -Context $ctx) | Where-Object { $_.Name -eq 'Serie_1x03' }
 Assert-Eq   'Cancelado: sale como sin terminar' 'partial' $rPar.State
 Assert-Eq   'Cancelado: no dice Hecho'          'Sin terminar' $rPar.StateText
-Assert-True 'Cancelado: la fila lo explica'     ((@(Format-CvQueueRow -Row $rPar)[6]) -match 'a medias')
+Assert-True 'Cancelado: la fila lo explica'     ((@(Format-CvQueueRow -Row $rPar)[(Get-QCol 'prog')]) -match 'a medias')
 $bulkPar = Get-CvQueueBulkActions -Rows @($rPar)
 Assert-Eq   'Cancelado: se puede purgar'        1 @($bulkPar.Purge).Count
 Assert-Eq   'Cancelado: texto de purgar'        'Eliminar la salida a medias (se rehace)' $bulkPar.PurgeText
@@ -325,28 +329,28 @@ Assert-Eq   'Listo: sin aacgain configurado, sin aviso' 0 @(@((Test-CvConvertRea
 Write-Host "`nGuiConvert - formato de las filas (sin ventana)" -ForegroundColor Cyan
 
 $cells = @(Format-CvQueueRow -Row (Get-Row 'Serie_1x02'))
-Assert-Eq   'Celdas: son ocho'        8 $cells.Count
-Assert-Eq   'Celdas: nombre'          'Serie_1x02' $cells[0]
-Assert-Eq   'Celdas: estado'          'Codificando' $cells[2]
-Assert-Eq   'Celdas: worker'          ("#{0}" -f $PID) $cells[5]
-Assert-True 'Celdas: progreso lleva el paso' ($cells[6] -match 'Video')
-Assert-True 'Celdas: progreso lleva el %'    ($cells[6] -match '42%')
-Assert-True 'Celdas: progreso lleva la velocidad' ($cells[6] -match '1.8x')
-Assert-Eq   'Celdas: ETA'             '03:12' $cells[7]
+Assert-Eq   'Celdas: una por columna' (Get-CvQueueColumns).Count $cells.Count
+Assert-Eq   'Celdas: nombre'          'Serie_1x02' $cells[(Get-QCol 'file')]
+Assert-Eq   'Celdas: estado'          'Codificando' $cells[(Get-QCol 'state')]
+Assert-Eq   'Celdas: worker'          ("#{0}" -f $PID) $cells[(Get-QCol 'worker')]
+Assert-True 'Celdas: progreso lleva el paso' ($cells[(Get-QCol 'prog')] -match 'Video')
+Assert-True 'Celdas: progreso lleva el %'    ($cells[(Get-QCol 'prog')] -match '42%')
+Assert-True 'Celdas: progreso lleva la velocidad' ($cells[(Get-QCol 'prog')] -match '1.8x')
+Assert-Eq   'Celdas: ETA'             '03:12' $cells[(Get-QCol 'eta')]
 # La barra es la MISMA que pinta la consola (Get-CvProgressBar): si cambia alli, cambia aqui.
 $bar = Get-CvProgressBar -Percent 42 -Width 12
-Assert-True 'Celdas: barra como en consola' ($cells[6].Contains($bar))
+Assert-True 'Celdas: barra como en consola' ($cells[(Get-QCol 'prog')].Contains($bar))
 
 $cellsDone = @(Format-CvQueueRow -Row (Get-Row 'Serie_1x01'))
-Assert-Eq   'Celdas hecho: estado'    'Hecho' $cellsDone[2]
-Assert-Eq   'Celdas hecho: sin worker' ''     $cellsDone[5]
+Assert-Eq   'Celdas hecho: estado'    'Hecho' $cellsDone[(Get-QCol 'state')]
+Assert-Eq   'Celdas hecho: sin worker' ''     $cellsDone[(Get-QCol 'worker')]
 $cellsStale = @(Format-CvQueueRow -Row (Get-Row 'Serie_1x05'))
-Assert-Eq   'Celdas huerfana: estado' (Get-CvText -Key 'cola.est.stale') $cellsStale[2]
-Assert-True 'Celdas huerfana: lo explica' ($cellsStale[6] -match 'ya no existe')
+Assert-Eq   'Celdas huerfana: estado' (Get-CvText -Key 'cola.est.stale') $cellsStale[(Get-QCol 'state')]
+Assert-True 'Celdas huerfana: lo explica' ($cellsStale[(Get-QCol 'prog')] -match 'ya no existe')
 # La barra va entre corchetes para que se vea la escala (el tramo vacio casi no pinta a 9pt).
-Assert-True 'Celdas: barra delimitada' ($cells[6] -match '\[')
+Assert-True 'Celdas: barra delimitada' ($cells[(Get-QCol 'prog')] -match '\[')
 $cellsPend = @(Format-CvQueueRow -Row (Get-Row 'Serie_1x04'))
-Assert-True 'Celdas sin preparar: lo explica' ($cellsPend[6] -match 'PREPARAR')
+Assert-True 'Celdas sin preparar: lo explica' ($cellsPend[(Get-QCol 'prog')] -match 'PREPARAR')
 # Las columnas nuevas: de un vistazo, que archivos llevan recorte y cuales tienen algo de audio que
 # revisar. Salen del JOB (sin ffprobe), asi que un archivo sin job las deja vacias.
 $rowB = [pscustomobject]@{
@@ -357,9 +361,9 @@ $rowB = [pscustomobject]@{
 }
 $rowB | Add-Member -NotePropertyName HasJob -NotePropertyValue $true
 $cellsB = @(Format-CvQueueRow -Row $rowB)
-Assert-Eq   'Celdas: bordes marcados'  '[x]' $cellsB[3]
-Assert-True 'Celdas: audio con sync'   ($cellsB[4] -match 'sync -0')
-Assert-True 'Celdas: audio dice 5.1'   ($cellsB[4] -match '5\.1')
+Assert-Eq   'Celdas: bordes marcados'  '[x]' $cellsB[(Get-QCol 'borders')]
+Assert-True 'Celdas: audio con sync'   ($cellsB[(Get-QCol 'audio')] -match 'sync -0')
+Assert-True 'Celdas: audio dice 5.1'   ($cellsB[(Get-QCol 'audio')] -match '5\.1')
 $rowN = [pscustomobject]@{
     Name = 'x'; SizeKb = 0; StateText = 'En cola'; State = 'queued'; WorkerPid = 0
     Percent = -1; Step = ''; Eta = ''; Speed = ''; OutSizeKb = 0
@@ -368,8 +372,8 @@ $rowN = [pscustomobject]@{
 }
 $rowN | Add-Member -NotePropertyName HasJob -NotePropertyValue $true
 $cellsN = @(Format-CvQueueRow -Row $rowN)
-Assert-Eq   'Celdas: se busco y no hay barras' '[ ]' $cellsN[3]
-Assert-Eq   'Celdas: audio sin nada que decir' ''    $cellsN[4]
+Assert-Eq   'Celdas: se busco y no hay barras' '[ ]' $cellsN[(Get-QCol 'borders')]
+Assert-Eq   'Celdas: audio sin nada que decir' ''    $cellsN[(Get-QCol 'audio')]
 # Sin job no se sabe nada: las dos columnas en blanco (ni '[ ]' ni 'sin audio', que serian mentira).
 $rowSin = [pscustomobject]@{
     Name = 'x'; SizeKb = 0; StateText = 'Sin preparar'; State = 'pending'; WorkerPid = 0
@@ -377,8 +381,8 @@ $rowSin = [pscustomobject]@{
     Crop = ''; Detect = $false; AudioSkip = $false; AudioTracks = @()
 }
 $cellsSin = @(Format-CvQueueRow -Row $rowSin)
-Assert-Eq   'Celdas sin job: bordes en blanco' '' $cellsSin[3]
-Assert-Eq   'Celdas sin job: audio en blanco'  '' $cellsSin[4]
+Assert-Eq   'Celdas sin job: bordes en blanco' '' $cellsSin[(Get-QCol 'borders')]
+Assert-Eq   'Celdas sin job: audio en blanco'  '' $cellsSin[(Get-QCol 'audio')]
 
 # Acciones EN BLOQUE sobre varias filas marcadas (la lista es de seleccion multiple).
 # REGRESION: los jobs sembrados aqui son '{}' (sin perfil ni secciones), que es lo que puede haber
@@ -456,6 +460,168 @@ Assert-Eq   'Ritmo: parada y sin latido, se para' $false ([bool]$tkPara.Enabled)
 $tkIdle = Get-CvQueueTickPlan -Live 0 -RefreshMs 1000 -IdleMs 10000
 Assert-True 'Ritmo: con latido configurado, sigue' ([bool]$tkIdle.Enabled)
 Assert-Eq   'Ritmo: y al ritmo del latido'       10000 ([int]$tkIdle.Interval)
+# Quedan archivos por sondear (calidad, bordes): sigue pasando aunque la config diga 'parado', o la
+# columna se quedaba a medias hasta pulsar Actualizar.
+$tkSonda = Get-CvQueueTickPlan -Live 0 -RefreshMs 1000 -IdleMs 0 -Probing $true
+Assert-True 'Ritmo: sondeando, sigue mirando'     ([bool]$tkSonda.Enabled)
+Assert-Eq   'Ritmo: sondeando, al ritmo del progreso' 1000 ([int]$tkSonda.Interval)
+
+# ================================================================================================
+Write-Host "`nGuiConvert - columna Calidad" -ForegroundColor Cyan
+Assert-Eq   'Calidad: la columna existe'          9 (Get-CvQueueColumns).Count
+Assert-Eq   'Calidad: va detras del tamano'       ((Get-QCol 'size') + 1) (Get-QCol 'quality')
+Assert-Eq   'Calidad: misma calidad, una sola'    '1080p' (Format-CvQueueQualityCell -Source '1080p' -Output '1080p')
+Assert-Eq   'Calidad: sin la de salida, una sola' '1080p' (Format-CvQueueQualityCell -Source '1080p')
+Assert-Eq   'Calidad: si se reescala, las dos'    ('1080p {0} 720p' -f [char]0x2192) (Format-CvQueueQualityCell -Source '1080p' -Output '720p')
+Assert-Eq   'Calidad: sin saberla, en blanco'     '' (Format-CvQueueQualityCell -Source '' -Output '720p')
+$rowQ = [pscustomobject]@{
+    Name = 'x'; SizeKb = 0; StateText = 'En cola'; State = 'queued'; WorkerPid = 0
+    Percent = -1; Step = ''; Eta = ''; Speed = ''; OutSizeKb = 0; HasJob = $true
+    Crop = ''; Detect = $false; AudioSkip = $false; AudioTracks = @()
+    Quality = '4K'; QualityOut = '1080p'
+}
+Assert-Eq   'Calidad: en su columna de la fila'   ('4K {0} 1080p' -f [char]0x2192) (@(Format-CvQueueRow -Row $rowQ)[(Get-QCol 'quality')])
+
+# Del JOB, sin ffprobe: el tamano del original va dentro y la salida se calcula con su reescalado.
+[void](New-FakeVideo -Name 'Serie_9x01' -Kb 64)
+Set-Content -Path (Join-Path $ctx.Proceso 'Serie_9x01.job.json') -Encoding UTF8 -Value (
+    '{ "video": { "skip": false, "crop": "1920:800:0:140", "resize": "1280:-2", "width": 1920, "height": 1080, "sar": "1:1" }, "audio": { "skip": true } }')
+$rowsQ = @(Get-CvQueueStatus -Context $ctx)
+$q9 = @($rowsQ | Where-Object { $_.Name -eq 'Serie_9x01' })[0]
+Assert-Eq   'Calidad: del job, la del original'   '1080p' "$($q9.Quality)"
+Assert-Eq   'Calidad: del job, la de la salida'   '720p'  "$($q9.QualityOut)"
+Assert-Eq   'Calidad: del job no hay que sondear' $false ([bool]$q9.Probing)
+# Sin job (y sin presupuesto para mirar el original) se queda esperando su sonda.
+$q4 = @($rowsQ | Where-Object { $_.Name -eq 'Serie_1x04' })[0]
+Assert-Eq   'Calidad: sin job, todavia no se sabe' '' "$($q4.Quality)"
+Assert-Eq   'Calidad: sin job, pendiente de sonda' $true ([bool]$q4.Probing)
+Remove-Item -LiteralPath (Join-Path $ctx.Proceso 'Serie_9x01.job.json') -Force
+Remove-Item -LiteralPath (Join-Path $ctx.Original 'Serie_9x01.mkv') -Force
+
+# ================================================================================================
+Write-Host "`nGuiConvert - avance de la tanda, icono y barra de tareas" -ForegroundColor Cyan
+$tRows = @(
+    [pscustomobject]@{ Name = 'a'; State = 'done';    Percent = 100 }
+    [pscustomobject]@{ Name = 'b'; State = 'working'; Percent = 50 }
+    [pscustomobject]@{ Name = 'c'; State = 'queued';  Percent = -1 }
+    [pscustomobject]@{ Name = 'd'; State = 'pending'; Percent = -1 }
+    [pscustomobject]@{ Name = 'e'; State = 'done';    Percent = 100 }
+)
+# La tanda: sin workers se vacia; con ellos y sin tanda, lo que hay en cola y en curso.
+Assert-Eq   'Tanda: sin workers, vacia'           0 @(Update-CvQueueBatch -Batch @('a', 'b') -Rows $tRows -Live 0).Count
+Assert-Eq   'Tanda: arrancando se conserva'       'a|b' (@(Update-CvQueueBatch -Batch @('a', 'b') -Rows $tRows -Live 0 -Starting $true) -join '|')
+Assert-Eq   'Tanda: sin tanda, cola y en curso'   'b|c' (@(Update-CvQueueBatch -Rows $tRows -Live 1) -join '|')
+Assert-Eq   'Tanda: suma lo que se pone a codificar' 'c|b' (@(Update-CvQueueBatch -Batch @('c') -Rows $tRows -Live 1) -join '|')
+# El avance: hecho = 100, en curso = su %, esperando = 0; los hechos ANTES de la tanda no cuentan.
+$pr = Get-CvQueueProgress -Rows $tRows -Batch @('a', 'b', 'c')
+Assert-Eq   'Avance: de la tanda, no de la carpeta' 50 ([int]$pr.Percent)
+Assert-Eq   'Avance: hechos y total'              '1/3' ("{0}/{1}" -f $pr.Done, $pr.Total)
+Assert-Eq   'Avance: un nombre que ya no esta no cuenta' 75 ([int](Get-CvQueueProgress -Rows $tRows -Batch @('a', 'b', 'zz')).Percent)
+Assert-Eq   'Avance: sin tanda no se sabe'        $false ([bool](Get-CvQueueProgress -Rows $tRows).Known)
+
+# Los fotogramas del icono: 'progress' lleva el % y su punta parpadea; 'spin' gira de 45 en 45.
+$f0 = Get-CvTrayAnimFrame -Mode 'progress' -Frame 0 -Percent 40
+$f1 = Get-CvTrayAnimFrame -Mode 'progress' -Frame 1 -Percent 40
+Assert-Eq   'Icono: el anillo lleva el avance'    40 ([int]$f0.Progress)
+Assert-True 'Icono: la punta parpadea'            ([bool]$f0.Pulse -ne [bool]$f1.Pulse)
+Assert-True 'Icono: y cada fotograma es otro dibujo' ("$($f0.Key)" -ne "$($f1.Key)")
+Assert-Eq   'Icono: el % se acota'                100 ([int](Get-CvTrayAnimFrame -Mode 'progress' -Percent 250).Progress)
+Assert-Eq   'Icono: girando, 45 grados por fotograma' 135 ([int](Get-CvTrayAnimFrame -Mode 'spin' -Frame 3).Spin)
+Assert-Eq   'Icono: y vuelta entera en 8'         0 ([int](Get-CvTrayAnimFrame -Mode 'spin' -Frame 8).Spin)
+Assert-True 'Icono: el punto se enciende y se apaga' ([bool](Get-CvTrayAnimFrame -Mode 'dot' -Frame 0).Dot -and -not [bool](Get-CvTrayAnimFrame -Mode 'dot' -Frame 1).Dot)
+Assert-Eq   'Icono: quieto es el de siempre'      'static' "$((Get-CvTrayAnimFrame -Mode 'off' -Frame 5).Key)"
+# Cuando se mueve: escondida, con workers y con una animacion elegida.
+Assert-True 'Icono: escondida y codificando, se mueve' (Test-CvTrayAnimate -Mode 'progress' -Hidden $true -Live 1)
+Assert-Eq   'Icono: a la vista, quieto'           $false (Test-CvTrayAnimate -Mode 'progress' -Hidden $false -Live 1)
+Assert-Eq   'Icono: sin workers, quieto'          $false (Test-CvTrayAnimate -Mode 'spin' -Hidden $true -Live 0)
+Assert-Eq   'Icono: apagado, quieto'              $false (Test-CvTrayAnimate -Mode 'off' -Hidden $true -Live 1)
+Assert-Eq   'Icono: modo desconocido, quieto'     $false (Test-CvTrayAnimate -Mode 'girar' -Hidden $true -Live 1)
+
+# El boton de la barra de tareas.
+$tb = Get-CvTaskbarProgressPlan -Live 1 -Progress $pr
+Assert-Eq   'Barra: codificando, verde con su %'  'normal|50' ("{0}|{1}" -f $tb.State, $tb.Percent)
+$tb = Get-CvTaskbarProgressPlan -Live 1 -Stopping $true -Progress $pr
+Assert-Eq   'Barra: parando, amarilla'            'paused|50' ("{0}|{1}" -f $tb.State, $tb.Percent)
+Assert-Eq   'Barra: arrancando, la que va y viene' 'indeterminate' "$((Get-CvTaskbarProgressPlan -Live 0 -Starting $true).State)"
+Assert-Eq   'Barra: con workers sin avance, igual' 'indeterminate' "$((Get-CvTaskbarProgressPlan -Live 1).State)"
+Assert-Eq   'Barra: sin nada, el boton normal'    'none' "$((Get-CvTaskbarProgressPlan -Live 0 -Progress $pr).State)"
+Assert-Eq   'Barra: estados conocidos'            8 ([int](Get-CvGuiTaskbarStates).paused)
+
+# ================================================================================================
+Write-Host "`nGuiConvert - una sola cola por instalacion" -ForegroundColor Cyan
+$inA = Get-CvQueueInstanceNames -Root 'D:\Programas\ConvertVideo\'
+$inB = Get-CvQueueInstanceNames -Root 'd:\programas\convertvideo'
+$inC = Get-CvQueueInstanceNames -Root 'E:\Otra\ConvertVideo'
+Assert-Eq   'Instancia: la misma carpeta escrita de otra forma, el mismo nombre' "$($inA.Mutex)" "$($inB.Mutex)"
+Assert-True 'Instancia: otra copia del programa, otro nombre' ("$($inA.Mutex)" -ne "$($inC.Mutex)")
+Assert-True 'Instancia: por sesion de Windows'    ("$($inA.Mutex)".StartsWith('Local\'))
+Assert-True 'Instancia: evento propio'            ("$($inA.Event)" -ne "$($inA.Mutex)")
+# De verdad, con una carpeta que no usa nadie: la primera se la queda; la segunda le avisa y se va.
+$raizInst = Join-Path ([System.IO.Path]::GetTempPath()) ('cv_inst_' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+$primera = Request-CvQueueInstance -Root $raizInst
+Assert-Eq   'Instancia: la primera se la queda'   $true ([bool]$primera.First)
+Assert-Eq   'Instancia: sin aviso todavia'        $false ([bool]$primera.Event.WaitOne(0))
+$segunda = Request-CvQueueInstance -Root $raizInst
+Assert-Eq   'Instancia: la segunda no abre otra'  $false ([bool]$segunda.First)
+Assert-Eq   'Instancia: y le avisa a la primera'  $true ([bool]$primera.Event.WaitOne(0))
+Assert-Eq   'Instancia: el aviso se consume'      $false ([bool]$primera.Event.WaitOne(0))
+Exit-CvQueueInstance -Instance $primera
+$tercera = Request-CvQueueInstance -Root $raizInst
+Assert-Eq   'Instancia: cerrada la primera, la siguiente vuelve a ser primera' $true ([bool]$tercera.First)
+Exit-CvQueueInstance -Instance $tercera
+
+# ================================================================================================
+Write-Host "`nPantalla de arranque (su propio hilo)" -ForegroundColor Cyan
+# Sale en su PROPIO hilo: aqui se espera a que se vea sin bombear mensajes de este, que es justo lo
+# que pasa al arrancar (el hilo principal esta cargando modulos y no repinta nada).
+Assert-Eq   'Arranque: claro, el azul de la pastilla del icono' '10,92,176' (@((Get-CvSplashColors).Bottom) -join ',')
+# En oscuro, los de la paleta oscura: esta pantalla no puede pedirsela (sale antes de cargar Gui),
+# asi que se comprueba aqui que no se han separado.
+$splO = Get-CvSplashColors -Dark $true
+$palO = Get-CvGuiPalette -Theme 'dark'
+foreach ($par in @(
+    @{ S = 'Bottom'; P = 'Back' }
+    @{ S = 'Text';   P = 'Fore' }
+    @{ S = 'Soft';   P = 'Muted' }
+    @{ S = 'Track';  P = 'Border' }
+    @{ S = 'Bar';    P = 'Accent' }
+)) {
+    $cp = $palO[$par.P]
+    Assert-Eq ("Arranque oscuro: {0} = {1} de la paleta" -f $par.S, $par.P) ("{0},{1},{2}" -f $cp.R, $cp.G, $cp.B) (@($splO[$par.S]) -join ',')
+}
+$splOsc = Start-CvSplashWindow -Title 'x' -Text 'x' -TimeoutSec 30 -Dark $true
+if ($null -ne $splOsc) {
+    $espera = [Diagnostics.Stopwatch]::StartNew()
+    while (-not [bool]$splOsc.State.Shown -and $espera.Elapsed.TotalSeconds -lt 10) { Start-Sleep -Milliseconds 50 }
+    Assert-Eq   'Arranque oscuro: lleva sus colores' '32,32,32' (@($splOsc.State.Colors.Bottom) -join ',')
+    Stop-CvSplashWindow -Splash $splOsc
+    Assert-True 'Arranque oscuro: se cierra' ([bool]$splOsc.Handle.IsCompleted)
+}
+Assert-Eq   'Arranque: sin pantalla, cambiar el texto no rompe' $null (Set-CvSplashText -Splash $null -Text 'x')
+Stop-CvSplashWindow -Splash $null
+$spl = Start-CvSplashWindow -Title 'ConvertVideo 0.0.0' -Text (Get-CvText -Key 'splash.modulos') -TimeoutSec 30
+Assert-True 'Arranque: se abre' ($null -ne $spl)
+if ($null -ne $spl) {
+    $espera = [Diagnostics.Stopwatch]::StartNew()
+    while (-not [bool]$spl.State.Shown -and $espera.Elapsed.TotalSeconds -lt 10) { Start-Sleep -Milliseconds 50 }
+    if (-not [bool]$spl.State.Shown) {
+        Write-Skip 'Arranque: se ve sin que este hilo haga nada' 'sin entorno grafico'
+    } else {
+        Assert-True 'Arranque: se ve sin que este hilo haga nada' ([bool]$spl.State.Shown)
+        Set-CvSplashText -Splash $spl -Text (Get-CvText -Key 'splash.ventana')
+        Assert-Eq   'Arranque: el texto le llega' (Get-CvText -Key 'splash.ventana') "$($spl.State.Text)"
+    }
+    Stop-CvSplashWindow -Splash $spl
+    Assert-True 'Arranque: se cierra y suelta su hilo' ([bool]$spl.Handle.IsCompleted)
+}
+# Un plazo cumplido la cierra aunque nadie se lo pida (si quien la abrio se muere, no se queda).
+$splT = Start-CvSplashWindow -Title 'x' -Text 'x' -TimeoutSec 5
+if ($null -ne $splT) {
+    $espera = [Diagnostics.Stopwatch]::StartNew()
+    while (-not $splT.Handle.IsCompleted -and $espera.Elapsed.TotalSeconds -lt 15) { Start-Sleep -Milliseconds 100 }
+    Assert-True 'Arranque: se cierra sola al cumplir el plazo' ([bool]$splT.Handle.IsCompleted)
+    Stop-CvSplashWindow -Splash $splT
+}
 
 
 # La lista SIGUE al archivo que se esta codificando: si se sale de la zona visible se mueve sola,
@@ -649,7 +815,7 @@ Assert-Eq   'Video: la del escaneo lleva tres campos' 3 (@($scan[0].Items | Wher
 foreach ($par in @(
     @{ N = 'audio'; C = (Get-CvJobAudioColumns); T = 6 }
     @{ N = 'subs';  C = (Get-CvJobSubColumns);   T = 5 }
-    @{ N = 'cola';  C = (Get-CvQueueColumns);    T = 8 }
+    @{ N = 'cola';  C = (Get-CvQueueColumns);    T = 9 }
 )) {
     $cols = @($par.C)
     Assert-Eq   ("Columnas {0}: cuantas hay" -f $par.N)       ([int]$par.T) $cols.Count
@@ -819,7 +985,7 @@ if (-not $sta) {
             $script:colCount  = $lv.Columns.Count
             $script:firstName = if ($lv.Items.Count -gt 0) { $lv.Items[0].Text } else { '' }
             # Los estados se leen de la propia lista, que es lo que ve el usuario.
-            $script:states = (@($lv.Items | ForEach-Object { $_.SubItems[2].Text }) -join ',')
+            $script:states = (@($lv.Items | ForEach-Object { $_.SubItems[(Get-QCol 'state')].Text }) -join ',')
             $script:totals = $tot.Text
             # Botones: hay un archivo en cola -> se puede iniciar; hay un worker vivo -> se puede
             # parar y cancelar. NO se pulsan: 'Iniciar' abriria procesos de verdad y 'Cancelar ahora'
@@ -832,7 +998,7 @@ if (-not $sta) {
             $script:canStartMax = $bSt.Enabled
             # Con una fila EN COLA marcada, 'Iniciar' pasa a trabajar solo con lo elegido y lo dice.
             foreach ($k in 0..($lv.Items.Count - 1)) {
-                if ($lv.Items[$k].SubItems[2].Text -eq 'En cola') { $lv.Items[$k].Selected = $true }
+                if ($lv.Items[$k].SubItems[(Get-QCol 'state')].Text -eq 'En cola') { $lv.Items[$k].Selected = $true }
             }
             # SIN pulsar Actualizar: marcar una fila tiene que bastar (la ventana ya no se refresca
             # sola, asi que si el texto dependiera del refresco no se enteraria hasta pulsarlo).
@@ -853,7 +1019,7 @@ if (-not $sta) {
             # Y sobre una ya HECHA (que si tiene salida), tambien el convertido.
             $lv.SelectedItems.Clear()
             foreach ($k in 0..($lv.Items.Count - 1)) {
-                if ($lv.Items[$k].SubItems[2].Text -eq 'Hecho') { $lv.Items[$k].Selected = $true }
+                if ($lv.Items[$k].SubItems[(Get-QCol 'state')].Text -eq 'Hecho') { $lv.Items[$k].Selected = $true }
             }
             $menu.Show($lv, (New-Object System.Drawing.Point(5, 5)))
             $menu.Close()
@@ -866,9 +1032,10 @@ if (-not $sta) {
             $script:logItems = $cmb.Items.Count
             $script:multiSel = $lv.MultiSelect
             # La columna de progreso se estira con la ventana (no se queda en su ancho de partida).
-            $script:progW    = $lv.Columns[6].Width
+            $iPrW = Get-QCol 'prog'
+            $script:progW    = $lv.Columns[$iPrW].Width
             $script:otherW   = 0
-            for ($ci = 0; $ci -lt $lv.Columns.Count; $ci++) { if ($ci -ne 6) { $script:otherW += $lv.Columns[$ci].Width } }
+            for ($ci = 0; $ci -lt $lv.Columns.Count; $ci++) { if ($ci -ne $iPrW) { $script:otherW += $lv.Columns[$ci].Width } }
             $script:colNames = (@($lv.Columns | ForEach-Object { "$($_.Text)" }) -join '|')
             $script:clientW  = $lv.ClientSize.Width
             # Pestana de resumen: al marcar una fila con job tiene que salir que se le va a hacer.
@@ -890,7 +1057,7 @@ if (-not $sta) {
             $script:splitFrac = [math]::Round($sp.SplitterDistance / [double]$sp.Height, 2)
             # Y se TIENE que ver: una franja ancha con su agarre pintado (si no, nadie lo descubre).
             $script:splitW    = [int]$sp.SplitterWidth
-            foreach ($k in 0..($lv.Items.Count - 1)) { $lv.Items[$k].Selected = ($lv.Items[$k].SubItems[2].Text -eq 'En cola') }
+            foreach ($k in 0..($lv.Items.Count - 1)) { $lv.Items[$k].Selected = ($lv.Items[$k].SubItems[(Get-QCol 'state')].Text -eq 'En cola') }
             $f.Controls.Find('cvRefresh', $true)[0].PerformClick()
             $script:sumText = "$($sumBox.Text)"
             # ATAJOS, con la tecla de verdad sobre la ventana (OnKeyDown es protegido: reflexion).
@@ -1062,14 +1229,14 @@ if (-not $sta) {
     # lo que evita recolocar la ventana y el divisor en cada arranque.
     $laySaved = Get-CvGuiLayout -Context $ctx -Key 'cola'
     Assert-True 'Ventana: al cerrar apunta como quedo' ($null -ne $laySaved -and [int]$laySaved.width -gt 0 -and [int]$laySaved.split -gt 0)
-    Assert-Eq   'Ventana: apunta las 8 columnas' 8 (@($laySaved.cols).Count)
+    Assert-Eq   'Ventana: apunta todas las columnas' (Get-CvQueueColumns).Count (@($laySaved.cols).Count)
 
     [void](Save-CvGuiLayout -Context $ctx -Key 'cola' -Layout ([ordered]@{
         width     = 1000
         height    = 700
         maximized = $false
         split     = 300
-        cols      = @(400, 90, 130, 55, 150, 70, 300, 80)
+        cols      = @(400, 90, 105, 130, 55, 150, 70, 300, 80)
     }))
     $script:guiErr2 = ''
     $t2 = New-Object System.Windows.Forms.Timer
@@ -1243,6 +1410,18 @@ if (-not ($toolsB -and (Test-Path -LiteralPath $fixB) -and (Test-Path -LiteralPa
         }
         Assert-Eq   'Bordes hechos: al recortado le sale [x]'  '[x]' $fin.Crop
         Assert-Eq   'Bordes hechos: al que no, [ ]'            '[ ]' $fin.Igual
+        # La CALIDAD de un hecho sale de los mismos dos tamanos: quitarle las barras no la baja.
+        $rq = @(@(Get-CvQueueStatus -Context $ctxB -DoneProbe 0) | Where-Object { $_.Name -eq 'Serie_3x01' })[0]
+        Assert-Eq   'Calidad hecho: original y salida'  '1080p|1080p' ("{0}|{1}" -f $rq.Quality, $rq.QualityOut)
+        # Y la de un original sin job, con su ffprobe (cacheado y guardado como el de los bordes).
+        $sv = Get-CvSourceVideoPeek -Context $ctxB -Path (Join-Path $ctxB.Original 'Serie_3x02.mp4')
+        Assert-Eq   'Calidad original: su tamano'       '1920x1080' ("{0}x{1}" -f $sv.Width, $sv.Height)
+        [void](Save-CvSourceVideoCache -Context $ctxB)
+        [void](Clear-CvSourceVideoCache)
+        Assert-Eq   'Calidad original: vaciada, no hay nada' $null (Get-CvSourceVideoPeek -Context $ctxB -Path (Join-Path $ctxB.Original 'Serie_3x02.mp4') -CachedOnly)
+        [void](Import-CvSourceVideoCache -Context $ctxB)
+        $sv2 = Get-CvSourceVideoPeek -Context $ctxB -Path (Join-Path $ctxB.Original 'Serie_3x02.mp4') -CachedOnly
+        Assert-Eq   'Calidad original: vuelve del fichero' '1920x1080' ("{0}x{1}" -f $sv2.Width, $sv2.Height)
         # La cache SOBREVIVE al cierre: se guarda, se vacia la de memoria y tiene que volver del
         # fichero sin sondar nada (con presupuesto 0).
         Assert-True 'Bordes hechos: se guardan en disco' ((Save-CvDoneBorderCache -Context $ctxB) -ge 2)
@@ -1261,7 +1440,7 @@ if (-not ($toolsB -and (Test-Path -LiteralPath $fixB) -and (Test-Path -LiteralPa
         & "$($ctxB.FFmpeg)" -v quiet -y -i $fixB -t 1 -c:v libx264 -preset ultrafast -an $outIgual 2>&1 | Out-Null
         # Y la fila ya formateada lo ensena en su columna.
         $filaC = @(Format-CvQueueRow -Row (@(Get-CvQueueStatus -Context $ctxB -DoneProbe 0) | Where-Object { $_.Name -eq 'Serie_3x01' })[0])
-        Assert-Eq   'Bordes hechos: en la columna de la lista' '[x]' $filaC[3]
+        Assert-Eq   'Bordes hechos: en la columna de la lista' '[x]' $filaC[(Get-QCol 'borders')]
         # Lo analizado se CACHEA: una segunda vuelta no vuelve a lanzar ffprobe (y por eso sale
         # relleno aunque el presupuesto sea 0).
         $t0 = [Diagnostics.Stopwatch]::StartNew()

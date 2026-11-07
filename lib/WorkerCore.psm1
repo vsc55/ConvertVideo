@@ -339,6 +339,8 @@ function Get-CvQueueStateText {
 $script:CvJobPeek    = @{}
 # Cache de la deduccion de bordes de los archivos YA CONVERTIDOS (ver Get-CvDoneBorderPeek).
 $script:CvDoneBorder = @{}
+# Cache del tamano de los ORIGINALES que no lo traen en su job (ver Get-CvSourceVideoPeek).
+$script:CvSrcVideo   = @{}
 $script:CvWorkerPeek = @{}
 
 function Get-CvJobPeek {
@@ -348,8 +350,9 @@ function Get-CvJobPeek {
         del log. La lista se repinta cada segundo y hay un job por archivo; parsear 30 JSON por
         segundo para nada seria justo lo que este modulo evita.
 
-        Devuelve @{ Crop; Detect; Tracks; AudioSkip } o $null si no hay job (o no se puede leer: un
-        job a medio escribir no puede tumbar la ventana).
+        Devuelve @{ Crop; Detect; Tracks; AudioSkip; Resize; VideoSkip; Width; Height; Sar } o $null
+        si no hay job (o no se puede leer: un job a medio escribir no puede tumbar la ventana). Width
+        es 0 en un job de antes de guardar el tamano del original.
     #>
     param(
         [Parameter(Mandatory)]$Context,
@@ -373,6 +376,11 @@ function Get-CvJobPeek {
         Detect    = ($dbv -eq 'auto' -or $dbv -eq 'true')
         Tracks    = @(Get-CvJobAudioTracks $job.audio)
         AudioSkip = [bool]$job.audio.skip
+        Resize    = "$($job.video.resize)"
+        VideoSkip = [bool]$job.video.skip
+        Width     = $(if ($null -ne $job.video.width) { [int]$job.video.width } else { 0 })
+        Height    = $(if ($null -ne $job.video.height) { [int]$job.video.height } else { 0 })
+        Sar       = "$($job.video.sar)"
     }
     $script:CvJobPeek[$p] = @{ Stamp = $stamp; Data = $data }
     return $data
@@ -666,6 +674,106 @@ function Save-CvDoneBorderCache {
     }
 }
 
+function Get-CvSourceVideoPeek {
+    <#
+        El tamano del video de un ORIGINAL (para la columna 'Calidad') cuando no hay job que lo diga:
+        sin preparar, o un job de antes de guardarlo. Un ffprobe, asi que como Get-CvDoneBorderPeek:
+        cacheado por fecha+tamano del fichero, guardado en disco (Import/Save-CvSourceVideoCache) y
+        con -CachedOnly para el refresco que no puede permitirse sondear.
+
+        Devuelve @{ Known; Width; Height; Sar } -Width = el ALMACENADO- o $null si no hay nada en
+        cache (con -CachedOnly) o el fichero no se puede mirar.
+    #>
+    param(
+        [Parameter(Mandatory)]$Context,
+        [Parameter(Mandatory)][string]$Path,
+        $SrcInfo = $null,
+        [switch]$CachedOnly
+    )
+    $stamp = ''
+    try {
+        $fi = $(if ($null -ne $SrcInfo) { $SrcInfo } else { Get-Item -LiteralPath $Path -ErrorAction Stop })
+        $stamp = "{0}|{1}" -f $fi.Length, $fi.LastWriteTimeUtc.Ticks
+    } catch { return $null }
+    $hit = $script:CvSrcVideo[$Path]
+    if ($null -ne $hit -and "$($hit.Stamp)" -eq $stamp) { return $hit.Data }
+    if ($CachedOnly) { return $null }
+    $datos = @{
+        Known  = $false
+        Width  = 0
+        Height = 0
+        Sar    = ''
+    }
+    try {
+        $vs = Get-VideoStream -Info (Get-MediaInfo -Context $Context -File $Path)
+        if ($null -ne $vs -and [int]$vs.width -gt 0 -and [int]$vs.height -gt 0) {
+            $datos.Known  = $true
+            $datos.Width  = [int]$vs.width
+            $datos.Height = [int]$vs.height
+            $datos.Sar    = "$($vs.sample_aspect_ratio)"
+        }
+    } catch { }
+    # Tambien el 'no se pudo' (Known = $false): si no, se reintentaria el ffprobe en cada refresco.
+    $script:CvSrcVideo[$Path] = @{
+        Stamp = $stamp
+        Data  = $datos
+    }
+    return $datos
+}
+
+function Import-CvSourceVideoCache {
+    <# Trae de disco ('<config>.gui.json', clave 'colaVideo') los tamanos ya mirados en otras sesiones. #>
+    param([Parameter(Mandatory)]$Context)
+    try {
+        foreach ($e in @(Get-CvGuiLayout -Context $Context -Key 'colaVideo')) {
+            if ($null -eq $e -or "$($e.Path)" -eq '') { continue }
+            $script:CvSrcVideo["$($e.Path)"] = @{
+                Stamp = "$($e.Stamp)"
+                Data  = @{
+                    Known  = [bool]$e.Data.Known
+                    Width  = [int]$e.Data.Width
+                    Height = [int]$e.Data.Height
+                    Sar    = "$($e.Data.Sar)"
+                }
+            }
+        }
+    } catch { }
+    return @($script:CvSrcVideo.Keys).Count
+}
+
+function Clear-CvSourceVideoCache {
+    <# Vacia lo cacheado EN MEMORIA (no toca el disco), para las pruebas. #>
+    $script:CvSrcVideo = @{}
+    return 0
+}
+
+function Save-CvSourceVideoCache {
+    <#
+        Deja en disco lo mirado, TIRANDO lo de originales que ya no estan (misma regla que
+        Save-CvDoneBorderCache). No lanza nunca: se llama al cerrar la ventana.
+    #>
+    param([Parameter(Mandatory)]$Context)
+    try {
+        $vivas = @()
+        foreach ($k in @($script:CvSrcVideo.Keys)) {
+            $e = $script:CvSrcVideo[$k]
+            if ($null -eq $e -or -not (Test-Path -LiteralPath $k)) {
+                $script:CvSrcVideo.Remove($k)
+                continue
+            }
+            $vivas += [pscustomobject]@{
+                Path  = $k
+                Stamp = "$($e.Stamp)"
+                Data  = $e.Data
+            }
+        }
+        [void](Save-CvGuiLayout -Context $Context -Key 'colaVideo' -Layout $vivas)
+        return @($vivas).Count
+    } catch {
+        return 0
+    }
+}
+
 function Get-CvQueueStatus {
     <#
         La COLA entera: una fila por video de Original\, con su estado, el worker que lo esta
@@ -680,13 +788,22 @@ function Get-CvQueueStatus {
         dos ffprobe, de modo que se analizan como mucho -DoneProbe por llamada (el resto se quedan
         para la siguiente) y lo analizado se cachea: la columna se va rellenando sola en unos
         segundos y el refresco no se para. Con 0 no se analiza nada.
+
+        Lo mismo con la CALIDAD (-QualityProbe): sale del job o, ya hecho, de la salida; solo cuando
+        no hay ni eso se mira el original con un ffprobe. Las filas que se quedan esperando una sonda
+        llevan Probing = $true, para que la ventana sepa que tiene que volver a pasar.
     #>
     param(
         [Parameter(Mandatory)]$Context,
         [int]$DoneProbe = 0,
-        [double]$DoneTolerance = 0.01
+        [double]$DoneTolerance = 0.01,
+        [int]$QualityProbe = 0,
+        [double]$QualityTolerance = 0.1
     )
     $quedan = [Math]::Max(0, $DoneProbe)
+    $quedanQ = [Math]::Max(0, $QualityProbe)
+    $mirarBordes  = ([int]$Context.GuiQueueDoneProbe -gt 0)
+    $mirarCalidad = ([int]$Context.GuiQueueQualityProbe -gt 0)
     $workers = @(Get-CvWorkerStates -Context $Context | Where-Object { $_.Alive })
     # Las carpetas se listan UNA vez y se decide en memoria. Preguntando fichero a fichero
     # (Test-Path de la salida, del lock, del job...) eran ~90 consultas al disco por refresco y ~0,5 s;
@@ -743,6 +860,39 @@ function Get-CvQueueStatus {
             if ($null -ne $dp) { $vguess = "$($dp.VideoSrc)" }
         }
 
+        # Calidad: lo mas fiable primero. Ya hecho, la de la SALIDA de verdad (lo deducido de los
+        # bordes ya trae los dos tamanos); con job, lo que el job le va a hacer; sin nada, el original.
+        $calidad = ''
+        $calidadOut = ''
+        $sondeando = ($done -and -not $hasJob -and $null -eq $dp -and $mirarBordes)
+        if ($done -and -not $hasJob -and $null -ne $dp -and [int]$dp.SrcW -gt 0) {
+            $calidad    = Get-CvVideoQuality -Width ([int]$dp.SrcW) -Height ([int]$dp.SrcH) -Tolerance $QualityTolerance
+            $calidadOut = Get-CvVideoQuality -Width ([int]$dp.OutW) -Height ([int]$dp.OutH) -Tolerance $QualityTolerance
+        } elseif ($null -ne $peek -and [int]$peek.Width -gt 0) {
+            $q = Get-CvVideoQualityPair -Width ([int]$peek.Width) -Height ([int]$peek.Height) -Sar "$($peek.Sar)" `
+                -Crop "$($peek.Crop)" -Resize "$($peek.Resize)" -Skip ([bool]$peek.VideoSkip) -Tolerance $QualityTolerance
+            $calidad    = "$($q.Source)"
+            $calidadOut = "$($q.Output)"
+        } elseif ($mirarCalidad) {
+            $sv = Get-CvSourceVideoPeek -Context $Context -Path $f.FullName -SrcInfo $f -CachedOnly
+            if ($null -eq $sv -and $quedanQ -gt 0) {
+                $quedanQ--
+                $sv = Get-CvSourceVideoPeek -Context $Context -Path $f.FullName -SrcInfo $f
+            }
+            if ($null -eq $sv) {
+                $sondeando = $true
+            } elseif ([bool]$sv.Known) {
+                # Un job de antes (sin tamano) sigue diciendo que le hace: recorte y reescalado. Sin
+                # job, solo la del original (-Skip): todavia no se sabe que se le va a hacer.
+                $q = Get-CvVideoQualityPair -Width ([int]$sv.Width) -Height ([int]$sv.Height) -Sar "$($sv.Sar)" `
+                    -Crop $(if ($null -ne $peek) { "$($peek.Crop)" } else { '' }) `
+                    -Resize $(if ($null -ne $peek) { "$($peek.Resize)" } else { '' }) `
+                    -Skip $(if ($null -ne $peek) { [bool]$peek.VideoSkip } else { $true }) -Tolerance $QualityTolerance
+                $calidad    = "$($q.Source)"
+                $calidadOut = "$($q.Output)"
+            }
+        }
+
         $out += [pscustomobject]@{
             Name      = $name
             Path      = $f.FullName
@@ -758,6 +908,11 @@ function Get-CvQueueStatus {
             BorderGuess = $guess
             # 'original' si la salida lleva la marca de que se quedo con el video del original.
             VideoGuess  = $vguess
+            # Calidad del original y de la salida ('1080p', '4K'...; '' si no se sabe).
+            Quality     = $calidad
+            QualityOut  = $calidadOut
+            # Falta una sonda (bordes o calidad) que no ha cabido en este refresco.
+            Probing     = $sondeando
             Locked    = $locked
             Stale     = $stale
             Done      = $done

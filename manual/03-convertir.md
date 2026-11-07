@@ -4,6 +4,8 @@
 
 `Convert-gui.cmd` abre un panel con **todos los vídeos de `Original\`**, en qué estado está cada uno, quién lo está codificando y por dónde va. Sustituye a tener cuatro consolas negras abiertas mirándolas de una en una.
 
+Nada más lanzarlo sale una **pantalla azul de arranque** con lo que está haciendo (cargar, leer la configuración, comprobar herramientas, abrir la cola) mientras se prepara la ventana, que tarda unos segundos; se quita sola en cuanto la cola está lista. Si ya tienes la cola abierta, aunque esté escondida junto al reloj, volver a lanzarlo **la trae al frente** en vez de abrir otra.
+
 ![La cola](img/cola.png)
 
 Al abrir comprueba que están las herramientas necesarias. Si falta FFmpeg te lo dice y se ofrece a abrir setup ahí mismo, en vez de dejarte descubrirlo a mitad de una conversión.
@@ -14,6 +16,7 @@ Al abrir comprueba que están las herramientas necesarias. Si falta FFmpeg te lo
 |---|---|
 | **Archivo** | El nombre base, el mismo que identifica su job y su salida. |
 | **Tamaño** | Del archivo de entrada. |
+| **Calidad** | `1080p`, `4K`, `720p`… del original; si el perfil lo reescala, también cómo queda: `1080p → 720p`. Quitar barras no la cambia. En los que aún no tienen job se rellena sola en unos segundos (hay que mirar el archivo). |
 | **Estado** | Los seis de la tabla siguiente. |
 | **Bordes** | `[x]` si a ese archivo se le recorta; `[ ]` si se buscaron barras y no había; vacío si ni se miró. |
 | **Audio** | Lo que conviene **revisar después de codificar**: `[x] sync 0,25s` (se aplica un retardo: escúchalo), `2 pistas` (comprueba que tu reproductor coge la buena), `5.1` (hay mezcla a estéreo por medio). |
@@ -117,7 +120,7 @@ La línea con los puntitos que separa la lista de las pestañas **se arrastra**:
 | **Workers en paralelo** | Cuántas conversiones a la vez al pulsar `Iniciar`. Arranca con lo que diga `behavior.workers` del config; lo que pongas aquí vale para esta sesión. |
 | **Ver las consolas de los workers** | Marcado, cada worker abre su ventana negra. Desmarcado van ocultos y se siguen desde la pestaña *Log*. |
 | **Si el vídeo recodificado engorda, quedarse con el original** | Valor de partida para los jobs **nuevos**; cada archivo se lo lleva congelado en el suyo y ahí se puede cambiar. |
-| **Al minimizar, esconder en el área de notificación** | La ventana se va junto al reloj en vez de quedarse en la barra de tareas. Vuelve con **doble clic** en su icono, o con *Abrir* en el menú del botón derecho; desde ahí también se puede *Cerrar*. La primera vez de cada sesión avisa de dónde se ha metido. Las conversiones **siguen igual**: los workers son procesos aparte y no dependen de esta ventana. Se recuerda (`gui.minimizeToTray`). |
+| **Al minimizar, esconder en el área de notificación** | La ventana se va junto al reloj en vez de quedarse en la barra de tareas. Vuelve con **doble clic** en su icono, o con *Abrir* en el menú del botón derecho; desde ahí también se puede *Cerrar*. La primera vez de cada sesión avisa de dónde se ha metido. Las conversiones **siguen igual**: los workers son procesos aparte y no dependen de esta ventana. Mientras codifica, el icono **se mueve** (de serie, el anillo se va llenando con el avance; se cambia en `gui.trayAnimation`). Se recuerda (`gui.minimizeToTray`). |
 
 ¿Cuántos workers? Cada uno es un proceso aparte con su propio ffmpeg, y todos comparten la misma GPU y el mismo disco, así que subir el número no multiplica la velocidad: a partir de cierto punto solo se estorban. Lo sensato es probar con dos y mirar la velocidad (`1.8x` y compañía) en la columna de progreso antes de subir más.
 

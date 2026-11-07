@@ -128,6 +128,98 @@ function Get-CvOutputSize {
     return $r
 }
 
+function Get-CvVideoQualityTiers {
+    <#
+        Los escalones de CALIDAD por tamano, de mayor a menor, con el tamano de referencia de cada
+        uno (16:9). Los nombres no se traducen: '1080p' o '4K' se dicen igual en todas partes.
+
+        Los SD van por su ancho MOSTRADO a 16:9 (576p = 1024, 480p = 854), no por los 720 que se
+        almacenan: con 720 de ancho, un DVD NTSC (720x480) llegaba al ancho de 576p y se quedaba en
+        un escalon que no es el suyo.
+    #>
+    $t = @(
+        @{ Value = '8K';    Width = 7680; Height = 4320 }
+        @{ Value = '4K';    Width = 3840; Height = 2160 }
+        @{ Value = '1440p'; Width = 2560; Height = 1440 }
+        @{ Value = '1080p'; Width = 1920; Height = 1080 }
+        @{ Value = '720p';  Width = 1280; Height = 720 }
+        @{ Value = '576p';  Width = 1024; Height = 576 }
+        @{ Value = '480p';  Width = 854;  Height = 480 }
+        @{ Value = '360p';  Width = 640;  Height = 360 }
+        @{ Value = '240p';  Width = 426;  Height = 240 }
+    )
+    return ,$t
+}
+
+function Get-CvVideoQuality {
+    <#
+        PURO. Calidad ('1080p', '4K'...) de un tamano, SIN ser estricto: un video cae en el primer
+        escalon al que llegue por el ANCHO o por el ALTO, con un margen (-Tolerance, 0.1 = 10%).
+
+        - Por el ancho O el alto, y no solo por el alto, porque una pelicula panoramica sin barras
+          (1920x800) es 1080p aunque mida 800 de alto: mirando solo el alto saldria 720p, y es
+          mentira. Igual 3840x1600 es 4K.
+        - El margen es lo que hace que un 1920x1063 o un 1904x1072 (recortes de unos pixeles)
+          sigan siendo 1080p.
+
+        Se pasa el ancho MOSTRADO (Get-CvDisplayWidth) en los anamorficos. Sin tamano, ''; por
+        debajo del ultimo escalon, '<240p'.
+    #>
+    param(
+        [int]$Width = 0,
+        [int]$Height = 0,
+        [double]$Tolerance = 0.1,
+        $Tiers = $null
+    )
+    if ($Width -le 0 -or $Height -le 0) { return '' }
+    $tol = [Math]::Min(0.5, [Math]::Max(0.0, [Math]::Abs($Tolerance)))
+    $lista = $Tiers
+    if ($null -eq $lista) { $lista = Get-CvVideoQualityTiers }
+    $ultimo = ''
+    foreach ($t in $lista) {
+        $ultimo = "$($t.Value)"
+        $llegaAncho = ($Width  -ge ([double]$t.Width  * (1.0 - $tol)))
+        $llegaAlto  = ($Height -ge ([double]$t.Height * (1.0 - $tol)))
+        if ($llegaAncho -or $llegaAlto) { return $ultimo }
+    }
+    if ($ultimo -eq '') { return '' }
+    return ('<' + $ultimo)
+}
+
+function Get-CvVideoQualityPair {
+    <#
+        PURO. La calidad del ORIGINAL y la de la SALIDA de un job, a partir del tamano almacenado del
+        original (+ su SAR) y de lo que el job le hace: recorte y reescalado (Get-CvOutputSize, el
+        mismo calculo que el resumen).
+
+        La salida se mide con el ancho MOSTRADO, como el original: si el reescalado no cuadra los
+        pixeles (no lleva 'setsar=1'), el SAR sigue valiendo para la salida.
+
+        -Skip (job sin video) deja la salida en ''. Devuelve @{ Source; Output }.
+    #>
+    param(
+        [int]$Width = 0,
+        [int]$Height = 0,
+        [string]$Sar = '',
+        [string]$Crop = '',
+        [string]$Resize = '',
+        [bool]$Skip = $false,
+        [double]$Tolerance = 0.1
+    )
+    $res = @{
+        Source = ''
+        Output = ''
+    }
+    if ($Width -le 0 -or $Height -le 0) { return $res }
+    $res.Source = Get-CvVideoQuality -Width (Get-CvDisplayWidth -Width $Width -Sar $Sar) -Height $Height -Tolerance $Tolerance
+    if ($Skip) { return $res }
+    $geo = Get-CvOutputSize -Width $Width -Height $Height -Crop $Crop -Resize $Resize
+    if ([int]$geo.Width -le 0) { return $res }
+    $ow = $(if ("$Resize" -match 'setsar=1') { [int]$geo.Width } else { Get-CvDisplayWidth -Width ([int]$geo.Width) -Sar $Sar })
+    $res.Output = Get-CvVideoQuality -Width $ow -Height ([int]$geo.Height) -Tolerance $Tolerance
+    return $res
+}
+
 function Format-CvCropCut {
     <#
         PURO. El recorte contado en PIXELES y por lados ('quita 60px arriba y 60px abajo'), que es lo

@@ -318,8 +318,21 @@ function New-CvGuiAppBitmap {
 
         Las perforaciones solo se pintan de 32 px para arriba: mas abajo no hay pixeles y solo
         ensucian; ahi se queda el anillo con el play, que es lo que aguanta a 16 px.
+
+        Los FOTOGRAMAS del icono animado del area de notificacion (Get-CvTrayAnimFrame) son este
+        mismo dibujo con un cambio, para que se reconozca igual:
+          -Progress 0..100 = el anillo, tenue entero y en blanco hasta ese % desde las 12 (sin
+                             flecha); -Pulse le enciende la punta;
+          -Spin            = la flecha girada esos grados;
+          -Dot             = un punto verde en la esquina de abajo a la derecha.
     #>
-    param([int]$Size = 32)
+    param(
+        [int]$Size = 32,
+        [int]$Progress = -1,
+        [int]$Spin = 0,
+        [bool]$Dot = $false,
+        [bool]$Pulse = $false
+    )
     [void](Initialize-CvGui)
     $bmp = New-Object System.Drawing.Bitmap($Size, $Size)
     $g = [System.Drawing.Graphics]::FromImage($bmp)
@@ -363,16 +376,42 @@ function New-CvGuiAppBitmap {
         $cy = [float]($S / 2)
         $diam = [float]($S * $(if ($Size -ge 32) { 0.54 } else { 0.60 }))
         $r = [float]($diam / 2)
-        $pen = New-Object System.Drawing.Pen ([System.Drawing.Color]::White), ([float]($S * 0.108))
+        $grosor = [float]($S * 0.108)
+        $pen = New-Object System.Drawing.Pen ([System.Drawing.Color]::White), $grosor
         $pen.StartCap = [System.Drawing.Drawing2D.LineCap]::Round
         $pen.EndCap   = [System.Drawing.Drawing2D.LineCap]::Flat
-        # OJO con los angulos: en GDI+ la Y crece HACIA ABAJO, asi que 0 grados es las 3 en punto y
-        # el arco avanza en el sentido de las agujas del reloj. El arco va de 45 a 330 grados (hueco
-        # a la derecha) y la punta va donde TERMINA -330-, no donde empieza: puesta al principio
-        # apunta al reves y parece un gancho colgando (se vio al dibujarlo a 256 px).
-        $g.DrawArc($pen, ($cx - $r), ($cy - $r), $diam, $diam, 45, 285)
+        if ($Progress -ge 0) {
+            # AVANCE: el anillo entero tenue (lo que falta) y en blanco lo hecho, desde las 12 (-90
+            # grados en GDI+) en el sentido de las agujas del reloj.
+            $tenue = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(85, 255, 255, 255)), $grosor
+            $g.DrawEllipse($tenue, ($cx - $r), ($cy - $r), $diam, $diam)
+            $tenue.Dispose()
+            $barrido = [float](3.6 * [Math]::Min(100, $Progress))
+            if ($barrido -gt 0) {
+                $pen.EndCap = [System.Drawing.Drawing2D.LineCap]::Round
+                $g.DrawArc($pen, ($cx - $r), ($cy - $r), $diam, $diam, -90, $barrido)
+            }
+            if ($Pulse) {
+                # La PUNTA, encendida un fotograma si y otro no: es lo que se mueve mientras el %
+                # tarda minutos en cambiar.
+                $ang = (-90.0 + $barrido) * [Math]::PI / 180.0
+                $pd = [float]($grosor * 1.6)
+                $px = [float]($cx + $r * [Math]::Cos($ang) - $pd / 2)
+                $py = [float]($cy + $r * [Math]::Sin($ang) - $pd / 2)
+                $brPunta = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(120, 235, 140))
+                $g.FillEllipse($brPunta, $px, $py, $pd, $pd)
+                $brPunta.Dispose()
+            }
+        } else {
+            # OJO con los angulos: en GDI+ la Y crece HACIA ABAJO, asi que 0 grados es las 3 en punto y
+            # el arco avanza en el sentido de las agujas del reloj. El arco va de 45 a 330 grados (hueco
+            # a la derecha) y la punta va donde TERMINA -330-, no donde empieza: puesta al principio
+            # apunta al reves y parece un gancho colgando (se vio al dibujarlo a 256 px). -Spin lo
+            # gira entero, arco y punta.
+            $g.DrawArc($pen, ($cx - $r), ($cy - $r), $diam, $diam, (45 + $Spin), 285)
+            Add-CvGuiArcArrow -Graphics $g -Cx $cx -Cy $cy -Radius $r -Degrees (330 + $Spin) -Size ([float]($S * 0.125)) -Brush $blanco
+        }
         $pen.Dispose()
-        Add-CvGuiArcArrow -Graphics $g -Cx $cx -Cy $cy -Radius $r -Degrees 330 -Size ([float]($S * 0.125)) -Brush $blanco
 
         $t = [float]($S * $(if ($Size -ge 32) { 0.095 } else { 0.105 }))
         $pts = @(
@@ -382,6 +421,20 @@ function New-CvGuiAppBitmap {
         )
         $g.FillPolygon($blanco, $pts)
         $blanco.Dispose()
+
+        if ($Dot) {
+            # El punto de 'trabajando', abajo a la derecha, con un borde oscuro para que se vea
+            # tambien sobre el azul claro de la pastilla.
+            $dd = [float]($S * 0.40)
+            $dx = [float]($S - $dd - $m * 0.2)
+            $dy = [float]($S - $dd - $m * 0.2)
+            $brDot = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(46, 204, 113))
+            $g.FillEllipse($brDot, $dx, $dy, $dd, $dd)
+            $brDot.Dispose()
+            $penDot = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(10, 60, 30)), ([float]([Math]::Max(1, $S * 0.05)))
+            $g.DrawEllipse($penDot, $dx, $dy, $dd, $dd)
+            $penDot.Dispose()
+        }
     } finally {
         $g.Dispose()
     }
@@ -449,12 +502,19 @@ function Get-CvGuiAppIconBytes {
         porque System.Drawing no sabe guardar un .ico de varios tamanos (Icon.Save escribe el que le
         den). Cada fotograma, con Get-CvGuiAppFrameBytes.
     #>
-    param([int[]]$Sizes = @(16, 24, 32, 48, 64, 128, 256))
+    param(
+        [int[]]$Sizes = @(16, 24, 32, 48, 64, 128, 256),
+        # El fotograma del icono animado (ver New-CvGuiAppBitmap); sin nada, el icono de siempre.
+        [int]$Progress = -1,
+        [int]$Spin = 0,
+        [bool]$Dot = $false,
+        [bool]$Pulse = $false
+    )
     [void](Initialize-CvGui)
     $tam = @($Sizes | Sort-Object)
     $marcos = @()
     foreach ($s in $tam) {
-        $bmp = New-CvGuiAppBitmap -Size $s
+        $bmp = New-CvGuiAppBitmap -Size $s -Progress $Progress -Spin $Spin -Dot $Dot -Pulse $Pulse
         $marcos += , (Get-CvGuiAppFrameBytes -Bitmap $bmp)
         $bmp.Dispose()
     }
@@ -494,6 +554,107 @@ function Get-CvGuiAppIcon {
         $ms.Dispose()
     } catch { $script:CvGuiAppIcon = $null }
     return $script:CvGuiAppIcon
+}
+
+function Get-CvGuiTrayFrameIcon {
+    <#
+        El icono de UN fotograma de la animacion del area de notificacion (-Frame, lo que devuelve
+        Get-CvTrayAnimFrame). Se monta una vez por dibujo (su Key) y se guarda: la animacion pasa por
+        los mismos pocos fotogramas una y otra vez, y montar un .ico cada medio segundo seria tirar
+        CPU para nada. Solo los tamanos del area de notificacion (16 a 100%, 24 a 150%, 32 a 200%...).
+
+        'static' (o sin -Frame) = el icono de la aplicacion. Nunca lanza: si algo falla, ese.
+    #>
+    param($Frame = $null)
+    if ($null -eq $Frame -or "$($Frame.Key)" -eq '' -or "$($Frame.Key)" -eq 'static') { return (Get-CvGuiAppIcon) }
+    $k = "$($Frame.Key)"
+    if ($null -eq $script:CvGuiTrayIcons) { $script:CvGuiTrayIcons = @{} }
+    if ($script:CvGuiTrayIcons.ContainsKey($k)) { return $script:CvGuiTrayIcons[$k] }
+    $ico = $null
+    try {
+        $bytes = Get-CvGuiAppIconBytes -Sizes @(16, 20, 24, 32, 40, 48) -Progress ([int]$Frame.Progress) `
+            -Spin ([int]$Frame.Spin) -Dot ([bool]$Frame.Dot) -Pulse ([bool]$Frame.Pulse)
+        $ms = New-Object System.IO.MemoryStream (, $bytes)
+        $ico = New-Object System.Drawing.Icon $ms
+        $ms.Dispose()
+    } catch { $ico = $null }
+    if ($null -eq $ico) { return (Get-CvGuiAppIcon) }
+    $script:CvGuiTrayIcons[$k] = $ico
+    return $ico
+}
+
+function Get-CvGuiTaskbarStates {
+    <# PURO. Estado del boton de la barra de tareas -> valor de TBPFLAG (ITaskbarList3::SetProgressState). #>
+    @{
+        none          = 0
+        indeterminate = 1
+        normal        = 2
+        error         = 4
+        paused        = 8
+    }
+}
+
+function Set-CvGuiTaskbarProgress {
+    <#
+        Pinta el AVANCE en el boton de la ventana en la barra de tareas (la barra verde que pone
+        Windows al copiar ficheros): -State 'none' / 'indeterminate' / 'normal' / 'error' / 'paused'
+        (Get-CvGuiTaskbarStates) y -Percent 0..100.
+
+        Es ITaskbarList3, una interfaz COM del shell: se declara en C# una vez por sesion. Solo vale
+        con el boton ya creado -con la ventana escondida en el area de notificacion no hay boton y
+        Windows lo ignora-, y al volver a mostrarla el boton es NUEVO y ha perdido la barra: quien
+        llama tiene que volver a ponerla (la cola lo hace en cada refresco).
+
+        Fail-soft: devuelve si se pudo, nunca lanza (sin la barra se vive igual).
+    #>
+    param(
+        [Parameter(Mandatory)]$Form,
+        [string]$State = 'none',
+        [int]$Percent = 0
+    )
+    try {
+        if ($null -eq $Form -or -not $Form.IsHandleCreated) { return $false }
+        $estados = Get-CvGuiTaskbarStates
+        $v = $estados["$State".ToLower()]
+        if ($null -eq $v) { $v = 0 }
+        if (-not ('CvGui.Taskbar' -as [type])) {
+            Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+namespace CvGui {
+    [ComImport, Guid("ea1afb91-9e28-4b86-90e9-9e9f8a5eefaf"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    public interface ITaskbarList3 {
+        void HrInit();
+        void AddTab(IntPtr hwnd);
+        void DeleteTab(IntPtr hwnd);
+        void ActivateTab(IntPtr hwnd);
+        void SetActiveAlt(IntPtr hwnd);
+        void MarkFullscreenWindow(IntPtr hwnd, [MarshalAs(UnmanagedType.Bool)] bool fullscreen);
+        void SetProgressValue(IntPtr hwnd, ulong completed, ulong total);
+        void SetProgressState(IntPtr hwnd, int state);
+    }
+    [ComImport, Guid("56FDF344-FD6D-11d0-958A-006097C9A090"), ClassInterface(ClassInterfaceType.None)]
+    public class TaskbarListCom { }
+    public static class Taskbar {
+        private static ITaskbarList3 lista;
+        public static bool Set(IntPtr hwnd, int state, int percent) {
+            try {
+                if (lista == null) { lista = (ITaskbarList3)new TaskbarListCom(); lista.HrInit(); }
+                lista.SetProgressState(hwnd, state);
+                if (state == 2 || state == 4 || state == 8) {
+                    lista.SetProgressValue(hwnd, (ulong)Math.Max(0, Math.Min(100, percent)), 100UL);
+                }
+                return true;
+            } catch { return false; }
+        }
+    }
+}
+'@ -ErrorAction Stop
+        }
+        return [bool]([CvGui.Taskbar]::Set($Form.Handle, [int]$v, $Percent))
+    } catch {
+        return $false
+    }
 }
 
 function Set-CvGuiAppIcon {
@@ -897,33 +1058,9 @@ Add-Type -Namespace CvGui -Name Native -MemberDefinition @'
 $script:CvGuiTheme   = ''     # tema RESUELTO de esta sesion ('light' / 'dark')
 $script:CvGuiPalette = $null  # su paleta ya montada: la piden los Paint, no se rehace cada vez
 
-function Test-CvWindowsDarkMode {
-    <# Windows esta en modo oscuro para las aplicaciones? (AppsUseLightTheme del usuario). #>
-    try {
-        $v = Get-ItemPropertyValue -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize' `
-            -Name 'AppsUseLightTheme' -ErrorAction Stop
-        return ([int]$v -eq 0)
-    } catch {
-        return $false      # sin esa clave (Windows viejo o politica): claro, como siempre
-    }
-}
-
-function Resolve-CvGuiTheme {
-    <#
-        PURO. Convierte lo que diga la config (system / light / dark) en el tema REAL: 'light' o
-        'dark'. 'system' sigue a Windows (-SystemDark, que sale de Test-CvWindowsDarkMode; se pasa
-        aparte para poder probar esto sin tocar el registro). Cualquier otra cosa = claro.
-    #>
-    param(
-        [string]$Theme = 'system',
-        [bool]$SystemDark = $false
-    )
-    switch ("$Theme".ToLower()) {
-        'dark'  { return 'dark' }
-        'light' { return 'light' }
-        default { return $(if ($SystemDark) { 'dark' } else { 'light' }) }
-    }
-}
+# Test-CvWindowsDarkMode y Resolve-CvGuiTheme (que tema toca) viven en Config.psm1, junto al
+# catalogo Get-CvGuiThemes: la pantalla de arranque de la cola tiene que decidirlo ANTES de cargar
+# este modulo, que es lo que mas tarda en cargar.
 
 function Get-CvGuiPalette {
     <#
@@ -1982,6 +2119,9 @@ function Add-CvGuiTrayIcon {
         }.GetNewClosure()
         $ni.Add_DoubleClick($volver)
         $miAbrir.Add_Click($volver)
+        # Para que quien la tenga pueda sacarla de aqui sin pasar por el icono (la cola lo usa cuando
+        # otro arranque le pide salir al frente, ver Request-CvQueueInstance).
+        $ni.Tag = $volver
         # Cerrar desde el menu pasa por el cierre NORMAL de la ventana (con su confirmacion si hay
         # workers), no por un Dispose a traicion.
         $miCerrar.Add_Click({

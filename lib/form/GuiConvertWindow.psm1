@@ -39,7 +39,12 @@ function Show-CvConvertWindow {
         [Parameter(Mandatory)][string]$Root,
         [string]$CfgPath = '',
         [string]$CfgName = 'config.json',
-        [string]$CurrentLog = ''
+        [string]$CurrentLog = '',
+        # Evento con nombre por el que OTRO arranque de la cola le pide a esta que salga al frente
+        # (Request-CvQueueInstance, gui.singleInstance). Sin el, no se mira nada.
+        $Activation = $null,
+        # Pantalla de arranque (Start-CvSplashWindow) que se quita en cuanto la lista esta pintada.
+        $Splash = $null
     )
     if (-not (Initialize-CvGui)) { return $false }
 
@@ -449,6 +454,12 @@ function Show-CvConvertWindow {
         FollowKey = ''     # archivo(s) en curso que ya se dieron por vistos (solo se mueve si cambian)
         Touch    = 0       # ticks de la ultima vez que tocaste la lista (no se mueve mientras eliges)
         LastTop  = -1      # primera fila visible en el refresco anterior (-1: sin dato)
+        Probing  = $false  # quedan archivos por sondear (calidad o bordes): el temporizador sigue
+        Opening  = $false  # primer refresco al abrir: sin sondas, para pintar cuanto antes
+        Batch    = @()     # la TANDA en curso (Update-CvQueueBatch): sobre ella se mide el avance
+        Frame    = 0       # fotograma de la animacion del icono del area de notificacion
+        TrayKey  = 'static' # dibujo que tiene puesto ese icono (no se vuelve a poner el mismo)
+        TbSig    = ''      # lo ultimo pintado en el boton de la barra de tareas
     }
 
     # ---- Menu contextual de la lista ----
@@ -651,7 +662,8 @@ function Show-CvConvertWindow {
     $ritmo = {
         $plan = Get-CvQueueTickPlan -Live @($st.Workers | Where-Object { $_.Alive }).Count `
                                     -Starting ([bool](& $arrancando)) `
-                                    -RefreshMs ([int]$Context.GuiQueueRefreshMs) -IdleMs ([int]$Context.GuiQueueIdleMs)
+                                    -RefreshMs ([int]$Context.GuiQueueRefreshMs) -IdleMs ([int]$Context.GuiQueueIdleMs) `
+                                    -Probing ([bool]$st.Probing)
         if (-not [bool]$plan.Enabled) { $timer.Stop(); return }
         $timer.Interval = [int]$plan.Interval
         if (-not $timer.Enabled) { $timer.Start() }
@@ -697,14 +709,71 @@ function Show-CvConvertWindow {
         try { $st.LastTop = $(if ($null -ne $lv.TopItem) { [int]$lv.TopItem.Index } else { -1 }) } catch { $st.LastTop = -1 }
     }
 
+    # ---- Se nota que esta trabajando: icono animado y barra de tareas ----
+    # Con la ventana ESCONDIDA en el area de notificacion lo unico que se ve es su icono, que se
+    # mueve mientras hay workers (gui.trayAnimation, Get-CvTrayAnimFrame); a la vista, el avance de
+    # la tanda va en su boton de la barra de tareas (gui.taskbarProgress). Las dos cosas miden lo
+    # mismo: la TANDA (Get-CvQueueProgress), no la carpeta entera.
+    $animTimer = New-Object System.Windows.Forms.Timer
+    $animTimer.Interval = [int]$Context.GuiTrayAnimMs
+    $ponerIcono = {
+        param($Frame)
+        if ($null -eq $tray) { return }
+        $k = $(if ($null -ne $Frame) { "$($Frame.Key)" } else { 'static' })
+        if ($k -eq "$($st.TrayKey)") { return }
+        try {
+            $tray.Icon = Get-CvGuiTrayFrameIcon -Frame $Frame
+            $st.TrayKey = $k
+        } catch { }
+    }
+    $actividad = {
+        $prog = Get-CvQueueProgress -Rows @($st.Rows) -Batch @($st.Batch)
+        $anima = Test-CvTrayAnimate -Mode "$($Context.GuiTrayAnim)" -Hidden (-not $form.Visible) -Live ([int]$st.Live)
+        if ($anima) {
+            if (-not $animTimer.Enabled) { $animTimer.Start() }
+        } else {
+            if ($animTimer.Enabled) { $animTimer.Stop() }
+            & $ponerIcono $null
+        }
+        if ([bool]$Context.GuiTaskbarProgress -and $form.Visible) {
+            $tb = Get-CvTaskbarProgressPlan -Live ([int]$st.Live) -Starting ([bool](& $arrancando)) -Stopping ([bool]$st.Stopping) -Progress $prog
+            $sig = "{0}|{1}" -f $tb.State, $tb.Percent
+            # Nada que ensenar y nada puesto: ni se toca. Asi el C# de ITaskbarList3 (~250 ms de
+            # compilar, medido) no se paga al abrir, sino la primera vez que hay algo codificando.
+            if ("$($st.TbSig)" -eq '' -and "$($tb.State)" -eq 'none') { $st.TbSig = $sig }
+            if ($sig -ne "$($st.TbSig)") {
+                if (Set-CvGuiTaskbarProgress -Form $form -State "$($tb.State)" -Percent ([int]$tb.Percent)) { $st.TbSig = $sig }
+            }
+        }
+    }
+    $animTimer.Add_Tick({
+        try {
+            $st.Frame = ([int]$st.Frame + 1) % 1000
+            $prog = Get-CvQueueProgress -Rows @($st.Rows) -Batch @($st.Batch)
+            & $ponerIcono (Get-CvTrayAnimFrame -Mode "$($Context.GuiTrayAnim)" -Frame ([int]$st.Frame) -Percent ([int]$prog.Percent))
+        } catch { }
+    })
+    # Al esconderla o volver a mostrarla cambia lo que toca: el icono se pone a moverse o se para, y
+    # el boton de la barra de tareas es NUEVO al volver (Windows le ha quitado la barra).
+    $form.Add_VisibleChanged({
+        # El boton es nuevo: se vuelve a poner lo que toque (si es 'nada', tampoco hace falta tocarlo).
+        $st.TbSig = ''
+        try { & $actividad } catch { }
+    })
+
     # ---- Refresco (lo dispara el temporizador y el boton Actualizar) ----
     $refresh = {
         # Deducir los bordes de un archivo ya convertido cuesta dos ffprobe (~300 ms medidos), asi que
         # solo se hace con la cola PARADA: mientras hay workers el refresco tiene que seguir siendo
         # barato -la lista dejaba de responder por mucho menos- y ademas el disco esta ocupado. Se
         # mira el recuento de la vuelta ANTERIOR, que para esto vale y no cuesta nada.
-        $probe = Get-CvQueueDoneProbeBudget -Configured $Context.GuiQueueDoneProbe -LiveWorkers @($st.Workers | Where-Object { $_.Alive }).Count
-        $rows    = @(Get-CvQueueStatus -Context $Context -DoneProbe $probe -DoneTolerance $Context.GuiQueueDoneTol)
+        # La calidad de un original sin job es un ffprobe mas: misma regla, solo con la cola parada.
+        $vivosAntes = @($st.Workers | Where-Object { $_.Alive }).Count
+        $probe  = Get-CvQueueDoneProbeBudget -Configured $Context.GuiQueueDoneProbe -LiveWorkers $vivosAntes
+        $probeQ = Get-CvQueueDoneProbeBudget -Configured $Context.GuiQueueQualityProbe -LiveWorkers $vivosAntes
+        if ([bool]$st.Opening) { $probe = 0; $probeQ = 0 }
+        $rows    = @(Get-CvQueueStatus -Context $Context -DoneProbe $probe -DoneTolerance $Context.GuiQueueDoneTol `
+                        -QualityProbe $probeQ -QualityTolerance $Context.GuiQueueQualityTol)
         $workers = @(Get-CvWorkerStates -Context $Context)
         $live    = @($workers | Where-Object { $_.Alive })
         # Un listado de Original\ que sale VACIO teniendo archivos a la vista es casi siempre un
@@ -733,6 +802,9 @@ function Show-CvConvertWindow {
         }
         $st.Rows    = $rows
         $st.Workers = $workers
+        # Quedan sondas pendientes: el temporizador sigue pasando (Get-CvQueueTickPlan -Probing) y
+        # el siguiente tick hace OTRO refresco completo, hasta que la columna este entera.
+        $st.Probing = (@($rows | Where-Object { [bool]$_.Probing }).Count -gt 0)
 
         # Reconstruir la lista SOLO si cambio el conjunto de archivos; si no, actualizar las celdas en
         # su sitio (si no, la lista parpadea y se pierde la seleccion cada segundo).
@@ -787,6 +859,8 @@ function Show-CvConvertWindow {
         # El plazo de gracia del arranque se acaba cuando se ven TODOS los que se abrieron: con
         # 'Iniciar' completando, puede haber workers vivos de antes, y 'ya hay alguno' no basta.
         if ($live.Count -gt 0 -and $live.Count -ge [int]$st.StartTarget) { $st.StartedAt = 0 }
+        $st.Batch = @(Update-CvQueueBatch -Batch @($st.Batch) -Rows $rows -Live $live.Count -Starting ([bool](& $arrancando)))
+        & $actividad
         & $updateButtons
 
         # Selector de logs: se rehace solo si cambio la lista (mantiene la eleccion del usuario).
@@ -826,6 +900,7 @@ function Show-CvConvertWindow {
         $st.Workers = $workers
         $st.Live    = $live.Count
         & $updateButtons
+        & $actividad
         # Solo las filas que estan codificando: se les mete el avance publicado y se repintan.
         $porArchivo = @{}
         foreach ($w in $live) { if ("$($w.File)" -ne '') { $porArchivo["$($w.File)"] = $w } }
@@ -899,6 +974,10 @@ function Show-CvConvertWindow {
         # apagado hasta que aparezcan todos ($arrancando).
         $st.StartedAt   = [datetime]::UtcNow.Ticks
         $st.StartTarget = $vivos + $n
+        # La TANDA de este Iniciar: los elegidos, o todo lo que esta en cola. Si ya habia una en
+        # marcha (completar), se le suma.
+        $nuevos = $(if ($only.Count -gt 0) { @($only) } else { @($rows | Where-Object { $_.State -eq 'queued' } | ForEach-Object { "$($_.Name)" }) })
+        $st.Batch = @(@($st.Batch) + @($nuevos | Where-Object { @($st.Batch) -notcontains "$_" }))
         $btnStart.Enabled = $false
         for ($i = 0; $i -lt $n; $i++) {
             [void](Start-CvConvertWorker -Root $Root -CfgPath $CfgPath -Only $only -ShowConsole:$chkCon.Checked)
@@ -1193,7 +1272,10 @@ function Show-CvConvertWindow {
         # Si el refresco falla, se apunta en el log: tragarselo en silencio deja la ventana a medias
         # (la lista de una vuelta y los totales de otra) sin nada que mirar despues.
         # El temporizador hace el refresco LIGERO; ese decide si hace falta el completo.
-        try { & $refreshLive } catch { Write-CvLog 'COLA' (Get-CvText -Key 'cw.refresco2' -Values @($_)) } finally { $st.Busy = $false }
+        # Sin workers y con sondas pendientes (calidad, bordes), el completo: es el que sondea.
+        try {
+            if ([bool]$st.Probing -and [int]$st.Live -le 0) { & $refresh } else { & $refreshLive }
+        } catch { Write-CvLog 'COLA' (Get-CvText -Key 'cw.refresco2' -Values @($_)) } finally { $st.Busy = $false }
     })
 
     # La columna de progreso ocupa lo que sobre: al abrir, al redimensionar la ventana y al cambiar
@@ -1211,6 +1293,9 @@ function Show-CvConvertWindow {
         # Lo ya deducido en otras sesiones (bordes de los archivos convertidos): asi la columna sale
         # rellena de entrada en vez de volver a sondear lo mismo cada vez que se abre la ventana.
         if ([int]$Context.GuiQueueDoneProbe -gt 0) { [void](Import-CvDoneBorderCache -Context $Context) }
+        # Y el tamano de los originales ya mirados (columna 'Calidad').
+        if ([int]$Context.GuiQueueQualityProbe -gt 0) { [void](Import-CvSourceVideoCache -Context $Context) }
+        if ($null -ne $Activation) { $actTimer.Start() }
 
         # Fantasmas: ficheros de estado de workers que ya no existen. No estorban para nada salvo
         # que se releen en CADA refresco (y ahi si: diez fantasmas eran casi medio segundo por
@@ -1246,8 +1331,13 @@ function Show-CvConvertWindow {
                 }
             }
         } catch {}
-        & $refresh
+        # El PRIMER refresco sin sondas (ffprobe de calidad y bordes): la lista sale ya y lo que
+        # falte lo rellena el temporizador con la ventana a la vista (Probing). Sondeando aqui, el
+        # primer pintado esperaba ~1 s mas (medido) con la ventana en blanco.
+        $st.Opening = $true
+        try { & $refresh } finally { $st.Opening = $false }
         & $fitCols
+        Stop-CvSplashWindow -Splash $Splash
         $timer.Start()
         # Y AHORA al frente, con la lista ya pintada. Lanzada desde un acceso directo MINIMIZADO,
         # esta ventana se abria DETRAS de lo que estuvieras usando (ver Set-CvGuiForeground).
@@ -1308,6 +1398,26 @@ function Show-CvConvertWindow {
         # Y lo deducido de los bordes, para no volver a sondear lo mismo la proxima vez. Al guardarlo
         # se tiran las entradas de archivos que ya no estan (borrados, renombrados o movidos).
         if ([int]$Context.GuiQueueDoneProbe -gt 0) { [void](Save-CvDoneBorderCache -Context $Context) }
+        if ([int]$Context.GuiQueueQualityProbe -gt 0) { [void](Save-CvSourceVideoCache -Context $Context) }
+        $animTimer.Stop()
+        $actTimer.Stop()
+        # El boton de la barra de tareas sin barra: si no, Windows la deja un instante tras cerrar.
+        [void](Set-CvGuiTaskbarProgress -Form $form -State 'none')
+    })
+
+    # ---- Una sola cola: otro arranque pide que salga esta (gui.singleInstance) ----
+    # El otro Convert-gui levanta el evento y se cierra; aqui se mira cada gui.singleInstancePollMs.
+    # Escondida junto al reloj, sale igual que con doble clic en su icono (lo que guarda su Tag); a
+    # la vista o minimizada, al frente (Set-CvGuiForeground la restaura si hace falta).
+    $actTimer = New-Object System.Windows.Forms.Timer
+    $actTimer.Interval = [int]$Context.GuiSingleInstancePollMs
+    $actTimer.Add_Tick({
+        try {
+            if ($null -eq $Activation -or -not $Activation.WaitOne(0)) { return }
+            Write-CvLog 'COLA' (Get-CvText -Key 'cg.abierta')
+            if (-not $form.Visible -and $null -ne $tray -and $tray.Tag -is [scriptblock]) { & $tray.Tag }
+            else { [void](Set-CvGuiForeground -Form $form) }
+        } catch { }
     })
 
     # ---- Atajos de teclado (el catalogo manda: Get-CvQueueShortcuts) ----
@@ -1381,6 +1491,8 @@ function Show-CvConvertWindow {
     if ([System.Windows.Forms.Application]::MessageLoop) { [void]$form.ShowDialog() }
     else { [System.Windows.Forms.Application]::Run($form) }
     $timer.Dispose()
+    $animTimer.Dispose()
+    $actTimer.Dispose()
     $form.Dispose()
     return $true
 }

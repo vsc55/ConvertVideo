@@ -22,7 +22,7 @@ function ConvertTo-CvJobRecord {
         FUENTE UNICA de la estructura del .job.json (lo que congela PREPARAR y lee el worker):
 
             file, profile, ffmpegVersion, aacgainVersion,
-            video { skip, index, crop, resize, anim, hdr, keepOriginal },
+            video { skip, index, crop, resize, anim, hdr, keepOriginal, width, height, sar },
             audio { skip, tracks[ {index, is51, sync, lang, default} ] },
             subtitles[ ... ]
 
@@ -30,6 +30,11 @@ function ConvertTo-CvJobRecord {
         (Test-CvHdr sobre la pista de video elegida), igual que hacia la consola. Sin -Info no hay
         archivo que mirar, y entonces manda -Hdr: es lo que permite reescribir un job (editar en
         bloque) sin perder lo que ya se habia decidido.
+
+        width/height/sar = el tamano ALMACENADO del original (y su SAR), de esa misma pista de video.
+        El worker no los usa: estan para que la cola diga la calidad (1080p, 4K) sin tener que
+        preguntarle a ffprobe por cada archivo. Sin -Info, los de -SrcWidth/-SrcHeight/-SrcSar (los
+        del job que se reescribe); 0 si no se saben.
     #>
     param(
         [Parameter(Mandatory)]$Context,
@@ -47,6 +52,10 @@ function ConvertTo-CvJobRecord {
         # Si recodificar sale mas caro en tamano que el original, quedarse con la pista original. Se
         # decide POR ARCHIVO y se congela aqui; de serie viene lo que diga encode.video.
         [bool]$KeepOriginal = $false,
+        # Tamano del original ya sabido (de un job anterior). Solo se usa si no hay -Info que mirar.
+        [int]$SrcWidth = 0,
+        [int]$SrcHeight = 0,
+        [string]$SrcSar = '',
         $AudioTracks = @(),
         $Subtitles = @(),
         # Lineas (cues) de TODAS las pistas de subtitulo del archivo, no solo de las elegidas: quien
@@ -56,6 +65,19 @@ function ConvertTo-CvJobRecord {
     )
     $hdr = [bool]$Hdr
     if ($null -ne $Info) { $hdr = [bool](Test-CvHdr -Info $Info -Index $VideoIndex) }
+    $sw = $SrcWidth
+    $sh = $SrcHeight
+    $ss = "$SrcSar"
+    if ($null -ne $Info) {
+        $vs = $null
+        if ($VideoIndex -ge 0) { $vs = @($Info.streams | Where-Object { [int]$_.index -eq $VideoIndex })[0] }
+        if ($null -eq $vs) { $vs = Get-VideoStream -Info $Info }
+        if ($null -ne $vs) {
+            $sw = [int]$vs.width
+            $sh = [int]$vs.height
+            $ss = "$($vs.sample_aspect_ratio)"
+        }
+    }
     [ordered]@{
         file           = $File
         profile        = $Prof
@@ -69,6 +91,9 @@ function ConvertTo-CvJobRecord {
             anim   = $Anim
             hdr    = $hdr
             keepOriginal = $KeepOriginal
+            width  = $sw
+            height = $sh
+            sar    = $ss
         }
         audio          = @{
             skip   = $AudioSkip
@@ -436,6 +461,10 @@ function Read-CvJobDraft {
         VideoSkip  = [bool]$job.video.skip
         VideoIndex = $(if ($null -ne $job.video.index) { [int]$job.video.index } else { -1 })
         Hdr        = [bool]$job.video.hdr   # ya decidido: se conserva si se reescribe sin analizar
+        # Tamano del original (para la columna 'Calidad'): igual, se conserva. 0 en un job de antes.
+        SrcWidth   = $(if ($null -ne $job.video.width) { [int]$job.video.width } else { 0 })
+        SrcHeight  = $(if ($null -ne $job.video.height) { [int]$job.video.height } else { 0 })
+        SrcSar     = "$($job.video.sar)"
         KeepOriginal = (Get-CvJobKeepOriginal -Job $job -Default ([bool]$Context.KeepOriginal))
         Crop       = "$($job.video.crop)"
         Resize     = "$($job.video.resize)"
@@ -463,6 +492,9 @@ function Save-CvJobDraft {
         -Crop "$($Draft.Crop)" -Resize "$($Draft.Resize)" -Anim ([bool]$Draft.Anim) `
         -Hdr $(if ($Draft.PSObject.Properties['Hdr']) { [bool]$Draft.Hdr } else { $false }) `
         -KeepOriginal $(if ($Draft.PSObject.Properties['KeepOriginal']) { [bool]$Draft.KeepOriginal } else { $false }) `
+        -SrcWidth $(if ($Draft.PSObject.Properties['SrcWidth']) { [int]$Draft.SrcWidth } else { 0 }) `
+        -SrcHeight $(if ($Draft.PSObject.Properties['SrcHeight']) { [int]$Draft.SrcHeight } else { 0 }) `
+        -SrcSar $(if ($Draft.PSObject.Properties['SrcSar']) { "$($Draft.SrcSar)" } else { '' }) `
         -AudioSkip ([bool]$Draft.AudioSkip) -AudioTracks @($Draft.Audio) -Subtitles @($Draft.Subtitles) `
         -SubtitleCues $(if ($Draft.PSObject.Properties['SubCues']) { $Draft.SubCues } else { $null })
     Write-CvJob -Context $Context -Name $Draft.Name -Job $rec

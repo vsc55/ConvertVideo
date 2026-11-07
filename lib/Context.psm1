@@ -23,7 +23,8 @@ function Get-CvStartupPrefs {
         todavia no se sabe si ese config es el que se va a usar; crearle las carpetas a uno que a lo
         mejor ni se elige es justo lo que dejaba Original\ y compania por ahi sembradas.
 
-        Devuelve @{ Language; AskConfigKey }, ya resueltos contra sus catalogos.
+        Devuelve @{ Language; AskConfigKey; SingleInstance; Splash; SplashTimeoutSec; Theme }, ya resueltos
+        contra sus catalogos.
     #>
     param([Parameter(Mandatory)][string]$Root, [string]$Path = '')
     $cfg  = Get-CvConfig -Root $Root -Path $Path
@@ -32,6 +33,15 @@ function Get-CvStartupPrefs {
     [pscustomobject]@{
         Language     = $(if ([string]::IsNullOrWhiteSpace($lang)) { 'auto' } else { $lang })
         AskConfigKey = (Resolve-CvOneOf "$($cfg.gui.askConfigKey)" @(@(Get-CvAskConfigKeys) | ForEach-Object { "$($_.Value)" }) "$($def.gui.askConfigKey)")
+        # Una sola cola por instalacion (gui.singleInstance): hay que saberlo ANTES de preguntar la
+        # config, porque si ya hay una abierta lo que toca es traerla, no preguntar nada.
+        SingleInstance = $(if ($null -ne $cfg.gui.singleInstance) { [bool]$cfg.gui.singleInstance } else { [bool]$def.gui.singleInstance })
+        # La pantalla de arranque de la cola (gui.splash): sale ANTES de cargar casi nada, asi que
+        # tambien se decide aqui.
+        Splash         = $(if ($null -ne $cfg.gui.splash) { [bool]$cfg.gui.splash } else { [bool]$def.gui.splash })
+        # Y con que tema (gui.theme, sin resolver: 'system' se resuelve con Resolve-CvGuiTheme).
+        Theme          = (Resolve-CvOneOf "$($cfg.gui.theme)" @(@(Get-CvGuiThemes) | ForEach-Object { "$($_.Value)" }) "$($def.gui.theme)")
+        SplashTimeoutSec = $(if ([int]$cfg.gui.splashTimeoutSec -ge 5) { [int]$cfg.gui.splashTimeoutSec } else { [int]$def.gui.splashTimeoutSec })
     }
 }
 
@@ -395,6 +405,13 @@ function New-CvContext {
         # Minimizar al area de notificacion, y el aviso de la primera vez (ver gui.minimizeToTray).
         GuiMinToTray      = [bool]$cfg.gui.minimizeToTray
         GuiTrayBalloonMs  = $(if ([int]$cfg.gui.trayBalloonMs -ge 0) { [int]$cfg.gui.trayBalloonMs } else { [int]$def.gui.trayBalloonMs })
+        # Icono animado mientras se codifica escondida, y el avance en la barra de tareas (ver
+        # gui.trayAnimation / gui.taskbarProgress).
+        GuiTrayAnim       = (Resolve-CvOneOf "$($cfg.gui.trayAnimation)" @(@(Get-CvTrayAnimModes) | ForEach-Object { "$($_.Value)" }) "$($def.gui.trayAnimation)")
+        GuiTrayAnimMs     = $(if ([int]$cfg.gui.trayAnimMs -ge 50) { [int]$cfg.gui.trayAnimMs } else { [int]$def.gui.trayAnimMs })
+        GuiTaskbarProgress = [bool]$cfg.gui.taskbarProgress
+        # Cada cuanto mira la cola si otro arranque le pide salir al frente (ver gui.singleInstance).
+        GuiSingleInstancePollMs = $(if ([int]$cfg.gui.singleInstancePollMs -ge 50) { [int]$cfg.gui.singleInstancePollMs } else { [int]$def.gui.singleInstancePollMs })
         # La ventana principal se pone delante al abrirse (ver gui.bringToFront).
         GuiBringToFront   = [bool]$cfg.gui.bringToFront
         # La ventana de PREPARAR se cierra sola al terminar (ver gui.prepareAutoClose).
@@ -412,6 +429,12 @@ function New-CvContext {
         GuiQueueFollowHold = [Math]::Max(0, [int]$cfg.gui.queueFollowHoldSec)
         # Deduccion de bordes en los archivos ya convertidos (ver gui.queueDoneProbe).
         GuiQueueDoneProbe = [Math]::Max(0, [int]$cfg.gui.queueDoneProbe)
+        # Columna 'Calidad': cuantos originales se miran por refresco y el margen (ver gui.queueQualityProbe).
+        GuiQueueQualityProbe = [Math]::Max(0, [int]$cfg.gui.queueQualityProbe)
+        GuiQueueQualityTol   = $(
+            $t = [double]$cfg.gui.queueQualityTolerance
+            if ($t -ge 0 -and $t -le 0.5) { $t } else { [double]$def.gui.queueQualityTolerance }
+        )
         GuiQueueDoneTol   = $(
             $t = [double]$cfg.gui.queueDoneTolerance
             if ($t -gt 0) { $t } else { [double]$def.gui.queueDoneTolerance }

@@ -21,10 +21,14 @@ function Get-CvQueueColumns {
         'Bordes' y 'Audio' salen del job (sin ffprobe): de un vistazo se ve a cuales les ha entrado
         el recorte y cuales llevan algo de audio que conviene revisar DESPUES de codificar (una
         sincronia aplicada, varias pistas, una 5.1 mezclada a estereo).
+
+        'Calidad' (1080p, 4K...) es la del original y, si el job la cambia, tambien la de la salida
+        ('1080p -> 720p'): ver Format-CvQueueQualityCell.
     #>
     $cols = @(
         @{ Key = 'file';    Text = (Get-CvText -Key 'cola.col.archivo');  Width = 300 }
         @{ Key = 'size';    Text = (Get-CvText -Key 'cola.col.tamano');   Width = 85  }
+        @{ Key = 'quality'; Text = (Get-CvText -Key 'cola.col.calidad');  Width = 105 }
         @{ Key = 'state';   Text = (Get-CvText -Key 'cola.col.estado');   Width = 120 }
         @{ Key = 'borders'; Text = (Get-CvText -Key 'cola.col.bordes');   Width = 55  }
         @{ Key = 'audio';   Text = (Get-CvText -Key 'cola.col.audio');    Width = 150 }
@@ -35,10 +39,22 @@ function Get-CvQueueColumns {
     return ,$cols
 }
 
+function Format-CvQueueQualityCell {
+    <#
+        PURO. La celda 'Calidad': la del original y, SOLO si la salida queda en otra, las dos
+        ('1080p -> 720p', con la flecha de cola.calidad.par). Recortar barras no cambia la calidad
+        -un 1920x800 sigue siendo 1080p-, asi que lo normal es ver una sola.
+    #>
+    param([string]$Source = '', [string]$Output = '')
+    if ("$Source" -eq '') { return '' }
+    if ("$Output" -eq '' -or "$Output" -eq "$Source") { return "$Source" }
+    return (Get-CvText -Key 'cola.calidad.par' -Values @($Source, $Output))
+}
+
 function Format-CvQueueRow {
     <#
-        PURO. Las celdas de una fila de la cola, en orden: archivo, tamano, estado, worker, progreso
-        y ETA. Separado de la ventana para poder probarlo sin abrir nada (y para que la consola
+        PURO. Las celdas de una fila de la cola, en el orden del catalogo (Get-CvQueueColumns):
+        archivo, tamano, calidad, estado, bordes, audio, worker, progreso y ETA. Separado de la ventana para poder probarlo sin abrir nada (y para que la consola
         pudiera pintar lo mismo el dia que haga falta).
 
         - 'Codificando': paso + barra + % + velocidad, exactamente lo que publica el worker.
@@ -88,6 +104,7 @@ function Format-CvQueueRow {
     return @(
         "$($Row.Name)"
         (Format-CvSize -Kb $Row.SizeKb)
+        (Format-CvQueueQualityCell -Source "$($Row.Quality)" -Output "$($Row.QualityOut)")
         "$($Row.StateText)"
         # Salen del JOB; sin job (sin preparar, o ya hecho y borrado) no hay nada que decir -y 'sin
         # audio' ahi seria mentira: es que no se sabe-. En los ya CONVERTIDOS, los bordes se deducen
@@ -327,6 +344,268 @@ function Get-CvQueueFollowPlan {
     }
 }
 
+function Update-CvQueueBatch {
+    <#
+        PURO. La TANDA en curso: los archivos que se estan codificando ahora o esperan su turno desde
+        que se pulso Iniciar. Es sobre lo que se mide el avance del icono y de la barra de tareas
+        (Get-CvQueueProgress): 'cuanto falta de lo que mande a hacer', no de toda la carpeta.
+
+        - Sin workers ni arranque en marcha, la tanda se VACIA: la siguiente empieza de cero.
+        - Con workers y sin tanda (los abrio otra consola, o la ventana se abrio a mitad), se toma
+          lo que hay en cola y en curso.
+        - Un archivo que se pone a codificar y no estaba (un worker de otra consola) se suma.
+        Devuelve el array de nombres.
+    #>
+    param(
+        [string[]]$Batch = @(),
+        $Rows = @(),
+        [int]$Live = 0,
+        [bool]$Starting = $false
+    )
+    if ($Live -le 0 -and -not $Starting) { return @() }
+    $tanda = @(@($Batch) | Where-Object { "$_" -ne '' })
+    if ($tanda.Count -eq 0) {
+        $tanda = @(@($Rows) | Where-Object { "$($_.State)" -eq 'queued' -or "$($_.State)" -eq 'working' } | ForEach-Object { "$($_.Name)" })
+    }
+    foreach ($r in @($Rows)) {
+        if ("$($r.State)" -eq 'working' -and $tanda -notcontains "$($r.Name)") { $tanda += "$($r.Name)" }
+    }
+    return @($tanda)
+}
+
+function Get-CvQueueProgress {
+    <#
+        PURO. Avance de la TANDA (Update-CvQueueBatch) en %: cada archivo hecho cuenta 100, uno que se
+        esta codificando lo que diga su worker y uno que espera, 0. Un nombre de la tanda que ya no
+        esta en la lista (lo has movido) no cuenta.
+
+        Devuelve @{ Known; Percent; Done; Total }; Known = $false sin tanda.
+    #>
+    param(
+        $Rows = @(),
+        [string[]]$Batch = @()
+    )
+    $porNombre = @{}
+    foreach ($r in @($Rows)) { $porNombre["$($r.Name)"] = $r }
+    $total = 0
+    $hechos = 0
+    $suma = 0.0
+    foreach ($n in @($Batch)) {
+        $r = $porNombre["$n"]
+        if ($null -eq $r) { continue }
+        $total++
+        if ("$($r.State)" -eq 'done') {
+            $hechos++
+            $suma += 100.0
+        } elseif ("$($r.State)" -eq 'working') {
+            $suma += [Math]::Max(0, [Math]::Min(100, [int]$r.Percent))
+        }
+    }
+    if ($total -le 0) {
+        return @{
+            Known   = $false
+            Percent = 0
+            Done    = 0
+            Total   = 0
+        }
+    }
+    return @{
+        Known   = $true
+        Percent = [int][Math]::Floor($suma / $total)
+        Done    = $hechos
+        Total   = $total
+    }
+}
+
+function Get-CvTrayAnimFrame {
+    <#
+        PURO. Que pintar en el icono del area de notificacion en el fotograma -Frame:
+
+          - 'progress': el anillo lleno hasta -Percent y su punta parpadeando (un fotograma si, otro
+            no), para que se MUEVA aunque el % tarde minutos en cambiar;
+          - 'spin': la flecha girada 45 grados mas en cada fotograma (8 = vuelta entera);
+          - 'dot': un punto en la esquina, encendido y apagado;
+          - 'off' (o cualquier otro): el icono de siempre.
+
+        Key identifica el dibujo: dos fotogramas con la misma Key son el MISMO icono (se cachea por
+        ella, ver Get-CvGuiTrayFrameIcon). Devuelve @{ Key; Progress; Spin; Dot; Pulse }.
+    #>
+    param(
+        [string]$Mode = 'progress',
+        [int]$Frame = 0,
+        [int]$Percent = 0
+    )
+    $par = (([Math]::Abs($Frame) % 2) -eq 0)
+    $res = @{
+        Key      = 'static'
+        Progress = -1
+        Spin     = 0
+        Dot      = $false
+        Pulse    = $false
+    }
+    switch ("$Mode".ToLower()) {
+        'progress' {
+            $p = [Math]::Max(0, [Math]::Min(100, $Percent))
+            $res.Progress = $p
+            $res.Pulse    = $par
+            $res.Key      = ('p|{0}|{1}' -f $p, [int]$par)
+        }
+        'spin' {
+            $res.Spin = ([Math]::Abs($Frame) % 8) * 45
+            $res.Key  = ('s|{0}' -f $res.Spin)
+        }
+        'dot' {
+            $res.Dot = $par
+            $res.Key = ('d|{0}' -f [int]$par)
+        }
+    }
+    return $res
+}
+
+function Test-CvTrayAnimate {
+    <#
+        PURO. Si el icono del area de notificacion tiene que moverse: solo con la ventana ESCONDIDA
+        en el (a la vista ya se ve lo que pasa), con algun worker vivo y con una animacion elegida.
+    #>
+    param(
+        [string]$Mode = 'progress',
+        [bool]$Hidden = $false,
+        [int]$Live = 0
+    )
+    if ("$Mode".ToLower() -eq 'off') { return $false }
+    if (@(Get-CvTrayAnimModes | ForEach-Object { "$($_.Value)" }) -notcontains "$Mode".ToLower()) { return $false }
+    return ($Hidden -and $Live -gt 0)
+}
+
+function Get-CvTaskbarProgressPlan {
+    <#
+        PURO. Que ensena el BOTON de la ventana en la barra de tareas (ITaskbarList3):
+
+          - parando (-Stopping) con workers: 'paused' (amarillo), con el % que lleve;
+          - codificando con el avance sabido: 'normal' (verde) con su %;
+          - con workers, o arrancando, sin avance que dar: 'indeterminate' (la barra que va y viene);
+          - sin nada en marcha: 'none' (el boton normal).
+
+        Devuelve @{ State; Percent }.
+    #>
+    param(
+        [int]$Live = 0,
+        [bool]$Starting = $false,
+        [bool]$Stopping = $false,
+        $Progress = $null
+    )
+    $sabe = ($null -ne $Progress -and [bool]$Progress.Known)
+    $pct = $(if ($sabe) { [Math]::Max(0, [Math]::Min(100, [int]$Progress.Percent)) } else { 0 })
+    if ($Live -gt 0 -and $Stopping) {
+        return @{
+            State   = 'paused'
+            Percent = $pct
+        }
+    }
+    if ($Live -gt 0 -and $sabe) {
+        return @{
+            State   = 'normal'
+            Percent = $pct
+        }
+    }
+    if ($Live -gt 0 -or $Starting) {
+        return @{
+            State   = 'indeterminate'
+            Percent = 0
+        }
+    }
+    return @{
+        State   = 'none'
+        Percent = 0
+    }
+}
+
+function Get-CvQueueInstanceNames {
+    <#
+        PURO. Nombres del mutex y del evento con los que la cola se asegura de ser UNA por
+        instalacion (gui.singleInstance). Salen de la carpeta del PROGRAMA (-Root), normalizada y en
+        minusculas: dos copias del programa en carpetas distintas son dos colas distintas, y la misma
+        carpeta escrita de otra forma ('D:\X\' / 'd:\x') es la misma.
+
+        'Local\' = por sesion de Windows: otro usuario conectado tiene la suya.
+    #>
+    param([Parameter(Mandatory)][string]$Root)
+    $r = "$Root".Trim().TrimEnd('\', '/')
+    try { $r = [System.IO.Path]::GetFullPath($r).TrimEnd('\', '/') } catch { }
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($r.ToLowerInvariant())
+    $sha = [System.Security.Cryptography.SHA1]::Create()
+    try { $h = (-join ($sha.ComputeHash($bytes)[0..7] | ForEach-Object { $_.ToString('x2') })) } finally { $sha.Dispose() }
+    return @{
+        Mutex = ('Local\ConvertVideo.Cola.{0}' -f $h)
+        Event = ('Local\ConvertVideo.Cola.{0}.Mostrar' -f $h)
+    }
+}
+
+function Request-CvQueueInstance {
+    <#
+        Se queda con la cola de esta instalacion, o le pide a la que ya esta abierta que salga.
+
+        - Primera: crea el MUTEX (lo tiene mientras viva) y el EVENTO por el que le avisaran.
+          Devuelve @{ First = $true; Mutex; Event }: quien llama tiene que pasarle el Event a la
+          ventana (que lo mira cada gui.singleInstancePollMs) y soltar las dos cosas al acabar
+          (Exit-CvQueueInstance).
+        - Ya hay otra: le da permiso para ponerse delante (AllowSetForegroundWindow: Windows no deja
+          que un proceso en segundo plano se adelante, y el que tiene el primer plano es ESTE, que
+          acaba de lanzar quien sea), le levanta el evento y devuelve @{ First = $false }.
+
+        Un proceso muerto suelta su mutex solo, asi que una cola que se cerro mal no bloquea la
+        siguiente. Fail-soft: si algo de esto falla, se abre la ventana como siempre (First = $true).
+    #>
+    param([Parameter(Mandatory)][string]$Root)
+    $n = Get-CvQueueInstanceNames -Root $Root
+    $nuevo = $false
+    $m = $null
+    try {
+        $m = New-Object System.Threading.Mutex($true, $n.Mutex, [ref]$nuevo)
+    } catch {
+        return @{
+            First = $true
+            Mutex = $null
+            Event = $null
+        }
+    }
+    $ev = $null
+    $creado = $false
+    try { $ev = New-Object System.Threading.EventWaitHandle($false, [System.Threading.EventResetMode]::AutoReset, $n.Event, [ref]$creado) } catch { $ev = $null }
+    if ($nuevo) {
+        return @{
+            First = $true
+            Mutex = $m
+            Event = $ev
+        }
+    }
+    # Se declara aqui y no en Gui.psm1: este camino corre ANTES de cargar Gui (que es lo lento), para
+    # que un segundo arranque se vaya en cuanto sabe que sobra.
+    try {
+        if (-not ('CvQueue.Foreground' -as [type])) {
+            Add-Type -Namespace CvQueue -Name Foreground -MemberDefinition '[DllImport("user32.dll")] public static extern bool AllowSetForegroundWindow(int pid);' -ErrorAction Stop
+        }
+        [void][CvQueue.Foreground]::AllowSetForegroundWindow(-1)
+    } catch { }
+    try { if ($null -ne $ev) { [void]$ev.Set() } } catch { }
+    try { if ($null -ne $ev) { $ev.Dispose() } } catch { }
+    try { $m.Dispose() } catch { }
+    return @{
+        First = $false
+        Mutex = $null
+        Event = $null
+    }
+}
+
+function Exit-CvQueueInstance {
+    <# Suelta lo que cogio Request-CvQueueInstance. Nunca lanza: se llama al cerrar. #>
+    param($Instance)
+    if ($null -eq $Instance) { return }
+    try { if ($null -ne $Instance.Mutex) { $Instance.Mutex.ReleaseMutex() } } catch { }
+    try { if ($null -ne $Instance.Mutex) { $Instance.Mutex.Dispose() } } catch { }
+    try { if ($null -ne $Instance.Event) { $Instance.Event.Dispose() } } catch { }
+}
+
 function Get-CvQueueTickPlan {
     <#
         PURO. Si el temporizador tiene que estar en marcha y a que ritmo.
@@ -336,6 +615,9 @@ function Get-CvQueueTickPlan {
           ese hueco no hay nadie vivo pero SI hay algo que esperar; sin esto el temporizador se
           paraba justo despues de arrancar y la fila no pasaba a 'Codificando' hasta que se pulsaba
           Actualizar a mano.
+        - SONDEANDO: quedan archivos a los que mirarles la calidad o los bordes (-Probing) y no han
+          cabido en el refresco anterior. Sin esto, con gui.queueIdleRefreshMs = 0 el temporizador
+          estaba parado y la columna se quedaba a medias hasta pulsar Actualizar.
         - Sin nada de lo anterior: lo que diga -IdleMs, y con 0 se PARA (la lista se actualiza a
           peticion, ver Get-CvWorkerSignature).
     #>
@@ -343,9 +625,10 @@ function Get-CvQueueTickPlan {
         [int]$Live      = 0,
         [bool]$Starting = $false,
         [int]$RefreshMs = 1000,
-        [int]$IdleMs    = 0
+        [int]$IdleMs    = 0,
+        [bool]$Probing  = $false
     )
-    if ($Live -gt 0 -or $Starting) {
+    if ($Live -gt 0 -or $Starting -or $Probing) {
         return @{
             Enabled  = $true
             Interval = $RefreshMs

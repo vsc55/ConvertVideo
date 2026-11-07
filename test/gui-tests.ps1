@@ -61,6 +61,7 @@ $modules = @(
     'form\GuiJobProfileDialog'
     'form\GuiProfileEditorWindow'
     'form\GuiProfilesWindow'
+    'form\GuiSplashWindow'
 )
 foreach ($m in $modules) {
     Import-Module (Join-Path $Lib ("{0}.psm1" -f $m)) -Force

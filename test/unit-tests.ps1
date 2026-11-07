@@ -1263,6 +1263,32 @@ Assert-Eq   'Config: la ventana se pone delante'       $true ([bool](Get-CvConfi
 # Esconderse en el area de notificacion es opt-in: cambia donde APARECE la ventana.
 Assert-Eq   'Config: no se esconde en la barra de serie' $false ([bool](Get-CvConfigDefaults).gui.minimizeToTray)
 Assert-Eq   'Config: pero avisa la primera vez'          3000 ([int](Get-CvConfigDefaults).gui.trayBalloonMs)
+# Escondida y codificando, el icono se mueve: de serie, el anillo que se llena con el avance.
+Assert-Eq   'Config: icono animado de serie'            'progress' "$((Get-CvConfigDefaults).gui.trayAnimation)"
+Assert-Eq   'Config: fotograma cada medio segundo'      500 ([int](Get-CvConfigDefaults).gui.trayAnimMs)
+Assert-Eq   'Config: avance en la barra de tareas'      $true ([bool](Get-CvConfigDefaults).gui.taskbarProgress)
+Assert-Eq   'Config: una sola cola de serie'            $true ([bool](Get-CvConfigDefaults).gui.singleInstance)
+Assert-Eq   'Config: mira si la llaman cada 500 ms'     500 ([int](Get-CvConfigDefaults).gui.singleInstancePollMs)
+Assert-Eq   'Config: pantalla de arranque de serie'     $true ([bool](Get-CvConfigDefaults).gui.splash)
+Assert-Eq   'Config: y se cierra sola a los 120 s'      120 ([int](Get-CvConfigDefaults).gui.splashTimeoutSec)
+Assert-Eq   'Config: calidad, originales por refresco'  4 ([int](Get-CvConfigDefaults).gui.queueQualityProbe)
+Assert-Eq   'Config: calidad, margen del 10%'           0.1 ([double](Get-CvConfigDefaults).gui.queueQualityTolerance)
+Assert-Eq   'Catalogo de animaciones del icono'         'progress|spin|dot|off' ((@(Get-CvTrayAnimModes) | ForEach-Object { $_.Value }) -join '|')
+Assert-True 'Animacion: el default esta en el catalogo' (@(Get-CvTrayAnimModes | ForEach-Object { $_.Value }) -contains "$((Get-CvConfigDefaults).gui.trayAnimation)")
+Assert-Eq   'Editor: la animacion se elige de un menu'  4 (@((Get-CvEditorOptions -Key 'trayAnimation').Items)).Count
+foreach ($k in 'trayAnimation', 'trayAnimMs', 'taskbarProgress', 'singleInstance', 'singleInstancePollMs', 'queueQualityProbe', 'queueQualityTolerance', 'splash', 'splashTimeoutSec') {
+    Assert-True ("help gui/{0}" -f $k) ((Get-CvConfigHelp).Contains(("gui/{0}" -f $k)))
+}
+# Una errata en la animacion no deja el icono quieto para siempre ni rompe nada: cae a la de fabrica.
+$taDir = Join-Path ([System.IO.Path]::GetTempPath()) ("cv_ta_" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+New-Item -ItemType Directory -Path $taDir -Force | Out-Null
+$taCfg = Join-Path $taDir 'config.json'
+Set-Content -LiteralPath $taCfg -Encoding UTF8 -Value '{ "gui": { "trayAnimation": "girar", "trayAnimMs": 10, "queueQualityTolerance": 3 } }'
+$taCtx = New-CvContext -Root $taDir -ConfigPath $taCfg
+Assert-Eq   'Contexto: animacion invalida -> la de fabrica' 'progress' "$($taCtx.GuiTrayAnim)"
+Assert-Eq   'Contexto: fotograma absurdo -> el de fabrica'  500 ([int]$taCtx.GuiTrayAnimMs)
+Assert-Eq   'Contexto: margen absurdo -> el de fabrica'     0.1 ([double]$taCtx.GuiQueueQualityTol)
+Remove-Item -Recurse -Force $taDir
 # La ventana de PREPARAR no se cierra sola de serie: el resumen del final hay que poder leerlo.
 Assert-Eq   'Config: preparar no se cierra sola'        $false ([bool](Get-CvConfigDefaults).gui.prepareAutoClose)
 Assert-Eq   'Config: y cuando lo hace, se ve un momento' 1200 ([int](Get-CvConfigDefaults).gui.prepareAutoCloseMs)
@@ -2251,6 +2277,57 @@ Assert-Eq   'Tamano: setsar se ignora'   '1920x800' (("{0}x{1}" -f ((Get-CvOutpu
 Assert-Eq   'Tamano: sin datos de origen' 0 (Get-CvOutputSize -Width 0 -Height 0 -Crop '1920:960:0:60').Width
 Assert-Eq   'Tamano: recorte imposible'  '1920x1080' ("{0}x{1}" -f ((Get-CvOutputSize -Width 1920 -Height 1080 -Crop '4000:4000:0:0')).Width, ((Get-CvOutputSize -Width 1920 -Height 1080 -Crop '4000:4000:0:0')).Height)
 
+# ================================================================================================
+# CALIDAD por tamano (columna 'Calidad' de la cola): sin ser estricto, por el ancho O el alto.
+Write-Host "`nGet-CvVideoQuality (1080p, 4K...)" -ForegroundColor Cyan
+foreach ($c in @(
+    @{ W = 1920; H = 1080; Q = '1080p'; N = 'el de toda la vida' }
+    @{ W = 1920; H = 1063; Q = '1080p'; N = 'unos pixeles menos de alto' }
+    @{ W = 1904; H = 1072; Q = '1080p'; N = 'recortado un poco por los dos lados' }
+    @{ W = 1920; H = 800;  Q = '1080p'; N = 'panoramica sin barras: cuenta el ancho' }
+    @{ W = 1440; H = 1080; Q = '1080p'; N = '4:3 a 1080 de alto' }
+    @{ W = 3840; H = 2160; Q = '4K';    N = '4K UHD' }
+    @{ W = 3840; H = 1600; Q = '4K';    N = '4K panoramico' }
+    @{ W = 4096; H = 1716; Q = '4K';    N = '4K de cine' }
+    @{ W = 7680; H = 4320; Q = '8K';    N = '8K' }
+    @{ W = 2560; H = 1440; Q = '1440p'; N = '1440p' }
+    @{ W = 3440; H = 1440; Q = '1440p'; N = 'ultrapanoramico 1440' }
+    @{ W = 1280; H = 720;  Q = '720p';  N = '720p' }
+    @{ W = 1280; H = 536;  Q = '720p';  N = '720p panoramico' }
+    @{ W = 1024; H = 576;  Q = '576p';  N = 'PAL 16:9 (mostrado)' }
+    @{ W = 768;  H = 576;  Q = '576p';  N = 'PAL 4:3 (mostrado)' }
+    @{ W = 854;  H = 480;  Q = '480p';  N = 'NTSC 16:9 (mostrado)' }
+    @{ W = 640;  H = 480;  Q = '480p';  N = 'NTSC 4:3: no llega a 576p por el ancho' }
+    @{ W = 640;  H = 360;  Q = '360p';  N = '360p' }
+    @{ W = 320;  H = 180;  Q = '<240p'; N = 'por debajo del ultimo escalon' }
+)) {
+    Assert-Eq ("Calidad: {0}x{1} {2}" -f $c.W, $c.H, $c.N) $c.Q (Get-CvVideoQuality -Width $c.W -Height $c.H)
+}
+Assert-Eq   'Calidad: sin tamano, nada'          '' (Get-CvVideoQuality -Width 0 -Height 0)
+# El margen manda: sin margen, 1063 de alto y 1900 de ancho ya no llegan a 1080p.
+Assert-Eq   'Calidad: sin margen es estricto'    '720p' (Get-CvVideoQuality -Width 1900 -Height 1063 -Tolerance 0)
+Assert-Eq   'Calidad: con margen, 1080p'         '1080p' (Get-CvVideoQuality -Width 1900 -Height 1063 -Tolerance 0.1)
+Assert-Eq   'Calidad: escalones de mayor a menor' '8K' "$((Get-CvVideoQualityTiers)[0].Value)"
+
+# La del original y la de la salida de un job (lo que la cola pone como '1080p -> 720p').
+$qp = Get-CvVideoQualityPair -Width 1920 -Height 1080 -Resize '1280:-2'
+Assert-Eq   'Par: original'                      '1080p' $qp.Source
+Assert-Eq   'Par: reescalado a 720p'             '720p'  $qp.Output
+$qp = Get-CvVideoQualityPair -Width 1920 -Height 1080 -Crop '1920:800:0:140'
+Assert-Eq   'Par: quitar barras no baja la calidad' '1080p' $qp.Output
+$qp = Get-CvVideoQualityPair -Width 3840 -Height 2160 -Crop '3840:1600:0:280' -Resize '1920:-2'
+Assert-Eq   'Par: 4K recortado y bajado'         '4K|1080p' ("{0}|{1}" -f $qp.Source, $qp.Output)
+# Anamorfico: un DVD PAL 16:9 se almacena a 720x576 y se VE a 1024x576.
+$qp = Get-CvVideoQualityPair -Width 720 -Height 576 -Sar '64:45'
+Assert-Eq   'Par: anamorfico por lo que se ve'   '576p|576p' ("{0}|{1}" -f $qp.Source, $qp.Output)
+# Un 1440x1080 anamorfico (HDV) se ve a 1920: 1080p, y cuadrado a pixeles cuadrados sigue siendolo.
+$qp = Get-CvVideoQualityPair -Width 1440 -Height 1080 -Sar '4:3' -Resize '1440:1080,setsar=1'
+Assert-Eq   'Par: cuadrar pixeles mide la salida tal cual' '1080p|1080p' ("{0}|{1}" -f $qp.Source, $qp.Output)
+$qp = Get-CvVideoQualityPair -Width 1920 -Height 1080 -Resize '1280:-2' -Skip $true
+Assert-Eq   'Par: sin video, solo el original'   '1080p|' ("{0}|{1}" -f $qp.Source, $qp.Output)
+$qp = Get-CvVideoQualityPair
+Assert-Eq   'Par: sin tamano, nada'              '|' ("{0}|{1}" -f $qp.Source, $qp.Output)
+
 Assert-Eq   'Corte: barras horizontales' 'quita 60px arriba y abajo (barras horizontales)' (Format-CvCropCut -Top 60 -Bottom 60)
 Assert-Eq   'Corte: barras verticales'   'quita 240px a cada lado (barras verticales)'     (Format-CvCropCut -Left 240 -Right 240)
 Assert-Eq   'Corte: asimetrico'          'quita 60px arriba y 4px a la derecha'            (Format-CvCropCut -Top 60 -Right 4)
@@ -2453,6 +2530,16 @@ Assert-Eq   'Job: recorte'   '1920:800:0:140' $rec.video.crop
 Assert-Eq   'Job: escalado'  '1280:-2'        $rec.video.resize
 Assert-Eq   'Job: animacion' $true            $rec.video.anim
 Assert-Eq   'Job: sin Info no marca HDR' $false $rec.video.hdr
+# El tamano del original va en el job (para la columna 'Calidad' de la cola, sin ffprobe).
+Assert-Eq   'Job: sin Info ni tamano, 0'  0 ([int]$rec.video.width)
+$recTam = ConvertTo-CvJobRecord -Context $jctxFake -File 'x.mkv' -Prof ([pscustomobject]@{}) -SrcWidth 1920 -SrcHeight 1080 -SrcSar '1:1'
+Assert-Eq   'Job: el tamano que ya se sabia se conserva' '1920x1080 1:1' ("{0}x{1} {2}" -f $recTam.video.width, $recTam.video.height, $recTam.video.sar)
+$infoTam = [pscustomobject]@{ streams = @(
+    [pscustomobject]@{ index = 0; codec_type = 'video'; codec_name = 'mjpeg'; width = 600; height = 900; disposition = [pscustomobject]@{ attached_pic = 1 } }
+    [pscustomobject]@{ index = 1; codec_type = 'video'; codec_name = 'h264'; width = 1440; height = 1080; sample_aspect_ratio = '4:3' }
+) }
+$recInfo = ConvertTo-CvJobRecord -Context $jctxFake -File 'x.mkv' -Prof ([pscustomobject]@{}) -Info $infoTam -VideoIndex 1 -SrcWidth 99
+Assert-Eq   'Job: con Info, el de la pista elegida (no la caratula)' '1440x1080 4:3' ("{0}x{1} {2}" -f $recInfo.video.width, $recInfo.video.height, $recInfo.video.sar)
 # ================================================================================================
 # Editar VARIOS jobs a la vez: se cambia solo lo marcado y lo demas se queda como esta en cada uno.
 Write-Host "`nJobCore - editar jobs en bloque" -ForegroundColor Cyan
@@ -2727,6 +2814,22 @@ Assert-Eq 'Arranque: la tecla del fichero'  'ctrl' (Get-CvStartupPrefs -Root $cf
 # Una errata no deja la cola preguntando para siempre: cae al valor de fabrica.
 Set-Content -LiteralPath (Join-Path $cfgRaiz 'config.mala.json') -Encoding UTF8 -Value '{ "gui": { "askConfigKey": "mayusculas" } }'
 Assert-Eq 'Arranque: tecla invalida -> la de fabrica' 'shift' (Get-CvStartupPrefs -Root $cfgRaiz -Path (Join-Path $cfgRaiz 'config.mala.json')).AskConfigKey
+# Si la cola es unica tambien se sabe antes: con una ya abierta, ni se pregunta la config.
+Assert-Eq 'Arranque: cola unica de serie'   $true ([bool](Get-CvStartupPrefs -Root $cfgRaiz).SingleInstance)
+Set-Content -LiteralPath (Join-Path $cfgRaiz 'config.varias.json') -Encoding UTF8 -Value '{ "gui": { "singleInstance": false } }'
+Assert-Eq 'Arranque: se pueden permitir varias' $false ([bool](Get-CvStartupPrefs -Root $cfgRaiz -Path (Join-Path $cfgRaiz 'config.varias.json')).SingleInstance)
+# La pantalla de arranque sale antes de cargar casi nada: tambien se sabe aqui.
+Assert-Eq 'Arranque: pantalla de arranque de serie' $true ([bool](Get-CvStartupPrefs -Root $cfgRaiz).Splash)
+# Y su tema, sin resolver (lo resuelve Resolve-CvGuiTheme, como en el resto de ventanas).
+Assert-Eq 'Arranque: tema de serie, el de Windows' 'system' "$((Get-CvStartupPrefs -Root $cfgRaiz).Theme)"
+Set-Content -LiteralPath (Join-Path $cfgRaiz 'config.oscuro.json') -Encoding UTF8 -Value '{ "gui": { "theme": "dark" } }'
+Assert-Eq 'Arranque: el tema del fichero'   'dark' "$((Get-CvStartupPrefs -Root $cfgRaiz -Path (Join-Path $cfgRaiz 'config.oscuro.json')).Theme)"
+Set-Content -LiteralPath (Join-Path $cfgRaiz 'config.tema.json') -Encoding UTF8 -Value '{ "gui": { "theme": "morado" } }'
+Assert-Eq 'Arranque: tema invalido -> el de fabrica' 'system' "$((Get-CvStartupPrefs -Root $cfgRaiz -Path (Join-Path $cfgRaiz 'config.tema.json')).Theme)"
+Set-Content -LiteralPath (Join-Path $cfgRaiz 'config.splash.json') -Encoding UTF8 -Value '{ "gui": { "splash": false, "splashTimeoutSec": 1 } }'
+$spPref = Get-CvStartupPrefs -Root $cfgRaiz -Path (Join-Path $cfgRaiz 'config.splash.json')
+Assert-Eq 'Arranque: sin pantalla de arranque'  $false ([bool]$spPref.Splash)
+Assert-Eq 'Arranque: plazo absurdo -> el de fabrica' 120 ([int]$spPref.SplashTimeoutSec)
 
 # Y la decision: con estas teclas pulsadas y este ajuste, hay que preguntar? (pura, sin teclado)
 $K = {

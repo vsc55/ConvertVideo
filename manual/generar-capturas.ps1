@@ -88,6 +88,7 @@ $modules = @(
     'form\GuiJobProfileDialog'
     'form\GuiProfileEditorWindow'
     'form\GuiProfilesWindow'
+    'form\GuiSplashWindow'
 )
 foreach ($m in $modules) {
     $p = Join-Path $Lib ("{0}.psm1" -f $m)
@@ -1069,7 +1070,8 @@ if (Test-Group 'gif') {
                 $script:step = 4
             }
             4 {
-                $hechos = @($lv.Items | Where-Object { "$($_.SubItems[2].Text)" -match 'Hecho' }).Count
+                $iEst = Get-CvGuiCatalogIndex -Items (Get-CvQueueColumns) -Key 'state'
+                $hechos = @($lv.Items | Where-Object { "$($_.SubItems[$iEst].Text)" -match 'Hecho' }).Count
                 $script:waits++
                 if ($hechos -ge 3 -or $script:waits -gt 400) { $script:step = 5 }
                 return

@@ -66,6 +66,7 @@ function Get-CvEditorOptions {
         'player'          { return (& $ret (Get-CvPlayerModes) $false) }
         'theme'           { return (& $ret (Get-CvGuiThemes) $false) }
         'askConfigKey'    { return (& $ret (Get-CvAskConfigKeys) $false) }
+        'trayAnimation'   { return (& $ret (Get-CvTrayAnimModes) $false) }
         # --- consola (colores del .NET ConsoleColor, no un literal de datos) ---
         'background'      { return (& $ret ([enum]::GetNames([System.ConsoleColor])) $false) }
         'foreground'      { return (& $ret ([enum]::GetNames([System.ConsoleColor])) $false) }

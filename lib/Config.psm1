@@ -146,6 +146,48 @@ function Get-CvGuiThemes {
     )
 }
 
+function Test-CvWindowsDarkMode {
+    <# Windows esta en modo oscuro para las aplicaciones? (AppsUseLightTheme del usuario). #>
+    try {
+        $v = Get-ItemPropertyValue -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize' `
+            -Name 'AppsUseLightTheme' -ErrorAction Stop
+        return ([int]$v -eq 0)
+    } catch {
+        return $false      # sin esa clave (Windows viejo o politica): claro, como siempre
+    }
+}
+
+function Resolve-CvGuiTheme {
+    <#
+        PURO. Convierte lo que diga la config (system / light / dark) en el tema REAL: 'light' o
+        'dark'. 'system' sigue a Windows (-SystemDark, que sale de Test-CvWindowsDarkMode; se pasa
+        aparte para poder probar esto sin tocar el registro). Cualquier otra cosa = claro.
+    #>
+    param(
+        [string]$Theme = 'system',
+        [bool]$SystemDark = $false
+    )
+    switch ("$Theme".ToLower()) {
+        'dark'  { return 'dark' }
+        'light' { return 'light' }
+        default { return $(if ($SystemDark) { 'dark' } else { 'light' }) }
+    }
+}
+
+function Get-CvTrayAnimModes {
+    <#
+        Como se mueve el icono del area de notificacion mientras se codifica con la cola escondida
+        (gui.trayAnimation). El 1o = default de fabrica. Con la ventana a la vista, o sin nada
+        codificando, el icono se queda quieto en todos.
+    #>
+    @(
+        @{ Value = 'progress'; Text = (Get-CvText -Key 'cat.trayanim.progress') }
+        @{ Value = 'spin';     Text = (Get-CvText -Key 'cat.trayanim.spin') }
+        @{ Value = 'dot';      Text = (Get-CvText -Key 'cat.trayanim.dot') }
+        @{ Value = 'off';      Text = (Get-CvText -Key 'cat.trayanim.off') }
+    )
+}
+
 function Get-CvAskConfigKeys {
     <#
         Tecla que, MANTENIDA al arrancar, hace que la cola pregunte con que config*.json trabajar en
@@ -814,6 +856,14 @@ function Get-CvConfigDefaults {
             # redondeos a tamano PAR del escalado (un pixel en 1080 es un 0,09%); por encima, los
             # recortes de verdad (quitar 140px de barras cambia la proporcion un 15%).
             queueDoneTolerance = 0.01
+            # Columna 'Calidad' (1080p, 4K...): sale del job, o de la salida si ya esta hecho; si no
+            # hay ni uno ni otro (sin preparar, o un job de antes de guardar el tamano) hay que
+            # preguntarle a ffprobe por el original: como mucho estos por refresco y solo con la cola
+            # parada, igual que queueDoneProbe. Lo mirado se guarda. 0 = no mirarlo.
+            queueQualityProbe  = 4
+            # Margen para encajar un tamano en su calidad: con 0.1, un 1920x1063 o un 1920x800 (una
+            # pelicula panoramica sin barras) siguen siendo 1080p. Basta con llegar al ANCHO o al ALTO.
+            queueQualityTolerance = 0.1
             # La ventana de PREPARAR PENDIENTES se cierra sola al acabar el recorrido. Es el valor
             # de partida de su casilla 'Cerrar al terminar', que la recuerda aqui al cambiarla. Solo
             # se cierra si ha ido TODO bien: con algun error, o cancelado, se queda abierta, porque
@@ -829,6 +879,27 @@ function Get-CvConfigDefaults {
             # Aviso de "sigo aqui" la primera vez que se esconde en una sesion (ms; 0 = nunca). Sin
             # el, la primera vez parece que la ventana se ha cerrado sola.
             trayBalloonMs      = 3000
+            # Con la cola ESCONDIDA en el area de notificacion y algo codificandose, el icono se
+            # MUEVE para que se vea que esta trabajando (catalogo en Get-CvTrayAnimModes): 'progress'
+            # el anillo se va llenando con el avance de la tanda, 'spin' la flecha gira, 'dot' un
+            # punto parpadea en la esquina, 'off' quieto. Cada fotograma, trayAnimMs ms.
+            trayAnimation      = 'progress'
+            trayAnimMs         = 500
+            # Con la ventana a la vista, el avance de la tanda en el BOTON de la barra de tareas (la
+            # barra verde de Windows al copiar ficheros; amarilla mientras se esta parando).
+            taskbarProgress    = $true
+            # Una sola cola por instalacion: volver a lanzar Convert-gui.cmd con una ya abierta (aunque
+            # este escondida junto al reloj) la trae al frente en vez de abrir otra. Con $false se
+            # pueden abrir varias, como antes.
+            singleInstance     = $true
+            # Cada cuanto mira la cola abierta si otro arranque le ha pedido que salga al frente (ms).
+            singleInstancePollMs = 500
+            # PANTALLA DE ARRANQUE de la cola: sale nada mas lanzarla y dice que se esta haciendo
+            # (cargar, leer la config, comprobar herramientas, abrir la ventana). Sin ella pasaban
+            # 8-12 s sin nada a la vista. Se cierra sola en cuanto la cola tiene la lista pintada, y
+            # pase lo que pase a los splashTimeoutSec segundos.
+            splash             = $true
+            splashTimeoutSec   = 120
             # Tecla que, MANTENIDA mientras arranca la cola (Convert-gui.cmd), hace que PREGUNTE con
             # que config*.json trabajar en vez de abrir directo el de siempre: es Convert-gui-Config.cmd
             # sin cambiar de lanzador. Catalogo en Get-CvAskConfigKeys ('off' = nunca).
@@ -1127,9 +1198,18 @@ function Get-CvConfigHelp {
         'gui/queueFollowHoldSec' = (Get-CvText -Key 'cfg.help.gui.queueFollowHoldSec')
         'gui/queueDoneProbe' = (Get-CvText -Key 'cfg.help.gui.queueDoneProbe')
         'gui/queueDoneTolerance' = (Get-CvText -Key 'cfg.help.gui.queueDoneTolerance')
+        'gui/queueQualityProbe' = ((Get-CvConfigAdvancedMark) + (Get-CvText -Key 'cfg.help.gui.queueQualityProbe'))
+        'gui/queueQualityTolerance' = ((Get-CvConfigAdvancedMark) + (Get-CvText -Key 'cfg.help.gui.queueQualityTolerance'))
         'gui/bringToFront' = (Get-CvText -Key 'cfg.help.gui.bringToFront')
         'gui/minimizeToTray' = (Get-CvText -Key 'cfg.help.gui.minimizeToTray')
         'gui/trayBalloonMs' = (Get-CvText -Key 'cfg.help.gui.trayBalloonMs')
+        'gui/trayAnimation' = (Get-CvText -Key 'cfg.help.gui.trayAnimation')
+        'gui/trayAnimMs' = ((Get-CvConfigAdvancedMark) + (Get-CvText -Key 'cfg.help.gui.trayAnimMs'))
+        'gui/taskbarProgress' = (Get-CvText -Key 'cfg.help.gui.taskbarProgress')
+        'gui/singleInstance' = (Get-CvText -Key 'cfg.help.gui.singleInstance')
+        'gui/singleInstancePollMs' = ((Get-CvConfigAdvancedMark) + (Get-CvText -Key 'cfg.help.gui.singleInstancePollMs'))
+        'gui/splash' = (Get-CvText -Key 'cfg.help.gui.splash')
+        'gui/splashTimeoutSec' = ((Get-CvConfigAdvancedMark) + (Get-CvText -Key 'cfg.help.gui.splashTimeoutSec'))
         'gui/askConfigKey' = (Get-CvText -Key 'cfg.help.gui.askConfigKey')
         'gui/previewCropOnAsk' = (Get-CvText -Key 'cfg.help.gui.previewCropOnAsk')
         'gui/focusSaveCropPct' = (Get-CvText -Key 'cfg.help.gui.focusSaveCropPct')
