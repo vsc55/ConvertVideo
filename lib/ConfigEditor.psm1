@@ -88,7 +88,6 @@ function Edit-Scalar {
         se muestra en el titulo. La opcion 0 (cancelar) deja el valor actual sin cambios.
     #>
     param([string]$Key, $Current, [string]$Kind, $Default = $null)
-    $inv = [System.Globalization.CultureInfo]::InvariantCulture
 
     # 1) Opciones ENUMERADAS: si la clave tiene un catálogo de valores, se ofrece un MENÚ (en vez de
     #    escribir a mano). Va ANTES que 'bool' para cubrir casos de 3 opciones (p. ej. detectBorder:
@@ -142,11 +141,12 @@ function Edit-Scalar {
                 value   = [long]$ans
             }
         }
-        $d = 0.0
-        if ([double]::TryParse($ans, [System.Globalization.NumberStyles]::Float, $inv, [ref]$d)) {
+        # Tambien con coma decimal ('0,8'), como el resto del programa (ConvertTo-InvDouble).
+        $d = ConvertTo-InvDouble $ans
+        if ($null -ne $d) {
             return @{
                 changed = $true
-                value   = $d
+                value   = [double]$d
             }
         }
         Write-Host (Get-CvText -Key 'con.nonumero2') -ForegroundColor Yellow

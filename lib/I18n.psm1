@@ -196,10 +196,14 @@ function Get-CvText {
 }
 
 function Get-CvTextPlaceholders {
-    <# PURO. Que huecos ({0}, {1}...) lleva una frase, ordenados y sin repetir. #>
+    <#
+        PURO. Que huecos ({0}, {1}...) lleva una frase, ordenados y sin repetir. Tambien los que llevan
+        ANCHO ({3,-22}) o formato ({0:N1}): sin el ancho, una traduccion que rompia uno de esos pasaba
+        la comprobacion y la frase salia sin rellenar.
+    #>
     param([string]$Text = '')
     $n = @()
-    foreach ($m in [regex]::Matches("$Text", '\{(\d+)(?::[^}]*)?\}')) { $n += [int]$m.Groups[1].Value }
+    foreach ($m in [regex]::Matches("$Text", '\{(\d+)(?:\s*,\s*-?\d+)?(?::[^}]*)?\}')) { $n += [int]$m.Groups[1].Value }
     return ,@($n | Sort-Object -Unique)
 }
 

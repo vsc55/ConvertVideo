@@ -18,12 +18,13 @@ function New-CvProfile {
         [object]$NoUpscale = $false,   # $true = changeSize SOLO reduce (no amplia videos mas pequeños que el destino)
         [object]$MaxWidth = $null,     # $null = no | 1920 etc. (reduce a ese ancho SOLO si es mayor; nunca amplia)
         [string]$Multipass = '',       # '' = usar el global (encode.multipass) | off | qres | fullres (NVENC)
-        # Salida de audio por defecto: FUENTE UNICA en config (encode.audio.*), no hardcodeada. El
-        # default del param solo se evalua cuando el llamador NO lo pasa (perfiles de serie de Get-CvProfiles).
-        [string]$AudioEncoder = "$((Get-CvConfigDefaultsShared).encode.audio.encoder)",  # aac_coder (recodificar) | copy
-        [string]$AudioCodec   = "$((Get-CvConfigDefaultsShared).encode.audio.codec)",    # aac | ac3 | eac3 | libmp3lame | flac | libopus
-        [string]$AudioBitrate = "$((Get-CvConfigDefaultsShared).encode.audio.bitrate)",
-        [int]$AudioHz         = [int](Get-CvConfigDefaultsShared).encode.audio.hz,
+        # Salida de audio por defecto: la del config EN VIGOR (encode.audio.*, Get-CvActiveEncodeAudio),
+        # no la de fabrica. El default del param solo se evalua cuando el llamador NO lo pasa (perfiles
+        # de serie de Get-CvProfiles).
+        [string]$AudioEncoder = "$((Get-CvActiveEncodeAudio).encoder)",  # aac_coder (recodificar) | copy
+        [string]$AudioCodec   = "$((Get-CvActiveEncodeAudio).codec)",    # aac | ac3 | eac3 | libmp3lame | flac | libopus
+        [string]$AudioBitrate = "$((Get-CvActiveEncodeAudio).bitrate)",
+        [int]$AudioHz         = [int](Get-CvActiveEncodeAudio).hz,
         # Salida de audio POR PERFIL (override del global; $null = usar el global encode.*):
         [object]$AudioChannels = $null,   # MAXIMO de canales (no hace upmix). $null = encode.audioChannels | 2 | 6 | 8
         [object]$DownmixMode   = $null,   # $null = encode.downmixMode | 'default' | 'dialogue' (voz reforzada, BETA)
@@ -298,6 +299,13 @@ function Resolve-CvAutoEncoder {
         if ($GpuOnly -and -not $e.Gpu) { continue }
         if ((Get-CvCodecRank $e.Codec) -gt $cap) { continue }
         if (Test-CvEncoderSupported -Context $Context -Encoder $e.Value) { return $e.Value }
+    }
+    # Red de seguridad: el mejor de CPU que respete el TOPE de codec (con tope h264, libx265 se lo
+    # saltaba). Sin tope, libx265 como siempre.
+    foreach ($e in (Get-CvAutoEncoderPriority)) {
+        if ($e.Gpu -or (Get-CvCodecRank $e.Codec) -gt $cap) { continue }
+        if ($e.Value -eq 'libsvtav1') { continue }   # el de siempre es libx265, no AV1 por CPU (lento)
+        return $e.Value
     }
     'libx265'
 }
@@ -704,8 +712,8 @@ function Get-CvProfileProp($obj, [string]$key, $default) {
 function ConvertTo-CvProfile {
     <# Convierte un objeto de perfil de config.json (camelCase) en un perfil (New-CvProfile). #>
     param([Parameter(Mandatory)]$Obj)
-    # Fallbacks de la salida de audio: FUENTE UNICA en config (encode.audio.*), no hardcodeados.
-    $eaud = (Get-CvConfigDefaultsShared).encode.audio
+    # Fallbacks de la salida de audio: el encode.audio.* del config EN VIGOR, no el de fabrica.
+    $eaud = Get-CvActiveEncodeAudio
     New-CvProfile `
         -VideoEncoder "$(Get-CvProfileProp $Obj 'videoEncoder' '')" `
         -VideoProfile "$(Get-CvProfileProp $Obj 'videoProfile' '')" `
@@ -713,9 +721,9 @@ function ConvertTo-CvProfile {
         -Qmin (Get-CvProfileProp $Obj 'qmin' $null) `
         -Qmax (Get-CvProfileProp $Obj 'qmax' $null) `
         -Crf  (Get-CvProfileProp $Obj 'crf'  $null) `
-        -DetectBorder $(if ("$(Get-CvProfileProp $Obj 'detectBorder' $false)".ToLower() -eq 'auto') { 'auto' } else { [bool](Get-CvProfileProp $Obj 'detectBorder' $false) }) `
+        -DetectBorder $(if ("$(Get-CvProfileProp $Obj 'detectBorder' $false)".ToLower() -eq 'auto') { 'auto' } else { [bool](ConvertTo-CvConfigValue -Default $false -Value (Get-CvProfileProp $Obj 'detectBorder' $false)) }) `
         -ChangeSize   "$(Get-CvProfileProp $Obj 'changeSize' '')" `
-        -NoUpscale    ([bool](Get-CvProfileProp $Obj 'noUpscale' $false)) `
+        -NoUpscale    ([bool](ConvertTo-CvConfigValue -Default $false -Value (Get-CvProfileProp $Obj 'noUpscale' $false))) `
         -MaxWidth     (Get-CvProfileProp $Obj 'maxWidth' $null) `
         -Multipass    "$(Get-CvProfileProp $Obj 'multipass' '')" `
         -AudioEncoder "$(Get-CvProfileProp $Obj 'audioEncoder' $eaud.encoder)" `
@@ -788,6 +796,68 @@ function Get-CvProfileLabel {
     return "$(Get-CvProfileProp $Entry 'label' '')".Trim()
 }
 
+function Test-CvProfileFields {
+    <#
+        PURO. Comprueba lo TECLEADO en el editor de perfiles antes de usarlo o guardarlo. Devuelve
+        @{ Ok; Errors }. Antes, 'abc' o '20.5' en el CRF se convertian en 'vacio' sin decir nada (y se
+        usaba el global), y se aceptaban un CRF 99, un qmin mayor que el qmax o un bitrate '192' (que
+        ffmpeg lee como 192 bit/s).
+          - numeros: vacio vale (= el global); si no, un ENTERO.
+          - CRF hasta 63 en AV1 y hasta 51 en el resto; qmin/qmax hasta 255 en AV1 NVENC y 51 en el
+            resto, y qmin <= qmax.
+          - ancho maximo >= 0; Hz entre 8000 y 192000; bitrate con su unidad ('192k', '1.5M').
+    #>
+    param(
+        [string]$Encoder = '',
+        [string]$Crf = '',
+        [string]$Qmin = '',
+        [string]$Qmax = '',
+        [string]$MaxWidth = '',
+        [string]$AudioBitrate = '',
+        [string]$AudioHz = ''
+    )
+    $err = @()
+    $num = @{}
+    foreach ($par in @(
+        @{ Name = 'CRF';      Text = $Crf }
+        @{ Name = 'qmin';     Text = $Qmin }
+        @{ Name = 'qmax';     Text = $Qmax }
+        @{ Name = 'maxWidth'; Text = $MaxWidth }
+        @{ Name = 'audioHz';  Text = $AudioHz }
+    )) {
+        $t = "$($par.Text)".Trim()
+        if ($t -eq '') { continue }
+        if ($t -notmatch '^-?\d+$') { $err += (Get-CvText -Key 'prof.val.entero' -Values @($par.Name, $t)); continue }
+        $num[$par.Name] = [long]$t
+    }
+    $esAv1 = ("$Encoder" -in @(Get-CvAv1Encoders))
+    $topeCrf = if ($esAv1) { 63 } else { 51 }
+    $topeQ   = if ("$Encoder" -eq 'av1_nvenc') { 255 } else { 51 }
+    $rango = {
+        param([string]$N, [long]$Min, [long]$Max)
+        if ($num.ContainsKey($N) -and ($num[$N] -lt $Min -or $num[$N] -gt $Max)) {
+            return (Get-CvText -Key 'prof.val.rango' -Values @($N, $num[$N], $Min, $Max))
+        }
+        return $null
+    }
+    foreach ($e in @(
+        (& $rango 'CRF' 0 $topeCrf)
+        (& $rango 'qmin' 0 $topeQ)
+        (& $rango 'qmax' 0 $topeQ)
+        (& $rango 'maxWidth' 0 100000)
+        (& $rango 'audioHz' 8000 192000)
+    )) { if ($null -ne $e) { $err += $e } }
+    if ($num.ContainsKey('qmin') -and $num.ContainsKey('qmax') -and $num['qmin'] -gt $num['qmax']) {
+        $err += (Get-CvText -Key 'prof.val.qminqmax' -Values @($num['qmin'], $num['qmax']))
+    }
+    $br = "$AudioBitrate".Trim()
+    if ($br -ne '' -and $br -notmatch '^\d+(\.\d+)?[kKmM]$') { $err += (Get-CvText -Key 'prof.val.bitrate' -Values @($br)) }
+    return @{
+        Ok     = (@($err).Count -eq 0)
+        Errors = @($err)
+    }
+}
+
 function Test-CvProfileName {
     <#
         PURO. Comprueba el nombre con el que se quiere guardar un perfil. Devuelve @{ Ok; Error }.
@@ -800,15 +870,20 @@ function Test-CvProfileName {
         [string]$Allow = ''
     )
     $n = "$Name".Trim()
-    if ($n -eq '')            { return @{ Ok = $false; Error = 'El perfil necesita un nombre.' } }
-    if ($n.Length -gt 60)     { return @{ Ok = $false; Error = 'El nombre es demasiado largo (maximo 60 caracteres).' } }
+    if ($n -eq '')            { return @{ Ok = $false; Error = (Get-CvText -Key 'prof.nombre.vacio') } }
+    if ($n.Length -gt 60)     { return @{ Ok = $false; Error = (Get-CvText -Key 'prof.nombre.largo') } }
+    # Los nombres de los de SERIE no: 'Auto' nunca podia ser el predeterminado (gana el Auto de
+    # serie) y uno propio llamado 'Perfil 3' le quitaba el puesto al Perfil 3 de serie.
+    if ($n -match '^(?i)auto$' -or $n -match '^(?i)perfil\s+\d+$') {
+        return @{ Ok = $false; Error = (Get-CvText -Key 'prof.nombre.reservado' -Values @($n)) }
+    }
     foreach ($e in @($Existing)) {
         $lbl = Get-CvProfileLabel $e
         if ($lbl -eq '') { continue }
         if ($lbl -eq "$Allow".Trim()) { continue }
         # Sin distinguir mayusculas: dos perfiles que solo se diferencien en eso no se distinguen
         # en el menu, y el que manda es el primero.
-        if ($lbl -ieq $n) { return @{ Ok = $false; Error = ("Ya hay un perfil que se llama '{0}'." -f $lbl) } }
+        if ($lbl -ieq $n) { return @{ Ok = $false; Error = (Get-CvText -Key 'prof.nombre.dup' -Values @($lbl)) } }
     }
     return @{ Ok = $true; Error = '' }
 }
@@ -1034,6 +1109,12 @@ function Save-CvConfigProfile {
         $entry = ConvertTo-CvProfileConfig -Prof $Prof -Label $Label
         $new   = @(Set-CvProfileInList -List $cur -Entry $entry -Replace $Replace)
         Set-CvChildLeaf -Node $cfg -Key 'profiles' -Value $new
+        # Renombrar el PREDETERMINADO se lo lleva consigo (en la misma escritura): si no, defaultProfile
+        # se quedaba con el nombre viejo y se caia a Auto sin avisar.
+        $nuevoNombre = "$Label".Trim()
+        if ("$Replace".Trim() -ne '' -and "$Replace".Trim() -ne $nuevoNombre -and "$(Get-CvNodeVal $cfg 'defaultProfile')".Trim() -eq "$Replace".Trim()) {
+            Set-CvChildLeaf -Node $cfg -Key 'defaultProfile' -Value $nuevoNombre
+        }
         Save-CvConfigFile -Path $Path -Config $cfg
         return @{ Ok = $true; Error = ''; Label = "$Label".Trim(); Count = $new.Count }
     } catch {
@@ -1048,12 +1129,17 @@ function Remove-CvConfigProfile {
         [Parameter(Mandatory)][string]$Label
     )
     try {
-        if (-not (Test-Path -LiteralPath $Path)) { return @{ Ok = $false; Error = 'No existe el fichero de configuracion.'; Count = 0 } }
+        if (-not (Test-Path -LiteralPath $Path)) { return @{ Ok = $false; Error = (Get-CvText -Key 'prof.nofich'); Count = 0 } }
         $cfg = Read-CvConfigFile -Path $Path
         $cur = @(Get-CvProfileList $cfg)
         $new = @(Remove-CvProfileFromList -List $cur -Label $Label)
-        if ($new.Count -eq $cur.Count) { return @{ Ok = $false; Error = ("No hay ningun perfil que se llame '{0}'." -f $Label); Count = $cur.Count } }
+        if ($new.Count -eq $cur.Count) { return @{ Ok = $false; Error = (Get-CvText -Key 'prof.noexiste' -Values @($Label)); Count = $cur.Count } }
         Set-CvChildLeaf -Node $cfg -Key 'profiles' -Value $new
+        # Si era el predeterminado, el predeterminado pasa a ser Auto DICHO en el fichero (no un nombre
+        # que ya no existe y que solo por casualidad acaba en Auto).
+        if ("$(Get-CvNodeVal $cfg 'defaultProfile')".Trim() -eq "$Label".Trim()) {
+            Set-CvChildLeaf -Node $cfg -Key 'defaultProfile' -Value 'Auto'
+        }
         Save-CvConfigFile -Path $Path -Config $cfg
         return @{ Ok = $true; Error = ''; Count = $new.Count }
     } catch {
@@ -1246,7 +1332,7 @@ function New-CustomProfile {
             $encDefIdx = 1 + [array]::IndexOf($encVals, "$defEnc")
             if ($encDefIdx -le 0) { $encDefIdx = 1 + [array]::IndexOf($encVals, 'hevc_nvenc') }
             if ($encDefIdx -le 0) { $encDefIdx = 1 }
-            $enc = Select-FromList -Title (Get-CvText -Key 'cp.encoder') -Options $encList -NoNone -DefaultIndex $encDefIdx 
+            $enc = Select-FromList -Title (Get-CvText -Key 'cp.encoder') -Options $encList -NoNone -DefaultIndex $encDefIdx `
                 -CancelLabel (Get-CvText -Key 'cp.cancelar') -AllowCancel
 
             # Encoder por GPU no soportado por ESTA GPU (p. ej. av1_nvenc en GPUs anteriores a RTX 40):
@@ -1329,12 +1415,19 @@ function New-CustomProfile {
 
                     # Control de tasa: CRF (CPU: libx264/libx265/libsvtav1) o qmin/qmax (NVENC). Defaults de config.
                     if ($enc -in (Get-CvCpuEncoders)) {
-                        $p.Crf = Read-QOrNull (Get-CvText -Key 'cp.crf.q') $defCrf -Max 51 -AllowCancel
+                        # AV1 (SVT-AV1) llega hasta 63 y su valor de serie es otro (encode.video.auto.crfAv1):
+                        # con el tope de 51 y la semilla de x26x no se podia poner un CRF de AV1 normal.
+                        $esAv1 = ($enc -in (Get-CvAv1Encoders))
+                        $semCrf = $defCrf
+                        if ($esAv1) {
+                            $semCrf = if ($Context -and $null -ne $Context.AutoCrfAv1) { [int]$Context.AutoCrfAv1 } else { [int](Get-CvConfigDefaultsShared).encode.video.auto.crfAv1 }
+                        }
+                        $p.Crf = Read-QOrNull (Get-CvText -Key 'cp.crf.q') $semCrf -Max $(if ($esAv1) { 63 } else { 51 }) -AllowCancel
                     } else {
                         $p.Qmin = Read-QOrNull (Get-CvText -Key 'cp.qmin.q') $defQmin -Max 51 -AllowCancel
                         $p.Qmax = Read-QOrNull (Get-CvText -Key 'cp.qmax.q') $defQmax -Max 51 -AllowCancel
                         # 2-pass NVENC (multipass): catalogo @{Value;Text;Position} ('off'=opcion 0). Default por valor.
-                        $p.Multipass = Select-FromList -Title (Get-CvText -Key 'cp.multipass') 
+                        $p.Multipass = Select-FromList -Title (Get-CvText -Key 'cp.multipass') `
                             -Options (Get-CvNvencMultipass) -DefaultValue "$defMp" -AllowCancel
                     }
                 }

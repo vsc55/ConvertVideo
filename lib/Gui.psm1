@@ -137,11 +137,25 @@ function Save-CvGuiLayout {
             } catch { }
         }
         $all[$Key] = $Layout
-        ([pscustomobject]$all | ConvertTo-Json -Depth 6) | Set-Content -LiteralPath $p -Encoding UTF8
+        # Atomico y en UTF-8 sin BOM (Save-CvJsonFile): la cola y setup son procesos distintos que
+        # escriben este mismo fichero, y uno cortado a medias perdia TODO (ventanas y caches).
+        [void](Save-CvJsonFile -Path $p -Object ([pscustomobject]$all) -Depth 6)
         return $true
     } catch {
         return $false
     }
+}
+
+function Get-CvGuiCacheKeys {
+    <#
+        PURO. Las claves de '<config>.gui.json' que son CACHE DE ARCHIVOS (lo deducido de cada archivo,
+        una entrada por archivo) y no el estado de una ventana. Una sola lista para el recuento y el
+        borrado: antes solo se conocia 'colaBordes', y 'colaVideo' contaba como una ventana mas.
+    #>
+    return @(
+        'colaBordes'
+        'colaVideo'
+    )
 }
 
 function Get-CvGuiCacheStatus {
@@ -173,7 +187,7 @@ function Get-CvGuiCacheStatus {
     try {
         $all = ConvertFrom-Json ((Get-Content -LiteralPath $p -Raw -Encoding UTF8))
         foreach ($pr in @($all.PSObject.Properties)) {
-            if ($pr.Name -eq 'colaBordes') { $r.Files = @($pr.Value).Count; continue }
+            if ((Get-CvGuiCacheKeys) -contains $pr.Name) { $r.Files += @($pr.Value).Count; continue }
             $r.Layouts++
             $r.LayoutKeys += $pr.Name
         }
@@ -207,7 +221,7 @@ function Clear-CvGuiCache {
         $queda = [ordered]@{}
         $fuera = 0
         foreach ($pr in @($all.PSObject.Properties)) {
-            $esCache = ($pr.Name -eq 'colaBordes')
+            $esCache = ((Get-CvGuiCacheKeys) -contains $pr.Name)
             if (($What -eq 'files' -and $esCache) -or ($What -eq 'layout' -and -not $esCache)) {
                 $fuera += $(if ($esCache) { @($pr.Value).Count } else { 1 })
                 continue
@@ -216,7 +230,7 @@ function Clear-CvGuiCache {
         }
         # Si no queda nada dentro, mejor sin fichero que con un '{}' suelto.
         if ($queda.Count -eq 0) { Remove-Item -LiteralPath $p -Force -ErrorAction Stop }
-        else { ([pscustomobject]$queda | ConvertTo-Json -Depth 6) | Set-Content -LiteralPath $p -Encoding UTF8 }
+        else { [void](Save-CvJsonFile -Path $p -Object ([pscustomobject]$queda) -Depth 6) }
         return @{ Ok = $true; Removed = $fuera; Error = '' }
     } catch {
         return @{ Ok = $false; Removed = 0; Error = "$_" }
@@ -612,7 +626,7 @@ function Get-CvGuiTrayFrameIcon {
         'static' (o sin -Frame) = el icono de la aplicacion. Nunca lanza: si algo falla, ese.
     #>
     param($Frame = $null)
-    if ($null -eq $Frame -or "$($Frame.Key)" -eq '' -or "$($Frame.Key)" -eq 'static') { return (Get-CvGuiAppIcon) }
+    if ($null -eq $Frame -or "$($Frame.Key)" -eq '' -or "$($Frame.Key)" -eq 'static') { return (Get-CvGuiAppIconSmall) }
     $k = "$($Frame.Key)"
     if ($null -eq $script:CvGuiTrayIcons) { $script:CvGuiTrayIcons = @{} }
     if ($script:CvGuiTrayIcons.ContainsKey($k)) { return $script:CvGuiTrayIcons[$k] }
@@ -621,12 +635,27 @@ function Get-CvGuiTrayFrameIcon {
         $bytes = Get-CvGuiAppIconBytes -Sizes @(16, 20, 24, 32, 40, 48) -Progress ([int]$Frame.Progress) `
             -Spin ([int]$Frame.Spin) -Dot ([bool]$Frame.Dot) -Pulse ([bool]$Frame.Pulse)
         $ms = New-Object System.IO.MemoryStream (, $bytes)
-        $ico = New-Object System.Drawing.Icon $ms
+        # Con el tamano PEQUENO del sistema: 'Icon(stream)' coge el de 32 px y la bandeja lo encoge a
+        # 16, asi que los fotogramas dibujados a 16/20/24 no se usaban y el icono salia borroso.
+        $ico = New-Object System.Drawing.Icon($ms, [System.Windows.Forms.SystemInformation]::SmallIconSize)
         $ms.Dispose()
     } catch { $ico = $null }
-    if ($null -eq $ico) { return (Get-CvGuiAppIcon) }
+    if ($null -eq $ico) { return (Get-CvGuiAppIconSmall) }
     $script:CvGuiTrayIcons[$k] = $ico
     return $ico
+}
+
+function Get-CvGuiAppIconSmall {
+    <#
+        El icono del programa en el tamano PEQUENO del sistema (el de la bandeja). Uno solo, para toda
+        la sesion. Si no se puede, el normal.
+    #>
+    if ($null -ne $script:CvGuiAppIconSmall) { return $script:CvGuiAppIconSmall }
+    $grande = Get-CvGuiAppIcon
+    if ($null -eq $grande) { return $null }
+    try { $script:CvGuiAppIconSmall = New-Object System.Drawing.Icon($grande, [System.Windows.Forms.SystemInformation]::SmallIconSize) }
+    catch { return $grande }
+    return $script:CvGuiAppIconSmall
 }
 
 function Clear-CvGuiTrayFrameIcons {
@@ -1005,6 +1034,10 @@ function Show-CvGuiChoice {
     )
     $opts = @($Options)
     if ($opts.Count -eq 0) { return '' }
+    # WinForms puede no estar cargado aun: el arranque de la cola avisa de una herramienta que falta
+    # ANTES de abrir su ventana, y solo funcionaba porque el splash ya lo habia cargado. Sin splash,
+    # 'no se encuentra el tipo Form' y la cola (con la consola oculta) moria sin decir nada.
+    if (-not (Initialize-CvGui)) { return '' }
     $pick = [pscustomobject]@{ Value = '' }   # hashtable mutable: asignar dentro del manejador crearia una local
 
     $f = New-Object System.Windows.Forms.Form
@@ -1264,6 +1297,23 @@ function Set-CvGuiRole {
     return $Control
 }
 
+function Set-CvGuiExplorerTheme {
+    <#
+        Pone (o quita) el tema OSCURO del explorador a una lista, un arbol o un cuadro de texto ya con
+        handle: es lo que oscurece sus barras de scroll y cabeceras. Al volver a CLARO se quita (tema
+        por defecto), pero solo en los que se oscurecieron: antes se quedaba puesto y la lista salia con
+        las barras oscuras en una ventana clara.
+    #>
+    param([Parameter(Mandatory)]$Control, [bool]$Dark = $false)
+    if ($Dark) {
+        [void][CvGui.Native]::SetWindowTheme($Control.Handle, 'DarkMode_Explorer', $null)
+        Set-CvGuiMark -Control $Control -Mark 'explorer-dark'
+    } elseif (Test-CvGuiMark -Control $Control -Mark 'explorer-dark') {
+        [void][CvGui.Native]::SetWindowTheme($Control.Handle, $null, $null)
+        Set-CvGuiMark -Control $Control -Mark 'explorer-dark' -On $false
+    }
+}
+
 function Set-CvGuiThemeControl {
     <#
         Aplica la paleta a un control y a todo lo que cuelga de el. Por TIPO, porque cada uno se
@@ -1293,19 +1343,19 @@ function Set-CvGuiThemeControl {
                 # El borde lo dibuja el sistema en claro: en oscuro se quita (el fondo ya lo separa).
                 $Control.BorderStyle = $(if ($oscuro) { 'None' } else { 'Fixed3D' })
                 # Las barras de scroll tambien se oscurecen con el tema del explorador.
-                if ($oscuro -and $Control.IsHandleCreated) { [void][CvGui.Native]::SetWindowTheme($Control.Handle, 'DarkMode_Explorer', $null) }
+                if ($Control.IsHandleCreated) { Set-CvGuiExplorerTheme -Control $Control -Dark $oscuro }
             }
             'RichTextBox'    {
                 $Control.BackColor = $Palette.Panel
                 $Control.ForeColor = $Palette.Fore
                 $Control.BorderStyle = $(if ($oscuro) { 'None' } else { 'Fixed3D' })
-                if ($oscuro -and $Control.IsHandleCreated) { [void][CvGui.Native]::SetWindowTheme($Control.Handle, 'DarkMode_Explorer', $null) }
+                if ($Control.IsHandleCreated) { Set-CvGuiExplorerTheme -Control $Control -Dark $oscuro }
             }
             'ListBox'        {
                 $Control.BackColor = $Palette.Panel
                 $Control.ForeColor = $Palette.Fore
                 $Control.BorderStyle = $(if ($oscuro) { 'None' } else { 'Fixed3D' })
-                if ($oscuro -and $Control.IsHandleCreated) { [void][CvGui.Native]::SetWindowTheme($Control.Handle, 'DarkMode_Explorer', $null) }
+                if ($Control.IsHandleCreated) { Set-CvGuiExplorerTheme -Control $Control -Dark $oscuro }
             }
             'ListView'       {
                 $Control.BackColor = $Palette.Panel
@@ -1327,14 +1377,14 @@ function Set-CvGuiThemeControl {
                 # de la lista es una linea fina; la rejilla era lo que llenaba la ventana de blanco.
                 if ($oscuro) { [void](Set-CvGuiListDarkPaint -List $Control) }
                 else { try { $Control.OwnerDraw = $false } catch { } }
-                if ($oscuro -and $Control.IsHandleCreated) { [void][CvGui.Native]::SetWindowTheme($Control.Handle, 'DarkMode_Explorer', $null) }
+                if ($Control.IsHandleCreated) { Set-CvGuiExplorerTheme -Control $Control -Dark $oscuro }
             }
             'TreeView'       {
                 $Control.BackColor = $Palette.Panel
                 $Control.ForeColor = $Palette.Fore
                 $Control.LineColor = $Palette.Border
                 $Control.BorderStyle = $(if ($oscuro) { 'None' } else { 'Fixed3D' })
-                if ($oscuro -and $Control.IsHandleCreated) { [void][CvGui.Native]::SetWindowTheme($Control.Handle, 'DarkMode_Explorer', $null) }
+                if ($Control.IsHandleCreated) { Set-CvGuiExplorerTheme -Control $Control -Dark $oscuro }
             }
             'ComboBox'       {
                 $Control.FlatStyle = 'Flat'
@@ -2081,7 +2131,7 @@ function Set-CvGuiTheme {
             # con la ventana oscura, que es justo lo que canta).
             [void][CvGui.Native]::SetWindowPos($Form.Handle, [System.IntPtr]::Zero, 0, 0, 0, 0, 0x0027)
         } catch { }
-    }
+    }.GetNewClosure()   # sin esto, llamado luego desde HandleCreated/Shown, $Form y $oscuro llegaban vacios
     # Cuanto ANTES, mejor: en Windows 10 la barra de titulo oscura se aplica limpia si se pide antes
     # de que la ventana se dibuje. Si ya tiene handle se pide ahora (y el SetWindowPos de arriba
     # rehace el marco); si no, en cuanto lo tenga.
@@ -2267,7 +2317,7 @@ function Add-CvGuiTrayIcon {
     $ni = $null
     try {
         $ni = New-Object System.Windows.Forms.NotifyIcon
-        $ico = Get-CvGuiAppIcon
+        $ico = Get-CvGuiAppIconSmall    # el de 16 (o lo que pida el sistema), no el de 32 encogido
         if ($null -ne $ico) { $ni.Icon = $ico }
         [void](Set-CvGuiTrayText -Icon $ni -Text $Text)
 
@@ -2276,6 +2326,11 @@ function Add-CvGuiTrayIcon {
         $miCerrar = $menu.Items.Add((Get-CvText -Key 'comun.cerrar'))
         $ni.ContextMenuStrip = $menu
         [void](Set-CvGuiMenuTheme -Menu $menu -Palette (Get-CvGuiCurrentPalette))
+        # Y cada vez que se abre, con el tema de AHORA: cuelga del icono y no de un control, asi que
+        # el boton 'Tema' de la cola no lo alcanzaba y se quedaba con los colores de antes.
+        $menu.Add_Opening({
+            try { [void](Set-CvGuiMenuTheme -Menu $menu -Palette (Get-CvGuiCurrentPalette)) } catch { }
+        }.GetNewClosure())
 
         # Ultimo = como estaba la ventana ANTES de minimizarla. Sin esto, volver la dejaba siempre
         # en 'Normal': una ventana maximizada volvia pequena, y ademas cerrar desde el icono habria
@@ -2328,7 +2383,8 @@ function Add-CvGuiTrayIcon {
             } catch { }
         }.GetNewClosure())
         $Form.Add_FormClosed({
-            try { $ni.Visible = $false; $ni.Dispose() } catch { }
+            # El menu tambien: NotifyIcon.Dispose no se lleva el suyo.
+            try { $ni.Visible = $false; $ni.Dispose(); $menu.Dispose() } catch { }
         }.GetNewClosure())
     } catch { $ni = $null }
     return $ni
@@ -2475,6 +2531,10 @@ function Update-CvGuiLogView {
     }
     $stamp = Get-CvFileStamp -Path $Path
     if ($stamp -eq "$($State[$Key])") { return $false }
+    # Sin 'seguir' (se esta LEYENDO) y con algo ya en el panel, no se repinta: poner el texto nuevo
+    # devolvia el cursor y el scroll al principio cada vez que el log crecia. La huella no se apunta,
+    # asi que en cuanto se vuelva a marcar 'seguir' se repinta con lo ultimo.
+    if (-not $Follow -and $TextBox.TextLength -gt 0) { return $false }
     $State[$Key] = $stamp
     $texto = Get-CvSetupLogText -Path $Path -MaxKb $MaxKb
     if ($texto -eq $TextBox.Text) { return $false }
@@ -2786,8 +2846,7 @@ function Show-CvTextWindow {
     #>
     param([Parameter(Mandatory)][string]$Title, [Parameter(Mandatory)][string]$Text)
     try {
-        Add-Type -AssemblyName System.Windows.Forms
-        Add-Type -AssemblyName System.Drawing
+        if (-not (Initialize-CvGui)) { return $false }
         $form = New-Object System.Windows.Forms.Form
         $form.Text          = $Title
         $form.StartPosition = 'CenterScreen'
@@ -2803,6 +2862,9 @@ function Show-CvTextWindow {
         # ESC cierra la ventana.
         $form.KeyPreview = $true
         $form.Add_KeyDown({ if ($_.KeyCode -eq 'Escape') { $form.Close() } })
+        # Como las demas ventanas: tema de la sesion, icono del programa y el monitor de la principal
+        # (sin esto, en oscuro salia BLANCA y en el monitor del raton).
+        [void](Set-CvGuiTheme -Form $form)
         [void]$form.ShowDialog()
         $form.Dispose()
         return $true

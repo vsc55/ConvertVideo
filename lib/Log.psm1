@@ -202,8 +202,12 @@ function Get-CvLogFiles {
     param([Parameter(Mandatory)]$Context, [string]$ExceptPath = '')
     $dir = $Context.Logs
     if (-not (Test-Path -LiteralPath $dir)) { return @() }
+    # Comparadas como rutas COMPLETAS normalizadas: con paths.logs relativo ('..\logs') o con '/',
+    # el texto no coincidia y el log de esta sesion salia entre los que se pueden borrar.
+    $fuera = ''
+    if ("$ExceptPath" -ne '') { try { $fuera = [System.IO.Path]::GetFullPath("$ExceptPath") } catch { $fuera = "$ExceptPath" } }
     @(Get-ChildItem -LiteralPath $dir -Filter '*.log' -File -ErrorAction SilentlyContinue |
-        Where-Object { $_.FullName -ne "$ExceptPath" })
+        Where-Object { $fuera -eq '' -or -not [string]::Equals([System.IO.Path]::GetFullPath($_.FullName), $fuera, [System.StringComparison]::OrdinalIgnoreCase) })
 }
 
 function Remove-CvLogFiles {

@@ -2,6 +2,104 @@
 
 ## VERSION 4.7.6 - 16/10/2026
 ### UPDATE
+  - **Revisión línea a línea de todo el código (7ª tanda).** Doce revisiones (los cambios de las seis tandas, y `lib\` y `bin\` enteros por zonas); cada hallazgo se comprobó en el código antes de tocarlo.
+    - **Lo más grave:**
+      - **El perfil personalizado de consola no funcionaba desde la v4.7.2**: dos líneas partidas habían perdido su acento grave, así que el lint no lo veía y fallaba al elegir el encoder. Un unitario busca ahora ese patrón en todo el código.
+      - **El `encode.audio.*` de config.json no llegaba a los perfiles**: los de serie y los propios sin audio salían con los valores de fábrica (192k / 44100), y la semilla del perfil personalizado se copiaba antes de leer el config. Ahora mandan los del config (`Get-CvActiveEncodeAudio`, `Sync-CvCustomProfileSeeds`).
+      - **El escalado se decidía con el tamaño SIN recortar**, aunque ffmpeg recorta primero: en modo `square` aplastaba la imagen y con `maxWidth` podía ampliar un recorte más estrecho. Se decide con el recorte (`Get-CvJobResize`, `Get-CvCroppedSize`) en la consola, al autodescubrir y en el editor, que lo rehace al cambiar el recorte o la pista si no se ha tecleado otro.
+      - **Un lock huérfano podía bloquear un archivo para siempre** si Windows le daba su PID a otro PowerShell (o si quedaba vacío). Ahora un lock está vivo si su dueño lo tiene abierto (`Test-CvLockHeld`). Igual con los workers fantasma de la cola: se mira también cuándo arrancó el proceso.
+      - **La barra de título oscura no se aplicaba al abrir las ventanas**: al bloque que la pone le faltaba `.GetNewClosure()`. Medido con `DwmGetWindowAttribute`: 0 antes, 1 ahora.
+      - **La corrección de OCR del `.srt` estropeaba palabras**: «El», «Al», «All» pasaban a «EI», «AI», «AII».
+      - **Setup sin NVIDIA no fijaba como predeterminada la versión de ffmpeg instalada** con «fijar por defecto».
+    - **Worker:**
+      - `keepOriginalIfBigger`: la última comprobación (ficheros enteros) ya no deshace la comparación exacta pista a pista, que devolvía el vídeo original aunque ocupara más cuando el audio de salida pesaba más.
+      - Si falla la medida del pico, el paso sale como fallo (no «OK sin pico») y, por etapas, cada pista se mide por su cuenta.
+      - La salida a medias (`_fix.mkv.part`) de un intento fallido se borra con los temporales.
+      - Las salidas tempranas (faltan herramientas) quitan su estado y cierran el log; desatendido, faltar aacgain ya no para el worker.
+      - Los workers que abre otro conversor ya no borran un «Parar»; un `TEST_` que está codificando otro worker no se re-prepara.
+      - La caché de la sonda GPU distingue el ffmpeg de cada job, se clava con el driver y no guarda un «no» pasajero (sesiones NVENC ocupadas).
+      - Los adjuntos se eligen una vez por archivo; las velocidades de 1000x o más (`1.23e+03x`) se leen bien.
+      - Cortar un worker mata antes al worker que a sus hijos, para que no lance otro ffmpeg huérfano.
+    - **Audio y subtítulos:**
+      - 3, 4, 5 y 7 canales tienen su diseño (antes caían en estéreo); el WAV de sincronía usa RF64 si pasa de 4 GB.
+      - Un retardo negativo se rechaza en consola y en el editor (no se aplicaba); `NaN`/infinito no son números.
+      - Forzados frente a completos se comparan dentro del mismo códec (un PGS cuenta el doble).
+      - Las etiquetas de mkvmerge con idioma (`BPS-eng`, `NUMBER_OF_FRAMES-eng`) se leen: sin ellas, contar las líneas leía el archivo entero por pista.
+      - Arreglador de `.srt`: una línea en blanco con espacios separa cues, una cue con una línea en blanco dentro no pierde texto, las cues sin número se mueven, UTF-16 se lee, un fichero sin cues no se cae, la vista previa no choca entre dos ventanas, `peli.es.srt` ya no sugiere `peli.es.es.srt` y una ruta con comilla no rompe el filtro.
+    - **Vídeo:**
+      - Un MJPEG/PNG de verdad (cámaras antiguas) ya no se descarta como carátula.
+      - En consola, el recorte propuesto es la unión de lo que vio cada punto, no el más votado.
+      - El SSIM/VMAF no se mide en un HDR pasado a SDR; el tonemap sale en el mismo formato de píxel que pide el encoder (x264 de 10 bits ya no pasa por 8).
+      - Una sola muestra de bordes respeta el mínimo de 5 s; la calidad de salida con un `W:H` fijo recalcula el SAR.
+    - **Jobs y cola:**
+      - La edición masiva no toca un archivo que un worker coge mientras está abierta ni uno ya hecho, conserva las versiones de herramientas congeladas y rehace el escalado al cambiar de perfil.
+      - «Sin audio» vuelve a salir en la cola.
+      - La pista predeterminada del borrador es la misma que propone la consola.
+      - El resumen del archivo usa los Hz de serie si el perfil no los trae.
+      - El log de un archivo se busca con más margen antes de saltar a uno más viejo.
+      - Un «Preparar pendientes» cancelado se libera en cuanto acaba.
+      - Las cachés de la cola no guardan en disco los «no se pudo».
+      - Un refresco pide una lista de procesos, no dos, y ninguna con la cola parada.
+    - **Ventana de la cola:**
+      - Cortar solo corta si el worker sigue con el archivo marcado.
+      - Quitar el job no toca uno que se acaba de coger.
+      - El refresco al volver de un diálogo ya no se repite.
+      - El resumen se rehace si se cambió de fila durante su lectura.
+      - Ctrl+A con Iniciar es «toda la cola».
+      - El desplegable de logs no relee el log al rehacerse.
+      - La ayuda de Iniciar conserva su F9.
+      - Las etiquetas de ayuda salen atenuadas.
+      - La columna de progreso se reajusta al cambiar otra a mano.
+      - Rehacer la lista no para el seguimiento del worker.
+    - **Editor de jobs:**
+      - Las vistas previas usan la posición de vídeo real (con carátulas delante se veía la portada).
+      - «Detectar sincronía» mide contra la pista elegida.
+      - El recorte ambiguo de «Preparar» llega propuesto.
+      - Se valida el escalado.
+      - Cambiar de perfil apaga la ventana mientras escanea.
+      - Cerrar a mitad corta el análisis de verdad.
+      - Los motivos de revisión no se borran de la cabecera.
+      - Un fallo al guardar se cuenta en la ventana.
+    - **Config, setup y otras ventanas:**
+      - Un `config.json` con valores rotos ya no impide arrancar (los números como texto valen, `"false"` es falso, una sección cambiada por un valor se ignora).
+      - Cada escritura atómica usa su propio temporal (con el PID); la de posiciones de ventanas también es atómica.
+      - El editor de config:
+        - distingue mayúsculas al comparar;
+        - acepta la coma decimal (también el de consola);
+        - no marca cambios falsos en las listas;
+        - enseña los valores de fuera del catálogo;
+        - avisa una vez de un número no válido;
+        - no se cae si no puede guardar;
+        - pregunta al cerrar con algo sin confirmar.
+      - Perfiles propios:
+        - no pueden llamarse como los de serie;
+        - renombrar o borrar el predeterminado lo actualiza;
+        - el editor valida CRF, qmin/qmax, ancho, Hz y bitrate;
+        - el CRF de AV1 en consola llega a 63;
+        - el encoder automático respeta el tope de códec también en su último recurso.
+      - «Restablecer config» solo deja las herramientas, para no congelar los valores de serie, y no toca nada si no puede hacer la copia.
+      - «Usar versión» funciona sin `config.json`; la ventana de herramientas enseña la versión nueva.
+      - Si una instalación falla, la consola se queda abierta y no quedan ficheros a medias.
+      - Rutas literales con `[ ]` al comprobar e instalar herramientas.
+      - El mantenimiento no borra `stop.flag` con workers vivos ni cuenta como borrables los logs en uso.
+      - Setup aplica el idioma nuevo tras editar el config.
+      - El selector de config sale con el tema del config.
+      - Sin splash, el aviso de una herramienta que falta ya no tumba la cola.
+      - La ventana de limpieza cuenta lo que de verdad borraría.
+      - El log de un worker no salta arriba con «seguir» desmarcado.
+      - Al volver a claro se quita el tema oscuro de las listas; el menú de la bandeja sigue al tema.
+      - Los iconos de la bandeja usan el tamaño pequeño.
+      - La ventana de texto (ver el job) sale con el tema.
+      - Se sueltan fuentes, iconos y diálogos que se quedaban.
+      - Más textos pasan a `lang\`: perfiles y GPU de setup, cachés, motivos del autodescubrimiento, errores de la edición masiva y de los perfiles.
+    - **Lo que NO se hace**, por si se retoma:
+      - Contar los cues de todas las pistas en una sola pasada.
+      - Sacar el retardo inicial del audio de ffprobe en vez de ffmpeg (hay que compararlo antes con archivos reales).
+      - El repintado oscuro de las listas por celda (sin medir).
+      - Que un perfil guardado no fije el audio (necesita un «(global)» en el editor).
+      - Rechazar binarios sin SHA256 en modo desatendido.
+
+    Probado: unitarios 1581/1581, setup 455/455, cola 622/622, E2E 16/16 por etapas y 16/16 en una pasada (hevc_nvenc). Lo de la barra oscura se comprobó en Windows: 0 sin el arreglo, 1 con él.
   - **Revisión de bugs (6ª tanda): lo último que quedaba.**
     - **Volumen `peak` por etapas con varias pistas**: el worker mide todas en UNA lectura (`Measure-CvPeakGains`) y le pasa a cada una su ganancia (`Invoke-AudioRun -PeakGain`); la que sale del WAV de sincronía se sigue midiendo ella.
     - **El plan de codificación se calcula una vez por archivo**: el worker se lo pasa a la sola pasada (`-Spec`), que lo recalculaba dos veces más (y repetía sus líneas del log).

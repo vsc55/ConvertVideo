@@ -53,15 +53,28 @@ function Show-CvCleanWindow {
     $btnClose.Size     = New-Object System.Drawing.Size(150, 30)
     $form.Controls.Add($btnClose)
 
-    # Mismas cuatro opciones que el menu de consola, con el recuento de cada una.
-    $p = Get-CvSetupProcesoStatus -Context $Context
+    # Mismas cuatro opciones que el menu de consola, con el recuento de cada una: lo que se BORRARIA
+    # (Get-CvSetupCleanTargets, sin lo de un worker vivo), no lo que hay, para que el numero case con
+    # la lista. Se rehacen tras borrar: antes seguian diciendo lo de cuando se abrio la ventana.
     $whats = @(
-        @{ Value = 'jobs';  Text = (Get-CvText -Key 'limpiar.op.jobs'  -Values @($p.Jobs)) }
-        @{ Value = 'locks'; Text = (Get-CvText -Key 'limpiar.op.locks' -Values @($p.Locks)) }
-        @{ Value = 'temps'; Text = (Get-CvText -Key 'limpiar.op.temps' -Values @($p.Temps)) }
-        @{ Value = 'all';   Text = (Get-CvText -Key 'limpiar.op.all') }
+        @{ Value = 'jobs';  Key = 'limpiar.op.jobs' }
+        @{ Value = 'locks'; Key = 'limpiar.op.locks' }
+        @{ Value = 'temps'; Key = 'limpiar.op.temps' }
+        @{ Value = 'all';   Key = 'limpiar.op.all' }
     )
-    foreach ($w in $whats) { [void]$combo.Items.Add($w.Text) }
+    $rotular = {
+        $sel = $combo.SelectedIndex
+        $combo.BeginUpdate()
+        try {
+            $combo.Items.Clear()
+            foreach ($w in $whats) {
+                $n = @(Get-CvSetupCleanTargets -Context $Context -What $w.Value).Count
+                [void]$combo.Items.Add((Get-CvText -Key $w.Key -Values @($n)))
+            }
+        } finally { $combo.EndUpdate() }
+        if ($sel -ge 0) { $combo.SelectedIndex = $sel }
+    }
+    & $rotular
 
     $refresh = {
         $i = $combo.SelectedIndex
@@ -80,6 +93,7 @@ function Show-CvCleanWindow {
         if (-not (Show-CvGuiConfirm -Title (Get-CvText -Key 'limpiar.confirm.tit') -Message (Get-CvText -Key 'limpiar.confirm.msg' -Values @($f.Count)))) { return }
         $n = Remove-CvSetupFiles -Files $f
         Show-CvGuiInfo -Title (Get-CvText -Key 'limpiar.hecho.tit') -Message (Get-CvText -Key 'limpiar.hecho.msg' -Values @($n))
+        & $rotular
         & $refresh
     })
     $btnClose.Add_Click({ $form.Close() })

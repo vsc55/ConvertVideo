@@ -7,8 +7,13 @@ function Get-Tag {
     <# Lee un tag de un stream de forma segura (ffprobe puede no traer .tags). #>
     param($Stream, [string]$Name)
     if ($null -eq $Stream) { return $null }
-    if ($Stream.PSObject.Properties['tags'] -and $Stream.tags -and $Stream.tags.PSObject.Properties[$Name]) {
-        return $Stream.tags.$Name
+    if (-not ($Stream.PSObject.Properties['tags'] -and $Stream.tags)) { return $null }
+    if ($Stream.tags.PSObject.Properties[$Name]) { return $Stream.tags.$Name }
+    # Las estadisticas de mkvmerge con idioma salen como 'BPS-eng', 'NUMBER_OF_FRAMES-eng'...: sin
+    # esto no se veian, y contar los cues leia el archivo ENTERO por cada pista.
+    $pre = $Name + '-'
+    foreach ($p in $Stream.tags.PSObject.Properties) {
+        if ("$($p.Name)".StartsWith($pre, [System.StringComparison]::OrdinalIgnoreCase)) { return $p.Value }
     }
     return $null
 }
@@ -62,9 +67,24 @@ function Get-VideoStreams {
     )
     @($Info.streams | Where-Object {
         $_.codec_type -eq 'video' -and
-        $_.codec_name -notin $imageCodecs -and
-        -not ($_.disposition -and $_.disposition.attached_pic -eq 1)
+        -not ($_.disposition -and $_.disposition.attached_pic -eq 1) -and
+        ($_.codec_name -notin $imageCodecs -or (Test-CvImageCodecIsVideo -Stream $_))
     })
+}
+
+function Test-CvImageCodecIsVideo {
+    <#
+        PURO. Una pista de codec de imagen (MJPEG, PNG...) que es VIDEO de verdad, no una caratula:
+        las camaras antiguas graban AVI/MOV en MJPEG, y descartarla por el codec dejaba el archivo sin
+        video. Cuenta como video si tiene mas de un fotograma o dura mas de un segundo; una caratula
+        es un fotograma suelto (y casi siempre trae attached_pic, que se mira antes).
+    #>
+    param($Stream)
+    $n = 0L
+    $d = 0.0
+    [void][long]::TryParse("$($Stream.nb_frames)", [ref]$n)
+    [void][double]::TryParse("$($Stream.duration)", [System.Globalization.NumberStyles]::Float, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$d)
+    return ($n -gt 1 -or $d -gt 1)
 }
 
 function Get-VideoStream {
@@ -290,6 +310,24 @@ function Get-CvMaxWidthResize {
     if ($tw -lt 2) { $tw = 2 }
     if ($tw -gt $Width) { $tw = $Width }              # no ampliar el almacenamiento por encima del origen
     "{0}:-2" -f $tw
+}
+
+function Get-CvCroppedSize {
+    <#
+        PURO. Tamaño (almacenado) que queda tras el recorte 'W:H:X:Y'; sin recorte valido, el de origen.
+        Es sobre el que trabaja el escalado: el filtro va 'crop' y DESPUES 'scale'.
+    #>
+    param([int]$Width, [int]$Height, [string]$Crop = '')
+    if ("$Crop".Trim() -match '^(\d+):(\d+):\d+:\d+$' -and [int]$Matches[1] -gt 0 -and [int]$Matches[2] -gt 0) {
+        return @{
+            Width  = [int]$Matches[1]
+            Height = [int]$Matches[2]
+        }
+    }
+    return @{
+        Width  = $Width
+        Height = $Height
+    }
 }
 
 function Get-CvResize {

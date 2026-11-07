@@ -19,8 +19,12 @@ function Merge-CvConfig {
             $ov = $Override.$key
             if ($dv -is [System.Collections.IDictionary] -and $ov -is [System.Management.Automation.PSCustomObject]) {
                 Merge-CvConfig -Default $dv -Override $ov
+            } elseif ($dv -is [System.Collections.IDictionary]) {
+                # Una SECCION sustituida por un valor suelto ('"auto": ""') no vale: se queda la de
+                # serie. Antes los campos de dentro salian $null -> 0 (CRF 0 = sin perdidas, enorme).
+                continue
             } else {
-                $Default[$key] = $ov
+                $Default[$key] = ConvertTo-CvConfigValue -Default $dv -Value $ov
             }
         }
     }
@@ -30,6 +34,35 @@ function Merge-CvConfig {
             $Default[$prop.Name] = $prop.Value
         }
     }
+}
+
+function ConvertTo-CvConfigValue {
+    <#
+        PURO. Un valor del config.json del usuario, con el TIPO del de serie cuando se puede: un numero
+        escrito como texto ("8", "0,8") pasa a numero, y "true"/"false" a booleano. Lo que no encaja
+        con un default NUMERICO se ignora y se queda el de serie: un "abc" hacia que [int] lanzara en
+        New-CvContext y no arrancaba nada, ni siquiera el setup con el que se arregla. Un texto sobre
+        un booleano que no es true/false se respeta (customProfile.detectBorder admite 'auto').
+    #>
+    param($Default, $Value)
+    if ($null -eq $Value -or $Value -isnot [string]) { return $Value }
+    $t = "$Value".Trim()
+    if ($Default -is [bool]) {
+        if ($t -match '^(?i)true$')  { return $true }
+        if ($t -match '^(?i)false$') { return $false }
+        return $Value
+    }
+    if ($Default -is [int] -or $Default -is [long] -or $Default -is [double] -or $Default -is [decimal]) {
+        $inv = [System.Globalization.CultureInfo]::InvariantCulture
+        if ($t -match '^[-+]?\d+,\d+$') { $t = $t.Replace(',', '.') }
+        $n = 0.0
+        if ([double]::TryParse($t, [System.Globalization.NumberStyles]::Float, $inv, [ref]$n) -and -not [double]::IsNaN($n) -and -not [double]::IsInfinity($n)) {
+            if (($Default -is [int] -or $Default -is [long]) -and $n -eq [math]::Floor($n)) { return [long]$n }
+            return $n
+        }
+        return $Default
+    }
+    return $Value
 }
 
 function Get-CvVolumeMethods {
@@ -987,27 +1020,61 @@ function Get-CvConfigDefaults {
     # repetir el literal: cambiar el default global cambia tambien la semilla del builder custom.
     # videoEncoder/videoProfile/videoLevel salen de encode.video; el nivel usa '5.0' (mismo formato que
     # encode.video.auto.level; ffmpeg trata '5'=='5.0'). El control de tasa (qmin/qmax/crf) se toma del
-    # perfil Auto (encode.video.auto). downmixCoeffs se COPIA (nuevo [ordered]) para no compartir
-    # referencia con encode.audio.
-    $cfg.customProfile.videoEncoder  = $cfg.encode.video.videoEncoder
-    $cfg.customProfile.videoProfile  = $cfg.encode.video.videoProfile
-    $cfg.customProfile.videoLevel    = $cfg.encode.video.videoLevel
-    $cfg.customProfile.qmin          = $cfg.encode.video.auto.qmin
-    $cfg.customProfile.qmax          = $cfg.encode.video.auto.qmax
-    $cfg.customProfile.crf           = $cfg.encode.video.auto.crf
-    $cfg.customProfile.multipass     = $cfg.encode.video.multipass
-    $cfg.customProfile.audioEncoder  = $cfg.encode.audio.encoder
-    $cfg.customProfile.audioCodec    = $cfg.encode.audio.codec
-    $cfg.customProfile.audioBitrate  = $cfg.encode.audio.bitrate
-    $cfg.customProfile.audioHz       = $cfg.encode.audio.hz
-    $cfg.customProfile.audioChannels = $cfg.encode.audio.channels
-    $cfg.customProfile.downmixMode   = $cfg.encode.audio.downmixMode
-    $cfg.customProfile.downmixCoeffs = [ordered]@{
-        center   = $cfg.encode.audio.downmixCoeffs.center
-        front    = $cfg.encode.audio.downmixCoeffs.front
-        surround = $cfg.encode.audio.downmixCoeffs.surround
-    }
+    # perfil Auto (encode.video.auto). Get-CvConfig lo REPITE tras fusionar el config del usuario.
+    Sync-CvCustomProfileSeeds -Cfg $cfg
     return $cfg
+}
+
+function Sync-CvCustomProfileSeeds {
+    <#
+        Copia a customProfile los campos que tienen equivalente global (encode.*). Se llama con los
+        defaults (Get-CvConfigDefaults) y OTRA VEZ tras fusionar el config.json del usuario
+        (Get-CvConfig), con -Except = lo que el usuario fijo a mano en customProfile: antes solo se
+        hacia con los de fabrica, y un encode.audio.bitrate cambiado no llegaba a la semilla.
+    #>
+    param([Parameter(Mandatory)]$Cfg, [string[]]$Except = @())
+    $v = $Cfg.encode.video
+    $a = $Cfg.encode.audio
+    $semillas = [ordered]@{
+        videoEncoder  = $v.videoEncoder
+        videoProfile  = $v.videoProfile
+        videoLevel    = $v.videoLevel
+        qmin          = $v.auto.qmin
+        qmax          = $v.auto.qmax
+        crf           = $v.auto.crf
+        multipass     = $v.multipass
+        audioEncoder  = $a.encoder
+        audioCodec    = $a.codec
+        audioBitrate  = $a.bitrate
+        audioHz       = $a.hz
+        audioChannels = $a.channels
+        downmixMode   = $a.downmixMode
+        # Se COPIA (nuevo [ordered]) para no compartir referencia con encode.audio.
+        downmixCoeffs = [ordered]@{
+            center   = $a.downmixCoeffs.center
+            front    = $a.downmixCoeffs.front
+            surround = $a.downmixCoeffs.surround
+        }
+    }
+    foreach ($k in @($semillas.Keys)) {
+        if ($Except -contains $k) { continue }
+        $Cfg.customProfile[$k] = $semillas[$k]
+    }
+}
+
+# Salida de audio GLOBAL en vigor (encode.audio del config ya fusionado). La fija New-CvContext; la
+# leen los perfiles (New-CvProfile / ConvertTo-CvProfile) para lo que un perfil no fija. Antes salia
+# de los defaults de FABRICA y un encode.audio.bitrate cambiado en config.json no llegaba nunca.
+$script:CvActiveEncodeAudio = $null
+
+function Set-CvActiveEncodeAudio {
+    param($Audio)
+    $script:CvActiveEncodeAudio = $Audio
+}
+
+function Get-CvActiveEncodeAudio {
+    if ($null -ne $script:CvActiveEncodeAudio) { return $script:CvActiveEncodeAudio }
+    return (Get-CvConfigDefaultsShared).encode.audio
 }
 
 function ConvertTo-CvSubtitleExtMap {
@@ -1454,6 +1521,13 @@ function Get-CvConfig {
         try {
             $json = Read-CvJsonFile -Path $path
             Merge-CvConfig -Default $cfg -Override $json
+            # La semilla del perfil personalizado sigue al encode.* YA fusionado, salvo lo que el
+            # usuario fijo a mano en su customProfile.
+            $propios = @()
+            if ($null -ne $json -and $json.PSObject.Properties['customProfile'] -and $null -ne $json.customProfile) {
+                $propios = @($json.customProfile.PSObject.Properties | ForEach-Object { $_.Name })
+            }
+            Sync-CvCustomProfileSeeds -Cfg $cfg -Except $propios
         } catch {
             Write-Host (Get-CvText -Key 'cf.malo' -Values @($_.Exception.Message)) -ForegroundColor Yellow
         }
@@ -1622,7 +1696,7 @@ function Test-CvCfgIsDefault {
         if ($Value -is [string]) { return [string]::Equals($Value, $Default, [System.StringComparison]::Ordinal) }
         if ($Value -is [bool] -or $Value -is [int] -or $Value -is [long]) { return ($Value -eq $Default) }
     }
-    return ((ConvertTo-CvJson $Value 0) -eq (ConvertTo-CvJson $Default 0))
+    return ((ConvertTo-CvJson $Value 0) -ceq (ConvertTo-CvJson $Default 0))
 }
 
 function Update-CvConfigEdits {
@@ -1640,7 +1714,7 @@ function Update-CvConfigEdits {
         $ev = Get-CvNodeVal $Edited $key
         $bv = if ($bkeys -contains $key) { Get-CvNodeVal $Before $key } else { $null }
         # sin cambios respecto al inicio de la edicion -> no tocar
-        if (($bkeys -contains $key) -and ((ConvertTo-CvJson $ev 0) -eq (ConvertTo-CvJson $bv 0))) { continue }
+        if (($bkeys -contains $key) -and ((ConvertTo-CvJson $ev 0) -ceq (ConvertTo-CvJson $bv 0))) { continue }
 
         $dv = if ($dkeys -contains $key) { Get-CvNodeVal $Default $key } else { $null }
 
@@ -1650,7 +1724,7 @@ function Update-CvConfigEdits {
             Update-CvConfigEdits -Edited $ev -Before $bv -Default $dv -Target $tchild
             if (@(Get-CvNodeKeys $tchild).Count -eq 0) { Remove-CvChild -Node $Target -Key $key }
         }
-        elseif (($dkeys -contains $key) -and ((ConvertTo-CvJson $ev 0) -eq (ConvertTo-CvJson $dv 0))) {
+        elseif (($dkeys -contains $key) -and ((ConvertTo-CvJson $ev 0) -ceq (ConvertTo-CvJson $dv 0))) {
             Remove-CvChild -Node $Target -Key $key      # volvio al default -> quitar del json
         }
         else {
@@ -1738,18 +1812,23 @@ function Reset-CvConfig {
     <#
         Restablece config.json a los valores por defecto, CONSERVANDO el catalogo de
         herramientas (seccion 'downloads' del config actual). Hace copia en <Path>.bak.
-        Devuelve $true.
+
+        Se escribe solo lo que se conserva (downloads), no todos los valores de serie: escritos, se
+        quedaban CONGELADOS y un cambio de serie de una version nueva ya no le llegaba a quien hubiera
+        restablecido (lo mismo que se arreglo en Set-CvConfigValue). Sin copia no se toca nada:
+        devuelve $false si no se pudo hacer la copia, $true si se restablecio.
     #>
     param([Parameter(Mandatory)][string]$Path)
+    $cur = $null
     if (Test-Path -LiteralPath $Path) {
-        try { Copy-Item -LiteralPath $Path -Destination "$Path.bak" -Force } catch {}
+        try { Copy-Item -LiteralPath $Path -Destination "$Path.bak" -Force -ErrorAction Stop } catch { return $false }
         try {
             $cur = Read-CvConfigFile -Path $Path
         } catch { $cur = $null }
     }
-    $def = Get-CvConfigDefaults
-    if ($cur -and $cur.downloads) { $def['downloads'] = $cur.downloads }   # preservar herramientas
-    Save-CvConfigFile -Path $Path -Config $def
+    $nuevo = [ordered]@{}
+    if ($cur -and $cur.PSObject.Properties['downloads'] -and $cur.downloads) { $nuevo['downloads'] = $cur.downloads }   # preservar herramientas
+    Save-CvConfigFile -Path $Path -Config $nuevo
     return $true
 }
 

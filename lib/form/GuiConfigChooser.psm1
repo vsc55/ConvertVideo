@@ -72,8 +72,10 @@ function Show-CvSetupConfigChooser {
             $dlg.Title            = (Get-CvText -Key 'elegircfg.dlg.tit')
             $dlg.InitialDirectory = $Root
             $dlg.Filter           = (Get-CvText -Key 'elegircfg.dlg.filtro')
-            if ($dlg.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { return }
-            $st.Path = $dlg.FileName
+            try {
+                if ($dlg.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { return }
+                $st.Path = $dlg.FileName
+            } finally { $dlg.Dispose() }
         } else {
             $st.Path = $items[$i].Path
         }

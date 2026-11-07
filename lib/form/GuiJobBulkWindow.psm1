@@ -216,6 +216,9 @@ function Show-CvJobBulkWindow {
         $c.Chk.Add_CheckedChanged({ & $revisar }.GetNewClosure())
         if ($c.Kind -eq 'bool') { $c.Val.Add_SelectedIndexChanged({ & $revisar }.GetNewClosure()) }
         elseif ($c.Kind -ne 'profile') { $c.Val.Add_TextChanged({ & $revisar }.GetNewClosure()) }
+        # El perfil tambien: elegir OTRO con la casilla ya marcada no cambia la casilla, y el resumen
+        # seguia nombrando el primero (aplicar si usaba el bueno). Su texto lo pone el boton 'Elegir'.
+        else { $c.Val.Add_TextChanged({ & $revisar }.GetNewClosure()) }
     }
 
     $btnApply.Add_Click({

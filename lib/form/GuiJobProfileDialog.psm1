@@ -27,7 +27,6 @@ function Show-CvJobProfileDialog {
     # Los perfiles propios se releen del FICHERO (no del contexto): asi uno recien guardado aparece
     # sin reiniciar la aplicacion.
     $cfgPath = "$($Context.ConfigPath)"
-    $opts = @(Get-CvJobProfileOptions -Context $Context -Profiles $(if ($cfgPath) { @(Get-CvConfigProfiles -Path $cfgPath) } else { $null }))
 
     $form = New-Object System.Windows.Forms.Form
     $form.Text            = (Get-CvText -Key 'perfil.tit')
@@ -163,13 +162,17 @@ function Show-CvJobProfileDialog {
     $form.Controls.Add($btnDel)
 
     # Borrar solo se enciende sobre un perfil propio.
-    $lst.Add_SelectedIndexChanged({
+    $syncDel = {
         $opts = @($script:cvProfOpts)
         $i = $lst.SelectedIndex
         # Solo los propios CON nombre: uno escrito a mano en el config sin 'label' no se puede
         # identificar para borrarlo.
         $btnDel.Enabled = ($cfgPath -ne '') -and ($i -ge 0) -and ($i -lt $opts.Count) -and ("$($opts[$i].Label)" -ne '')
-    })
+    }
+    $lst.Add_SelectedIndexChanged($syncDel)
+    # Tambien AHORA: la primera seleccion se hizo antes de enganchar el evento, y si el perfil marcado
+    # de entrada era uno propio, 'Borrar' salia apagado hasta mover la seleccion.
+    & $syncDel
 
     $lst.Add_DoubleClick({ $btnOk.PerformClick() })
     $form.AcceptButton = $btnOk

@@ -94,8 +94,8 @@ function Reset-Config {
     Write-CvLog 'SETUP' (Get-CvText -Key 'cli.reset.2')
     $a = (Read-Host (Get-CvText -Key 'cli.continuar')).Trim()
     if ($a -notmatch '^[SsYy]') { Write-CvLog 'SETUP' (Get-CvText -Key 'cli.cancelado'); Wait-Setup; return }
-    [void](Reset-CvConfig -Path $CfgPath)
-    Write-CvLog 'SETUP' (Get-CvText -Key 'cli.reset.ok' -Values @($CfgName))
+    if (Reset-CvConfig -Path $CfgPath) { Write-CvLog 'SETUP' (Get-CvText -Key 'cli.reset.ok' -Values @($CfgName)) }
+    else { Write-CvLog 'SETUP' (Get-CvText -Key 'setup.reset.nobak' -Values @($CfgName)) }
     Wait-Setup
 }
 
@@ -181,7 +181,7 @@ function Show-Status {
             Write-CvLog 'SETUP' (Get-CvText -Key 'cli.tool.no' -Values @((Get-CvMark $false), $t.Name, $t.Platform, $t.Selected))
             continue
         }
-        $instTxt = if (@($t.Installed).Count) { (@($t.Installed) -join ', ') } else { 'ninguna' }
+        $instTxt = if (@($t.Installed).Count) { (@($t.Installed) -join ', ') } else { (Get-CvText -Key 'comun.ninguna') }
         # Marca: la version 'selected' (la que usa el conversor) esta instalada?
         Write-CvLog 'SETUP' (Get-CvText -Key 'cli.tool.ok' -Values @((Get-CvMark $t.SelectedOk), $t.Name, $t.Platform, $instTxt, $t.Selected))
     }
@@ -218,11 +218,13 @@ function Invoke-InstallApp {
     # predeterminada. Si ninguna es compatible, se avisa (perfil CPU o actualizar driver).
     # ...pero solo con una NVIDIA en el equipo: sin ella NVENC falla con TODAS, y se descargaban
     # todas las versiones del catalogo para nada (Test-CvNvencFallbackUseful).
-    if ($Name -eq 'ffmpeg' -and -not $nvOk -and -not (Test-CvNvencFallbackUseful -GpuName (Get-CvGpuName))) {
+    # Sin NVIDIA se avisa y se SIGUE: abajo se fija como predeterminada si se pidio (antes se salia
+    # aqui y '-SetDefault' no hacia nada en un equipo sin NVIDIA).
+    $sinNvidia = ($Name -eq 'ffmpeg' -and -not $nvOk -and -not (Test-CvNvencFallbackUseful -GpuName (Get-CvGpuName)))
+    if ($sinNvidia) {
         Write-CvLog 'SETUP' (Get-CvText -Key 'cli.inst.sinnvidia' -Values @($Name, $Version))
-        return $true
     }
-    if ($Name -eq 'ffmpeg' -and -not $nvOk) {
+    if ($Name -eq 'ffmpeg' -and -not $nvOk -and -not $sinNvidia) {
         $catalog = @(Get-CvSetupAppVersions -Context $ctx -Name $Name)
         $cands = @(Get-CvNvencFallbackCandidates -Failed $Version -Available $catalog)
         $chosen = ''
@@ -234,15 +236,15 @@ function Invoke-InstallApp {
         if ($chosen) {
             if (Set-AppSelected -Name $Name -Version $chosen) { Write-CvLog 'SETUP' (Get-CvText -Key 'cli.inst.sel' -Values @($CfgName, $Name, $chosen)) }
             else { Write-CvLog 'SETUP' (Get-CvText -Key 'cli.inst.noupd' -Values @($CfgName)) }
-        } else {
-            Write-CvLog 'SETUP' (Get-CvText -Key 'cli.inst.nogpu' -Values @($Name))
+            return $true
         }
-        return $true
+        # Ninguna va con NVENC: da igual cual quede, asi que se sigue y se fija la pedida.
+        Write-CvLog 'SETUP' (Get-CvText -Key 'cli.inst.nogpu' -Values @($Name))
     }
 
-    # Fijar como version por defecto (solo si es compatible; para ffmpeg incompatible ya se gestiono
-    # arriba con el fallback). -Ask PREGUNTA (menu de consola); -SetDefault lo hace SIN preguntar (lo
-    # usa el modo -Task, donde la ventana ya pregunto por su cuenta).
+    # Fijar como version por defecto. Para ffmpeg sin NVENC, la compatible ya se fijo arriba si la
+    # habia; si no la hay (o no hay NVIDIA), se fija esta si se pidio. -Ask PREGUNTA (menu de
+    # consola); -SetDefault lo hace SIN preguntar (lo usa el modo -Task, donde la ventana ya pregunto).
     if (($Ask -or $SetDefault) -and "$((Get-App $Name).selected)" -ne $Version) {
         $yes = $true
         if ($Ask -and -not $SetDefault) {
@@ -370,14 +372,14 @@ function Show-ProfilesMenu {
                 Wait-Setup
             }
             (Get-CvText -Key 'cli.prof.editar') {
-                Write-CvLog 'SETUP' ("Editando '{0}'. Se parte de sus valores; al terminar se guarda con el mismo nombre." -f $target.Label)
+                Write-CvLog 'SETUP' (Get-CvText -Key 'cli.prof.editando' -Values @($target.Label))
                 $p = New-CustomProfile -Context $ctx -Seed $target.Prof -NoSaveOffer
                 if ($null -ne $p) { [void](Save-CvProfileInteractive -Prof $p -Path $CfgPath -Current $target.Label) }
                 else { Write-CvLog 'SETUP' (Get-CvText -Key 'cli.cancelado') }
                 Wait-Setup
             }
             (Get-CvText -Key 'cli.prof.dup') {
-                Write-CvLog 'SETUP' ("Duplicando '{0}'. Cambia lo que quieras y dale OTRO nombre." -f $target.Label)
+                Write-CvLog 'SETUP' (Get-CvText -Key 'cli.prof.duplicando' -Values @($target.Label))
                 $p = New-CustomProfile -Context $ctx -Seed $target.Prof -NoSaveOffer
                 if ($null -ne $p) { [void](Save-CvProfileInteractive -Prof $p -Path $CfgPath) }
                 else { Write-CvLog 'SETUP' (Get-CvText -Key 'cli.cancelado') }
@@ -385,14 +387,14 @@ function Show-ProfilesMenu {
             }
             (Get-CvText -Key 'cli.prof.elegirdef') {
                 $r = Save-CvConfigDefaultProfile -Path $CfgPath -Label "$($target.Label)"
-                if ($r.Ok) { Write-CvLog 'SETUP' ("[OK] - Predeterminado: '{0}' (sale marcado al preparar, y con ENTER en el menu)." -f $target.Label) }
+                if ($r.Ok) { Write-CvLog 'SETUP' ("[OK] - {0}" -f (Get-CvText -Key 'cli.prof.esdef' -Values @($target.Label))) }
                 else { Write-CvLog 'SETUP' (Get-CvText -Key 'cli.error' -Values @($r.Error)) }
                 Wait-Setup
             }
             (Get-CvText -Key 'cli.prof.borrar') {
-                if (Read-YesNo ("Borrar el perfil '{0}'?" -f $target.Label) $false) {
+                if (Read-YesNo (Get-CvText -Key 'cli.prof.borrar.q' -Values @($target.Label)) $false) {
                     $r = Remove-CvConfigProfile -Path $CfgPath -Label $target.Label
-                    if ($r.Ok) { Write-CvLog 'SETUP' ("[OK] - Borrado '{0}' (quedan {1})." -f $target.Label, $r.Count) }
+                    if ($r.Ok) { Write-CvLog 'SETUP' ("[OK] - {0}" -f (Get-CvText -Key 'cli.prof.borrado' -Values @($target.Label, $r.Count))) }
                     else { Write-CvLog 'SETUP' (Get-CvText -Key 'cli.error' -Values @($r.Error)) }
                 } else {
                     Write-CvLog 'SETUP' (Get-CvText -Key 'cli.cancelado')
@@ -562,7 +564,7 @@ function Show-UseVersionMenu {
         Wait-Setup; return
     }
     $cur  = "$((Get-App $app).selected)"
-    $opts = @($inst | ForEach-Object { if ("$_" -eq $cur) { "{0}   (en uso)" -f $_ } else { "$_" } })
+    $opts = @($inst | ForEach-Object { if ("$_" -eq $cur) { (Get-CvText -Key 'cli.ver.enuso' -Values @($_)) } else { "$_" } })
     $v = Select-FromList -Title (Get-CvText -Key 'cli.usarver.cual' -Values @($app)) -Options $opts -NoneLabel (Get-CvText -Key 'cli.volver') -DefaultIndex 1
     if ($v -eq '') { return }
     Clear-Host
@@ -612,7 +614,14 @@ if ($Task -ne '') {
             if ($App -eq '' -or $Version -eq '') {
                 Write-CvLog 'SETUP' (Get-CvText -Key 'cli.task.falta')
             } else {
-                [void](Invoke-InstallApp -Name $App -Version $Version -SetDefault:$SetDefault)
+                # Si falla, la consola se queda abierta (se lanzo desde la ventana de herramientas y
+                # se cerraba al instante: una descarga fallida o un SHA256 que no casa solo quedaba en
+                # logs\) y el codigo de salida lo dice.
+                if (-not (Invoke-InstallApp -Name $App -Version $Version -SetDefault:$SetDefault)) {
+                    Wait-Setup
+                    if ($logFile) { Stop-CvLog }
+                    exit 1
+                }
             }
         }
         'tests' {
@@ -629,6 +638,11 @@ if ($Task -ne '') {
 $exit = $false
 while (-not $exit) {
     $ctx = New-CvContext -Root $Root -ConfigPath $CfgPath   # recargar por si cambio config.json
+    # ...y lo que es de la SESION (lo fija Start-CvSession al arrancar): cambiar ui.language en el
+    # editor dejaba los menus en el idioma de antes hasta salir.
+    [void](Set-CvLanguage -Lang "$($ctx.Language)")
+    Set-CvSepWidth -Width $ctx.SepWidth
+    Set-CvPromptStopOnType -Value $ctx.PromptStopOnType
     Clear-Host
     Show-CvHeader -Context $ctx -Subtitle 'Setup'          # re-dibujar la cabecera en cada vuelta al menu
 
@@ -665,7 +679,7 @@ while (-not $exit) {
     $opts += (Get-CvText -Key 'cli.men.mant.op')
     $opts += (Get-CvText -Key 'cli.men.proc.op')
 
-    $choice = Select-FromList -Options $opts -NoneLabel 'salir' -DefaultIndex 0 -NoneKey 'S' -Headers $headers
+    $choice = Select-FromList -Options $opts -NoneLabel (Get-CvText -Key 'comun.salir') -DefaultIndex 0 -NoneKey 'S' -Headers $headers
     if ($choice -eq '') { $exit = $true; continue }
 
     if ($choice -eq (Get-CvText -Key 'cli.men.herr.op')) {

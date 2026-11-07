@@ -61,7 +61,11 @@ function ConvertTo-CvJobRecord {
         # Lineas (cues) de TODAS las pistas de subtitulo del archivo, no solo de las elegidas: quien
         # prepara ya las ha contado para decidir, y guardarlas evita que el resumen tenga que volver
         # a demultiplexar el fichero para ensenarlas. Clave = indice de la pista.
-        $SubtitleCues = $null
+        $SubtitleCues = $null,
+        # Versiones de las herramientas ya CONGELADAS (las del job que se reescribe). Vacio = las de
+        # ahora: es lo que pasa al preparar. Editar un job (o muchos en bloque) no las cambia.
+        [string]$FFmpegVersion = '',
+        [string]$AacGainVersion = ''
     )
     $hdr = [bool]$Hdr
     if ($null -ne $Info) { $hdr = [bool](Test-CvHdr -Info $Info -Index $VideoIndex) }
@@ -81,8 +85,8 @@ function ConvertTo-CvJobRecord {
     [ordered]@{
         file           = $File
         profile        = $Prof
-        ffmpegVersion  = $Context.FFmpegVersion
-        aacgainVersion = $Context.AacGainVersion
+        ffmpegVersion  = $(if ("$FFmpegVersion" -ne '') { "$FFmpegVersion" } else { $Context.FFmpegVersion })
+        aacgainVersion = $(if ("$AacGainVersion" -ne '') { "$AacGainVersion" } else { $Context.AacGainVersion })
         video          = @{
             skip   = $VideoSkip
             index  = $VideoIndex
@@ -340,6 +344,29 @@ function Get-CvJobSubtitleOptions {
     return @($out)
 }
 
+function Get-CvJobResize {
+    <#
+        El ESCALADO de un job: lo mismo que decide la consola (ChangeSize del perfil, con NoUpscale, o
+        ancho maximo / tratamiento anamorfico via Get-CvResize), con lo configurado en encode.anamorphic.
+        -Video: una opcion de Get-CvJobVideoOptions (Width/Height/Sar). -Crop: el recorte del job. El
+        filtro es 'crop' y DESPUES 'scale', asi que con recorte se decide sobre el tamaño RECORTADO:
+        con el original, el modo 'square' aplastaba la imagen y maxWidth podia ampliar.
+    #>
+    param(
+        [Parameter(Mandatory)]$Context,
+        [Parameter(Mandatory)]$Prof,
+        [Parameter(Mandatory)]$Video,
+        [string]$Crop = ''
+    )
+    $t = Get-CvCroppedSize -Width ([int]$Video.Width) -Height ([int]$Video.Height) -Crop $Crop
+    if ($Prof.ChangeSize) {
+        if ([bool]$Prof.NoUpscale) { return "$(Get-CvChangeSizeResize -ChangeSize $Prof.ChangeSize -Width $t.Width -Height $t.Height)" }
+        return "$($Prof.ChangeSize)"
+    }
+    $mw = if ($null -ne $Prof.MaxWidth -and [int]$Prof.MaxWidth -gt 0) { [int]$Prof.MaxWidth } else { 0 }
+    return "$(Get-CvResize -Width $t.Width -Height $t.Height -Sar "$($Video.Sar)" -MaxWidth $mw -Anamorphic "$($Context.Anamorphic)")"
+}
+
 function New-CvJobDraft {
     <#
         BORRADOR del job con lo que se elegiria SOLO, sin preguntar ni escanear nada (la deteccion de
@@ -360,17 +387,9 @@ function New-CvJobDraft {
 
     # Resize: lo mismo que decide la consola (ChangeSize del perfil, con NoUpscale, o ancho maximo /
     # tratamiento anamorfico via Get-CvResize). Aqui NO hay pregunta anamorfica: se usa lo configurado.
+    # El borrador aun no tiene recorte: si luego se pone uno, se recalcula (Get-CvJobResize -Crop).
     $resize = ''
-    if ($vids.Count -gt 0) {
-        $v = $vids[0]
-        if ($Prof.ChangeSize) {
-            if ([bool]$Prof.NoUpscale) { $resize = "$(Get-CvChangeSizeResize -ChangeSize $Prof.ChangeSize -Width $v.Width -Height $v.Height)" }
-            else { $resize = "$($Prof.ChangeSize)" }
-        } else {
-            $mw = if ($null -ne $Prof.MaxWidth -and [int]$Prof.MaxWidth -gt 0) { [int]$Prof.MaxWidth } else { 0 }
-            $resize = "$(Get-CvResize -Width $v.Width -Height $v.Height -Sar $v.Sar -MaxWidth $mw -Anamorphic "$($Context.Anamorphic)")"
-        }
-    }
+    if ($vids.Count -gt 0) { $resize = Get-CvJobResize -Context $Context -Prof $Prof -Video $vids[0] }
 
     # Audio: las pistas del idioma preferido si el toggle multipista esta activo y hay varias; si no,
     # la que elige Select-AudioStream. La PREDETERMINADA va primero (como congela la consola).
@@ -379,7 +398,17 @@ function New-CvJobDraft {
     if ($auds.Count -gt 0) {
         $pref = @($auds | Where-Object { $_.Preferred })
         if ($Context.MultiAudio -and $pref.Count -ge 2) {
+            # La PREDETERMINADA, la misma que propone la consola (Select-CvDefaultAudio: la marcada
+            # como default o, si no, la de mas calidad), y delante. Antes era la primera por orden.
             $picks = $pref
+            $idxPref = @($pref | ForEach-Object { [int]$_.Index })
+            $sPref = @(Get-AudioStreams -Info $Info | Where-Object { $idxPref -contains [int]$_.index })
+            if ($sPref.Count -gt 0) {
+                $def = Select-CvDefaultAudio $sPref
+                if ($null -ne $def) {
+                    $picks = @(@($pref | Where-Object { [int]$_.Index -eq [int]$def.index }) + @($pref | Where-Object { [int]$_.Index -ne [int]$def.index }))
+                }
+            }
         } else {
             # OJO: '$picks = if (...) { @($x) }' NO vale. Una expresion 'if' que devuelve un array de
             # UN elemento lo DESENVUELVE al asignarlo, asi que $picks acababa siendo el objeto suelto,
@@ -458,6 +487,9 @@ function Read-CvJobDraft {
         File       = "$($job.file)"
         Prof       = $job.profile
         SubCues    = $cueMap
+        # Las versiones congeladas: reescribir el job las conserva (Save-CvJobDraft).
+        FFmpegVersion  = "$($job.ffmpegVersion)"
+        AacGainVersion = "$($job.aacgainVersion)"
         VideoSkip  = [bool]$job.video.skip
         VideoIndex = $(if ($null -ne $job.video.index) { [int]$job.video.index } else { -1 })
         Hdr        = [bool]$job.video.hdr   # ya decidido: se conserva si se reescribe sin analizar
@@ -496,9 +528,17 @@ function Save-CvJobDraft {
         -SrcHeight $(if ($Draft.PSObject.Properties['SrcHeight']) { [int]$Draft.SrcHeight } else { 0 }) `
         -SrcSar $(if ($Draft.PSObject.Properties['SrcSar']) { "$($Draft.SrcSar)" } else { '' }) `
         -AudioSkip ([bool]$Draft.AudioSkip) -AudioTracks @($Draft.Audio) -Subtitles @($Draft.Subtitles) `
-        -SubtitleCues $(if ($Draft.PSObject.Properties['SubCues']) { $Draft.SubCues } else { $null })
+        -SubtitleCues $(if ($Draft.PSObject.Properties['SubCues']) { $Draft.SubCues } else { $null }) `
+        -FFmpegVersion $(if ($Draft.PSObject.Properties['FFmpegVersion']) { "$($Draft.FFmpegVersion)" } else { '' }) `
+        -AacGainVersion $(if ($Draft.PSObject.Properties['AacGainVersion']) { "$($Draft.AacGainVersion)" } else { '' })
     Write-CvJob -Context $Context -Name $Draft.Name -Job $rec
     return $rec
+}
+
+function Test-CvJobResizeText {
+    <# PURO. Si un escalado esta bien escrito: 'W:H' (-1/-2 = automatico) y, si acaso, ',setsar=1'. #>
+    param([string]$Text = '')
+    return ("$Text".Trim() -match '^-?\d+:-?\d+(,setsar=1)?$')
 }
 
 function Test-CvJobDraft {
@@ -518,6 +558,10 @@ function Test-CvJobDraft {
     if ($tr.Count -gt 0 -and @($tr | Where-Object { $_.Default }).Count -ne 1) { $err += (Get-CvText -Key 'job.val.unadef') }
     $crop = "$($Draft.Crop)"
     if ($crop -and $crop -notmatch '^\d+:\d+:\d+:\d+$') { $err += (Get-CvText -Key 'job.val.recorte' -Values @($crop)) }
+    # El escalado tambien (como en la edicion en bloque): '1280x720' se guardaba y fallaba despues,
+    # en el worker, con un 'scale=' que ffmpeg no entiende. Con ',setsar=1' es el de pixel cuadrado.
+    $rs = "$($Draft.Resize)"
+    if ($rs -and -not (Test-CvJobResizeText -Text $rs)) { $err += (Get-CvText -Key 'job.val.escalado' -Values @($rs)) }
     foreach ($t in $tr) {
         if ("$($t.Lang)" -notmatch '^[a-z]{3}$') { $warn += (Get-CvText -Key 'job.val.idioma' -Values @($t.Lang)) }
     }
@@ -948,7 +992,7 @@ function Get-CvJobSummaryLines {
             $abit = "$($prof.AudioBitrate)".Trim()
             if ($abit -match '^(\d+)\s*[kK]$') { $qa += (Get-CvText -Key 'sum.kbps' -Values @($Matches[1])) } elseif ($abit) { $qa += $abit }
             $ahz = 0
-            if ([int]::TryParse("$($prof.AudioHz)".Trim(), [ref]$ahz) -and $ahz -le 0) { $ahz = [int]$Context.DefaultAudioHz }
+            if (-not [int]::TryParse("$($prof.AudioHz)".Trim(), [ref]$ahz) -or $ahz -le 0) { $ahz = [int]$Context.DefaultAudioHz }
             if ($ac -eq 'libopus') { $ahz = 48000 }   # opus solo admite 48 kHz (lo fuerza el render)
             if ($ahz -gt 0) { $qa += (Get-CvText -Key 'sum.khz' -Values @((Format-CvNumber ([math]::Round($ahz / 1000.0, 1))))) }
             if ([int]$plan.Channels -lt $ch) { $qa += (Get-CvText -Key 'sum.downmix' -Values @($ch)) }
@@ -1045,6 +1089,8 @@ function Set-CvJobDraftAudioSync {
         [Parameter(Mandatory)]$Draft,
         [Parameter(Mandatory)]$Info,
         [scriptblock]$OnStep = $null,
+        # Mensaje con el que -OnStep pide PARAR (el editor al cerrarse): ese no se traga.
+        [string]$AbortMessage = '',
         [switch]$Force
     )
     $notas = @()
@@ -1061,7 +1107,11 @@ function Set-CvJobDraftAudioSync {
         $fines = @{}
         if ($umbral -gt 0) {
             # La pista de video del borrador, no 'v:0' (que puede ser una caratula): Get-CvSyncVideoSpec.
-            $vIdx = $(if ($Draft.PSObject.Properties['VideoIndex'] -and $null -ne $Draft.VideoIndex) { [int]$Draft.VideoIndex } else { -1 })
+            # El borrador puede ser un objeto o una TABLA (el boton del editor): PSObject.Properties
+            # no ve las claves de una tabla, y se media contra la primera pista de video.
+            $vIdx = -1
+            $vSel = if ($Draft -is [System.Collections.IDictionary]) { $Draft['VideoIndex'] } elseif ($Draft.PSObject.Properties['VideoIndex']) { $Draft.VideoIndex } else { $null }
+            if ($null -ne $vSel -and "$vSel" -ne '') { $vIdx = [int]$vSel }
             $vEnd = Get-CvStreamEndPts -Context $Context -File $file -Stream (Get-CvSyncVideoSpec -Info $Info -VideoIndex $vIdx) -Duration $dur -What (Get-CvText -Key 'au.video.pista')
         }
         foreach ($t in $tracks) {
@@ -1102,6 +1152,9 @@ function Set-CvJobDraftAudioSync {
             $t.Sync = [double]$sync
         }
     } catch {
+        # El 'para' de quien llama (el editor al cerrarse, que lo lanza desde -OnStep) no es un fallo
+        # de la medida: se deja pasar, o el analisis seguiria con la ventana ya cerrada.
+        if ("$AbortMessage" -ne '' -and "$($_.Exception.Message)" -eq "$AbortMessage") { throw }
         $notas += (Get-CvText -Key 'plan.sync.no' -Values @($_.Exception.Message))
     }
     return @($notas)
@@ -1184,16 +1237,16 @@ function Test-CvJobBulkChanges {
     if ($null -ne $Changes) {
         foreach ($k in @($Changes.Keys)) { $c["$k"] = $Changes[$k] }
     }
-    if ($c.Count -eq 0) { $err += 'no se ha marcado ningun ajuste' }
+    if ($c.Count -eq 0) { $err += (Get-CvText -Key 'bulk.val.nada') }
     if ($c.ContainsKey('crop')) {
         $crop = "$($c['crop'])"
         if ($crop -and $crop -notmatch '^\d+:\d+:\d+:\d+$') { $err += (Get-CvText -Key 'job.val.recorte' -Values @($crop)) }
     }
     if ($c.ContainsKey('resize')) {
         $rs = "$($c['resize'])"
-        if ($rs -and $rs -notmatch '^-?\d+:-?\d+$') { $err += ("escalado mal escrito ('{0}'): tiene que ser W:H (p. ej. 1280:-2)" -f $rs) }
+        if ($rs -and -not (Test-CvJobResizeText -Text $rs)) { $err += (Get-CvText -Key 'job.val.escalado' -Values @($rs)) }
     }
-    if ($c.ContainsKey('prof') -and $null -eq $c['prof']) { $err += 'no se ha elegido perfil' }
+    if ($c.ContainsKey('prof') -and $null -eq $c['prof']) { $err += (Get-CvText -Key 'bulk.val.perfil') }
     return [pscustomobject]@{
         Ok     = ($err.Count -eq 0)
         Errors = @($err)
@@ -1212,8 +1265,13 @@ function Set-CvJobBulkChanges {
         un perfil 'copy' con skip a $false dejaria el job incoherente -el worker mira video.skip- y
         cambiar a un perfil de verdad sin quitar el skip no recodificaria nada. Por eso el perfil se
         aplica PRIMERO y lo que hayas marcado a mano manda sobre lo que el perfil implique.
+
+        Con -Context, el ESCALADO se rehace como al preparar (Get-CvJobResize, con el tamano del
+        original guardado en el job) si cambia el perfil, o si cambia el recorte y el escalado era el
+        automatico; salvo que el cambio traiga su propio 'resize'. Sin el, pasar 40 jobs a un perfil
+        de 720p los seguia codificando al tamano de antes.
     #>
-    param($Draft, $Changes)
+    param($Draft, $Changes, $Context = $null)
     if ($null -eq $Draft) { return $null }
     $out = [ordered]@{}
     foreach ($p in @($Draft.PSObject.Properties)) { $out[$p.Name] = $p.Value }
@@ -1232,8 +1290,25 @@ function Set-CvJobBulkChanges {
     if ($c.ContainsKey('audioCopy')) { $out['AudioSkip'] = [bool]$c['audioCopy'] }
     if ($c.ContainsKey('anim'))      { $out['Anim']      = [bool]$c['anim'] }
     if ($c.ContainsKey('keepOriginal')) { $out['KeepOriginal'] = [bool]$c['keepOriginal'] }
-    if ($c.ContainsKey('resize'))    { $out['Resize']    = "$($c['resize'])" }
     if ($c.ContainsKey('crop'))      { $out['Crop']      = "$($c['crop'])" }
+    if ($c.ContainsKey('resize')) {
+        $out['Resize'] = "$($c['resize'])"
+    } elseif ($null -ne $Context -and [int]$out['SrcWidth'] -gt 0 -and [int]$out['SrcHeight'] -gt 0) {
+        $vid = [pscustomobject]@{
+            Width  = [int]$out['SrcWidth']
+            Height = [int]$out['SrcHeight']
+            Sar    = "$($out['SrcSar'])"
+        }
+        $cambiaProf = ($c.ContainsKey('prof') -and $null -ne $c['prof'])
+        $cambiaCrop = ($c.ContainsKey('crop') -and "$($c['crop'])" -ne "$($Draft.Crop)")
+        $eraAuto = $false
+        if ($cambiaCrop -and $null -ne $Draft.Prof) {
+            $eraAuto = ("$($Draft.Resize)" -eq (Get-CvJobResize -Context $Context -Prof $Draft.Prof -Video $vid -Crop "$($Draft.Crop)"))
+        }
+        if ($cambiaProf -or $eraAuto) {
+            $out['Resize'] = Get-CvJobResize -Context $Context -Prof $out['Prof'] -Video $vid -Crop "$($out['Crop'])"
+        }
+    }
     return [pscustomobject]$out
 }
 
@@ -1289,10 +1364,21 @@ function Set-CvJobsBulk {
     $done = 0
     $fail = 0
     $errs = @()
+    # Uno que esta codificando un worker (o ya hecho) no se toca: la ventana es modal y puede llevar
+    # un rato abierta. Reescribirlo perdia el cambio (el worker ya leyo el job y al acabar lo borra) o
+    # volvia a crear el job de un archivo terminado, que la cola enseñaba 'a medias'.
+    $ocupado = {
+        param([string]$N)
+        $l = Join-Path $Context.Proceso ("{0}.lock" -f $N)
+        if ((Test-Path -LiteralPath $l) -and -not (Test-CvLockStale $l)) { return $true }
+        return (Test-Path -LiteralPath (Get-OutputPath $Context $N))
+    }
     foreach ($n in @($Names)) {
         try {
+            if (& $ocupado $n) { throw (Get-CvText -Key 'bulk.ocupado') }
             $d = Read-CvJobDraft -Context $Context -Name $n
-            $d = Set-CvJobBulkChanges -Draft $d -Changes $cambios
+            $d = Set-CvJobBulkChanges -Draft $d -Changes $cambios -Context $Context
+            if (& $ocupado $n) { throw (Get-CvText -Key 'bulk.ocupado') }
             [void](Save-CvJobDraft -Context $Context -Draft $d)
             $done++
         } catch {
@@ -1348,7 +1434,7 @@ function Get-CvJobAutoPlan {
     # ---- Video: varias pistas o anamorfico = la consola pregunta ----
     $vids = @(Get-CvJobVideoOptions -Context $Context -Info $Info)
     if ($vids.Count -gt 1) {
-        $reasons += ("Hay {0} pistas de video: elige cual usar." -f $vids.Count)
+        $reasons += (Get-CvText -Key 'plan.varios.video' -Values @($vids.Count))
     }
     if ($vids.Count -gt 0 -and $vids[0].Anamorphic -and -not $draft.VideoSkip) {
         $reasons += (Get-CvText -Key 'plan.anamorfico')
@@ -1362,14 +1448,14 @@ function Get-CvJobAutoPlan {
     } elseif ($pref.Count -eq 0) {
         $reasons += (Get-CvText -Key 'plan.audio.idioma' -Values @((($Context.AudioLangs -join '/'))))
     } elseif ($pref.Count -gt 1) {
-        $reasons += ("{0} pistas de audio en el idioma preferido: elige cuales conservar y la predeterminada." -f $pref.Count)
+        $reasons += (Get-CvText -Key 'plan.audio.varias' -Values @($pref.Count))
     }
 
     # ---- Subtitulos: hay, pero ninguno del idioma preferido ----
     $subs = @(Get-CvJobSubtitleOptions -Context $Context -Info $Info)
     $usable = @($subs | Where-Object { $_.Usable })
     if ($usable.Count -gt 0 -and @($usable | Where-Object { $_.Preferred }).Count -eq 0) {
-        $reasons += ("Hay subtitulos pero ninguno en el idioma preferido ({0}): elige cuales conservar." -f ($Context.SubLangs | Select-Object -First 1))
+        $reasons += (Get-CvText -Key 'plan.subs.idioma' -Values @(($Context.SubLangs | Select-Object -First 1)))
     }
 
     # ---- Sincronia del audio (lo lento II): lo mismo que detecta la consola al preparar ----
@@ -1411,6 +1497,9 @@ function Get-CvJobAutoPlan {
                 # pasara lo que pasara, porque era un literal en el codigo.
                 $reasons += "$($dec.Reason)"
                 $cropAsk = $true
+                # Y se PROPONE el mas votado, como en el editor suelto ($autoCrop): sin el, el editor
+                # se abria con "confirma el recorte" y el campo vacio.
+                $draft.Crop = "$($dec.Crop)"
             } else {
                 $draft.Crop = ''
             }
@@ -1426,6 +1515,10 @@ function Get-CvJobAutoPlan {
                 $cropAsk = $true
                 $cropPct = [int]$c.TopPct
             }
+        }
+        # El escalado se aplica DESPUES del recorte: con recorte, se decide con su tamaño.
+        if ("$($draft.Crop)" -ne '') {
+            $draft.Resize = Get-CvJobResize -Context $Context -Prof $Prof -Video $v -Crop "$($draft.Crop)"
         }
     }
 

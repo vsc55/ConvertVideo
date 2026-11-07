@@ -196,7 +196,10 @@ function Invoke-Multiplex {
         [int]$VideoIndex = -1,
         # El video es el ORIGINAL porque recodificarlo no compensaba (no porque el perfil sea copy):
         # se marca en la salida para que la cola lo pueda ensenar despues.
-        [bool]$VideoFromSource = $false
+        [bool]$VideoFromSource = $false,
+        # Adjuntos ya elegidos por el plan (Resolve-CvRenderSpec .Attachments). $null = elegirlos aqui;
+        # el worker los pasa para no repetir la eleccion ni sus lineas del log.
+        $Attachments = $null
     )
     $name  = [System.IO.Path]::GetFileNameWithoutExtension($File)
     $out   = Get-OutputPath $Context $name
@@ -224,7 +227,7 @@ function Invoke-Multiplex {
         $subs    = @($sx.Subs)
         $hasSubs = $subs.Count -gt 0
         # Adjuntos del original a conservar (fuentes/caratulas segun config; por defecto ninguno).
-        $keepAtt = @(Select-Attachments -Context $Context -Info $Info)
+        $keepAtt = if ($null -ne $Attachments) { @($Attachments) } else { @(Select-Attachments -Context $Context -Info $Info) }
 
         # El original ($File) hace falta como input si aporta subtitulos/adjuntos, si el video se recodifico
         # (el intermedio se creo con -map_chapters -1, asi que los CAPITULOS se toman del original), o si hay

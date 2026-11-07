@@ -65,6 +65,8 @@ $Path = (Resolve-Path -LiteralPath $Path).Path
 $text  = Read-CvSrtText -Path $Path
 $blocks = @(Get-CvSrtBlocks $text)
 Write-CvLog 'SUB' (Get-CvText -Key 'fss.info' -Values @((Split-Path -Leaf $Path), $blocks.Count)) -Indent 3
+# Sin ninguna cue no hay nada que arreglar (y el modo 'extremos' se caia buscando la ultima).
+if ($blocks.Count -eq 0) { Write-CvLog 'SUB' (Get-CvText -Key 'fss.sincues') -Indent 3; exit 1 }
 
 # 2) Correcciones de texto
 if (Read-YesNo (Get-CvText -Key 'fss.ocr') $true) {
@@ -182,9 +184,12 @@ if ($rb.Count -gt 0) {
 $video = Find-CvSrtVideo -Dir $dir -SrtPath $Path
 if ($video) {
     while (Read-YesNo (Get-CvText -Key 'fss.preview' -Values @((Split-Path -Leaf $video))) $false) {
-        $tmp = Join-Path ([IO.Path]::GetTempPath()) 'fixsyncsub-preview.srt'
+        # Con el PID: dos arregladores abiertos a la vez se pisaban la vista previa.
+        $tmp = Join-Path ([IO.Path]::GetTempPath()) ("fixsyncsub-preview-{0}.srt" -f $PID)
         Write-CvSrtText -Text $text -Path $tmp -Bom $false
-        $esc = ($tmp -replace '\\', '/') -replace ':', '\:'   # escape para el filtro subtitles de ffmpeg
+        # Escape para el filtro subtitles de ffmpeg; tambien la comilla (una carpeta de usuario como
+        # O'Brien rompia el filtro).
+        $esc = (($tmp -replace '\\', '/') -replace ':', '\:') -replace "'", "'\''"
         try { Invoke-CvPreview -Context $ctx -File $video -ExtraArgs @('-vf', "subtitles='$esc'") -Label (Get-CvText -Key 'fss.preview.t') }
         catch { Write-CvLog 'SUB' (Get-CvText -Key 'fss.preview.no' -Values @($_.Exception.Message)) -Indent 3 }
         Remove-Item -LiteralPath $tmp -ErrorAction SilentlyContinue
@@ -193,7 +198,8 @@ if ($video) {
 
 # 6) Guardar
 if (-not (Read-YesNo (Get-CvText -Key 'fss.guardar') $true)) { Write-CvLog 'SUB' (Get-CvText -Key 'fss.nogurdado') -Indent 3; exit 0 }
-$defOut = Join-Path $dir ("{0}.es.srt" -f $base)
+# 'peli.es.srt' ya lleva el idioma: no se le anade otro ('peli.es.es.srt').
+$defOut = if ($base -match '(?i)\.es$') { Join-Path $dir ("{0}.srt" -f $base) } else { Join-Path $dir ("{0}.es.srt" -f $base) }
 $outPath = (Read-CvLine -Prompt (Get-CvText -Key 'fss.guardar.en' -Values @($defOut))).Trim()
 if ($outPath -eq '') { $outPath = $defOut } else { $outPath = $outPath.Trim('"') }
 $withBom = Read-YesNo (Get-CvText -Key 'fss.bom') $false

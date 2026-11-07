@@ -40,6 +40,7 @@ function Show-CvConfigWindow {
         Bold    = $null      # fuente de las claves editadas (se crea al montar el arbol)
         PickKind = ''        # 'folder'/'file' si la clave elegida es una ruta (ver Get-CvConfigPathKind)
         Index   = $null      # indice del buscador (Get-CvCfgSearchIndex): se monta al buscar
+        Warned  = ''         # 'clave|texto' del ultimo aviso de numero no valido (no repetirlo)
     }
 
     $form = New-Object System.Windows.Forms.Form
@@ -290,7 +291,11 @@ function Show-CvConfigWindow {
         $parent = Resolve-CvCfgNode -Root $st.Cfg -Path (($segs[0..($segs.Count - 2)]) -join '/')
         if ($null -eq $parent) { return }
         $old = Get-CvNodeVal $parent $key
-        if ("$old" -ceq "$newVal" -and (Get-CvNodeKind $old) -ne 'array') { return }   # sin cambio real
+        # Sin cambio real no se marca nada. Una LISTA se compara por su JSON: antes nunca se daba por
+        # igual, y solo con pasar por una clave de lista salia 'hay cambios' al cerrar.
+        if ((Get-CvNodeKind $old) -eq 'array' -or (Get-CvNodeKind $newVal) -eq 'array') {
+            if ((ConvertTo-CvJson $old 0) -ceq (ConvertTo-CvJson $newVal 0)) { return }
+        } elseif ("$old" -ceq "$newVal") { return }
         Set-CvNodeVal $parent $key $newVal
         $st.Index = $null      # el buscador tambien mira el valor: se rehace la proxima vez
         if ($st.Node) {
@@ -308,8 +313,9 @@ function Show-CvConfigWindow {
         param([string]$Raw, [string]$Kind)
         if ($Kind -ne 'number') { return $Raw }
         if ($Raw -match '^-?\d+$') { return [long]$Raw }
-        $d = 0.0
-        if ([double]::TryParse($Raw, [System.Globalization.NumberStyles]::Float, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$d)) { return $d }
+        # La coma decimal tambien ('0,8'), como en el resto del programa (ConvertTo-InvDouble).
+        $d = ConvertTo-InvDouble $Raw
+        if ($null -ne $d) { return $d }
         return $null      # numero no valido: el llamador avisa y no aplica
     }
 
@@ -372,7 +378,14 @@ function Show-CvConfigWindow {
                 $cur = "$val"
                 $idx = -1
                 for ($i = 0; $i -lt @($spec.Items).Count; $i++) { if ("$(@($spec.Items)[$i].Value)" -eq $cur) { $idx = $i; break } }
-                if ($idx -ge 0) { $combo.SelectedIndex = $idx } else { $combo.Text = $cur }
+                if ($idx -ge 0) { $combo.SelectedIndex = $idx }
+                elseif ($spec.AllowCustom -or $cur -eq '') { $combo.Text = $cur }
+                else {
+                    # Un valor que no esta en el catalogo (uno antiguo que se sigue aceptando): en una
+                    # lista cerrada, poner .Text no hace nada y salia en BLANCO. Se anade como una opcion
+                    # mas, como hace New-CvGuiCatalogCombo.
+                    $combo.SelectedIndex = $combo.Items.Add($cur)
+                }
                 $combo.Visible = $true
                 # La descripcion del valor elegido se anade a la ayuda de la clave.
                 $descs = @(@($spec.Items) | Where-Object { "$($_.Desc)".Trim() -ne '' } | ForEach-Object { "  {0}: {1}" -f $_.Label, $_.Desc })
@@ -421,6 +434,8 @@ function Show-CvConfigWindow {
         if ($null -ne $spec) {
             $sel = @($spec.Items) | Where-Object { "$($_.Label)" -eq "$($combo.Text)" } | Select-Object -First 1
             if ($null -ne $sel) { & $apply $sel.Value; return }
+            & $apply "$($combo.Text)"         # el valor de fuera del catalogo que se anadio arriba
+            return
         }
         & $apply ($combo.Text -eq 'true')     # bool sin catalogo
     })
@@ -443,9 +458,16 @@ function Show-CvConfigWindow {
         $kind = Get-CvNodeKind (Get-CvNodeVal $parent $segs[-1])
         $v = & $coerce $text.Text.Trim() $kind
         if ($null -eq $v) {
-            Show-CvGuiInfo -Title (Get-CvText -Key 'cfg.novalido.tit') -Message (Get-CvText -Key 'cfg.novalido.msg' -Values @($text.Text, $st.Path))
+            # Un solo aviso por valor: al pulsar Guardar o el arbol, primero sale del campo (Leave) y
+            # luego el clic vuelve a confirmar; salian dos mensajes iguales seguidos.
+            $aviso = "{0}|{1}" -f $st.Path, $text.Text
+            if ("$($st.Warned)" -cne $aviso) {
+                $st.Warned = $aviso
+                Show-CvGuiInfo -Title (Get-CvText -Key 'cfg.novalido.tit') -Message (Get-CvText -Key 'cfg.novalido.msg' -Values @($text.Text, $st.Path))
+            }
             return $false
         }
+        $st.Warned = ''
         & $apply $v
         return $true
     }
@@ -500,9 +522,16 @@ function Show-CvConfigWindow {
         & $commitList
         # Mismo camino que el editor de consola: aplicar SOLO lo distinto del default sobre el fichero
         # CRUDO, para que un config minimo siga minimo.
-        $raw = if (Test-Path -LiteralPath $CfgPath) { Read-CvConfigFile -Path $CfgPath } else { [pscustomobject]@{} }
-        Update-CvConfigEdits -Edited $st.Cfg -Before $st.Before -Default (Get-CvConfigDefaults) -Target $raw
-        Save-CvConfigFile -Path $CfgPath -Config $raw
+        # Si no se puede (el fichero se rompio a mano mientras tanto, o el antivirus lo tiene cogido)
+        # se dice y la ventana sigue abierta con lo editado: una excepcion aqui se llevaba la app.
+        try {
+            $raw = if (Test-Path -LiteralPath $CfgPath) { Read-CvConfigFile -Path $CfgPath } else { [pscustomobject]@{} }
+            Update-CvConfigEdits -Edited $st.Cfg -Before $st.Before -Default (Get-CvConfigDefaults) -Target $raw
+            Save-CvConfigFile -Path $CfgPath -Config $raw
+        } catch {
+            Show-CvGuiInfo -Title (Get-CvText -Key 'cfg.tit' -Values @($CfgName)) -Message (Get-CvText -Key 'cfg.noguarda' -Values @($CfgPath, $_.Exception.Message))
+            return
+        }
         $st.Saved = $true
         $st.Dirty = $false
         # SIN aviso modal al guardar: el llamador ya informa (la ventana principal lo escribe en su
@@ -512,9 +541,25 @@ function Show-CvConfigWindow {
     })
     $btnCancel.Add_Click({ $form.Close() })
     $form.Add_FormClosing({
-        if ($st.Dirty -and -not $st.Saved) {
+        $ev = $_    # antes de los ForEach-Object de abajo, que tienen su propio $_
+        # Lo tecleado en el campo y aun sin confirmar (cerrar con la X no siempre pasa por Leave)
+        # tambien cuenta como cambio: si no, se cerraba sin preguntar y se perdia.
+        $pendiente = $false
+        if (-not $st.Saved -and -not $st.Loading -and "$($st.Path)" -ne '') {
+            $segs = "$($st.Path)" -split '/'
+            $par  = Resolve-CvCfgNode -Root $st.Cfg -Path (($segs[0..($segs.Count - 2)]) -join '/')
+            if ($null -ne $par) {
+                $actual = Get-CvNodeVal $par $segs[-1]
+                if ($text.Visible -and "$($text.Text)".Trim() -cne "$actual") { $pendiente = $true }
+                if ($list.Visible) {
+                    $lineas = @($list.Lines | ForEach-Object { "$_".Trim() } | Where-Object { $_ -ne '' })
+                    if (($lineas -join "`n") -cne ((@($actual) | ForEach-Object { "$_" }) -join "`n")) { $pendiente = $true }
+                }
+            }
+        }
+        if (($st.Dirty -or $pendiente) -and -not $st.Saved) {
             if (-not (Show-CvGuiConfirm -Title (Get-CvText -Key 'cfg.salir.tit') -Message (Get-CvText -Key 'cfg.salir.msg'))) {
-                $_.Cancel = $true
+                $ev.Cancel = $true
             }
         }
     })
@@ -522,6 +567,7 @@ function Show-CvConfigWindow {
     # Fuente en negrita para las claves editadas (la del propio arbol, en Bold): se guarda en el
     # estado porque tambien la usa $apply al re-resaltar un valor que se acaba de cambiar.
     $st.Bold = New-Object System.Drawing.Font($tree.Font, [System.Drawing.FontStyle]::Bold)
+    [void](Register-CvGuiDisposeWith -Control $form -Object $st.Bold)   # se creaba en cada apertura y no se soltaba
 
     # (Re)construye el arbol segun el interruptor de avanzadas, conservando la clave seleccionada si
     # sigue estando visible. La etiqueta del check avisa si se quedan opciones EDITADAS ocultas.

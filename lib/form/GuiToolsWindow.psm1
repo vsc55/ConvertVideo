@@ -87,10 +87,20 @@ function Show-CvToolsWindow {
     $form.Controls.Add($lblInfo)
 
     $st = @{ Apps = @() }
+    # El contexto se REHACE al recargar: la version en uso sale de el, y tras 'Usar' o una instalacion
+    # con 'fijar por defecto' el de cuando se abrio la ventana seguia ensenando la anterior.
+    $vivo = @{
+        Ctx   = $Context
+        Nuevo = $false
+    }
 
     $reload = {
         $sel = $lstApps.SelectedIndex
-        $st.Apps = @(Get-CvSetupToolStatus -Context $Context)
+        if ($vivo.Nuevo) {
+            try { $vivo.Ctx = New-CvContext -Root $Root -ConfigPath $CfgPath } catch { }
+        }
+        $vivo.Nuevo = $true
+        $st.Apps = @(Get-CvSetupToolStatus -Context $vivo.Ctx)
         $lstApps.Items.Clear()
         foreach ($t in $st.Apps) {
             if (-not $t.Supported) {
@@ -108,7 +118,7 @@ function Show-CvToolsWindow {
         $i = $lstApps.SelectedIndex
         if ($i -lt 0 -or $i -ge @($st.Apps).Count) { return }
         $t = @($st.Apps)[$i]
-        foreach ($v in (Get-CvSetupAppVersions -Context $Context -Name $t.Name)) {
+        foreach ($v in (Get-CvSetupAppVersions -Context $vivo.Ctx -Name $t.Name)) {
             $tag = ''
             if ("$v" -eq "$($t.Selected)") { $tag = (Get-CvText -Key 'herr.ver.defecto') }
             if (@($t.Installed) -contains "$v") { $tag += (Get-CvText -Key 'herr.ver.instalada') }
@@ -175,7 +185,7 @@ function Show-CvToolsWindow {
         $t = @($st.Apps)[$i]
         if ($lstVers.SelectedIndex -lt 0) { Show-CvGuiInfo -Title (Get-CvText -Key 'herr.tit') -Message (Get-CvText -Key 'herr.elige.version'); return }
         $ver = ("$($lstVers.SelectedItem)" -split '\s+')[0]
-        $r = Set-CvSetupVersionInUse -Context $Context -CfgPath $CfgPath -Name $t.Name -Version $ver
+        $r = Set-CvSetupVersionInUse -Context $vivo.Ctx -CfgPath $CfgPath -Name $t.Name -Version $ver
         $lblInfo.Text = $(if ($r.Ok) { (Get-CvText -Key 'herr.usada' -Values @($r.Reason, (Split-Path -Leaf $CfgPath))) } else { $r.Reason })
         if ($r.Ok) { & $reload }
     })

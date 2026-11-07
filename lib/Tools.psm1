@@ -313,11 +313,11 @@ function Install-CvTool {
     if ($versions -is [System.Collections.IDictionary]) { if ($versions.Contains($ver)) { $sha = "$($versions[$ver])" } }
     elseif ($versions -and $versions.PSObject.Properties[$ver]) { $sha = "$($versions.$ver)" }
 
-    if (-not (Test-Path $destDir)) { New-Item -ItemType Directory -Path $destDir -Force | Out-Null }
+    if (-not (Test-Path -LiteralPath $destDir)) { New-Item -ItemType Directory -Path $destDir -Force | Out-Null }
     # Una carpeta POR PROCESO: con un nombre fijo, dos workers instalando lo mismo a la vez se
     # borraban la descarga el uno al otro a mitad (cada instalacion empieza vaciandola).
     $tmp = Join-Path $env:TEMP ("cv_dl_{0}_{1}_{2}" -f $Name, $ver, $PID)
-    if (Test-Path $tmp) { Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue }
+    if (Test-Path -LiteralPath $tmp) { Remove-Item -Recurse -Force -LiteralPath $tmp -ErrorAction SilentlyContinue }
     New-Item -ItemType Directory -Path $tmp -Force | Out-Null
     # Tipo de descarga: 'zip'/'7z' (extraen) o 'file' (ejecutable directo). Por defecto 'zip'.
     $type = "$($app.type)"; if ([string]::IsNullOrWhiteSpace($type)) { $type = 'zip' }
@@ -337,19 +337,19 @@ function Install-CvTool {
             $downloaded = $true; break
         } catch {
             Write-CvLog 'GLOBAL' (Get-CvText -Key 'tl.baja.mal' -Values @($tag, $i, $attempts, $_.Exception.Message))
-            if (Test-Path $dl) { Remove-Item -Force $dl -ErrorAction SilentlyContinue }
+            if (Test-Path -LiteralPath $dl) { Remove-Item -Force -LiteralPath $dl -ErrorAction SilentlyContinue }
             if ($i -lt $attempts) { Start-Sleep -Seconds (2 * $i) }
         }
     }
     $ProgressPreference = $oldPref
-    if (-not $downloaded -or -not (Test-Path $dl)) {
+    if (-not $downloaded -or -not (Test-Path -LiteralPath $dl)) {
         Write-CvLog 'GLOBAL' (Get-CvText -Key 'tl.baja.no' -Values @($tag, $attempts))
         Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
         return $false
     }
 
     if (-not [string]::IsNullOrWhiteSpace($sha)) {
-        $got = (Get-FileHash -Path $dl -Algorithm SHA256).Hash
+        $got = (Get-FileHash -LiteralPath $dl -Algorithm SHA256).Hash
         if ($got.ToUpper() -ne $sha.Trim().ToUpper()) {
             Write-CvLog 'GLOBAL' (Get-CvText -Key 'tl.sha.mal' -Values @($tag))
             Write-CvLog 'GLOBAL' (Get-CvText -Key 'tl.sha.esp' -Values @($tag, $sha))
@@ -366,7 +366,7 @@ function Install-CvTool {
     if ($type -eq 'file') {
         # Ejecutable directo: se copia (renombrando) al destino.
         $target = if ($files.Count -ge 1) { $files[0] } else { Split-Path $url -Leaf }
-        try { Copy-Item -Force -Path $dl -Destination (Join-Path $destDir $target) }
+        try { Copy-Item -Force -LiteralPath $dl -Destination (Join-Path $destDir $target) -ErrorAction Stop }
         catch { Write-CvLog 'GLOBAL' (Get-CvText -Key 'tl.copia.no' -Values @($tag, $_.Exception.Message)); $ok = $false }
     } else {
         Write-CvLog 'GLOBAL' (Get-CvText -Key 'tl.extra' -Values @($tag))
@@ -378,7 +378,7 @@ function Install-CvTool {
             $zr = Join-Path (Get-CvToolDir -Context $Context -Name 'sevenzip' -Version $zVer) '7zr.exe'
             if (-not (Test-Path -LiteralPath $zr)) {
                 Write-CvLog 'GLOBAL' ("{0} - [ERR] - Falta el extractor 7z (7zr); anade 'sevenzip' a dependsOn." -f $tag)
-                Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
+                Remove-Item -Recurse -Force -LiteralPath $tmp -ErrorAction SilentlyContinue
                 return $false
             }
             $r = Invoke-ToolCapture -Exe $zr -Arguments @('x', $dl, ("-o{0}" -f $tmp), '-y') -Context $Context
@@ -389,27 +389,35 @@ function Install-CvTool {
                 # Una entrada que se sale de la carpeta (zip slip) o un zip ilegible: no se extrae nada.
                 Write-CvLog 'GLOBAL' (Get-CvText -Key 'tl.zip.inseguro' -Values @($tag))
             } else {
-                try { Expand-Archive -Path $dl -DestinationPath $tmp -Force; $extracted = $true }
+                try { Expand-Archive -LiteralPath $dl -DestinationPath $tmp -Force; $extracted = $true }
                 catch { Write-CvLog 'GLOBAL' (Get-CvText -Key 'tl.extra.no' -Values @($tag, $_.Exception.Message)) }
             }
         }
         if (-not $extracted) {
-            Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
+            Remove-Item -Recurse -Force -LiteralPath $tmp -ErrorAction SilentlyContinue
             return $false
         }
         # Carpeta con los binarios dentro del paquete; si no esta, se busca cada fichero.
         $bin = if ([string]::IsNullOrWhiteSpace($binRel)) { $tmp } else { Join-Path $tmp $binRel }
         foreach ($file in $files) {
             $src = Join-Path $bin $file
-            if (-not (Test-Path $src)) {
-                $alt = Get-ChildItem -Path $tmp -Recurse -File -Filter $file -ErrorAction SilentlyContinue | Select-Object -First 1
+            if (-not (Test-Path -LiteralPath $src)) {
+                $alt = Get-ChildItem -LiteralPath $tmp -Recurse -File -Filter $file -ErrorAction SilentlyContinue | Select-Object -First 1
                 if ($alt) { $src = $alt.FullName }
             }
-            if (Test-Path $src) { Copy-Item -Force -Path $src -Destination (Join-Path $destDir $file) }
+            if (Test-Path -LiteralPath $src) {
+                # -ErrorAction Stop: un fallo al copiar (sin permiso, disco lleno, fichero en uso) no
+                # llegaba al catch y se daba por instalado.
+                try { Copy-Item -Force -LiteralPath $src -Destination (Join-Path $destDir $file) -ErrorAction Stop }
+                catch { Write-CvLog 'GLOBAL' (Get-CvText -Key 'tl.copia.no' -Values @($tag, $_.Exception.Message)); $ok = $false }
+            }
             else { Write-CvLog 'GLOBAL' (Get-CvText -Key 'tl.nofound' -Values @($tag, $file)); $ok = $false }
         }
     }
-    Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
+    Remove-Item -Recurse -Force -LiteralPath $tmp -ErrorAction SilentlyContinue
+    # Una instalacion que falla a medias no puede quedarse: basta con que esten los ficheros para
+    # darla por instalada (Test-CvToolInstalled), y un ffmpeg.exe cortado se usaria desde entonces.
+    if (-not $ok) { Remove-Item -Recurse -Force -LiteralPath $destDir -ErrorAction SilentlyContinue }
 
     if ($ok) {
         $iv = Get-CvToolInstalledVersion -Context $Context -Name $Name -Version $ver
@@ -522,10 +530,20 @@ function Get-CvGpuEncoders {
 # Cache de la comprobacion por-encoder de GPU (NVENC): la GPU/driver no cambian en la sesion, asi
 # que cada encoder se prueba UNA vez. Clave = nombre del encoder; valor = $true/$false.
 $script:CvGpuEncCache = @{}
+# El ffmpeg con el que se lleno CvGpuEncCache (Initialize-CvGpuCaps): el soporte de NVENC depende
+# TAMBIEN de la version de ffmpeg, y un job congelado con otra se comprueba con la SUYA, aparte
+# (CvGpuEncByExe, clave 'exe|encoder').
+$script:CvGpuCapsExe  = ''
+$script:CvGpuEncByExe = @{}
+# Si la ultima sonda fallo por algo PASAJERO (sesiones NVENC ocupadas por otros workers, memoria):
+# ese 'no' no se guarda en ningun sitio, se vuelve a probar luego.
+$script:CvGpuTransient = $false
 
 function Reset-CvGpuEncCache {
     <# Vacia la cache de comprobacion de encoders por GPU (para tests). #>
     $script:CvGpuEncCache = @{}
+    $script:CvGpuEncByExe = @{}
+    $script:CvGpuCapsExe  = ''
 }
 
 function Test-CvGpuEncoder {
@@ -538,8 +556,11 @@ function Test-CvGpuEncoder {
         bloquear: el fallo real ya saldria en la codificacion).
     #>
     param([Parameter(Mandatory)]$Context, [Parameter(Mandatory)][string]$Encoder)
-    if ($script:CvGpuEncCache.ContainsKey($Encoder)) { return $script:CvGpuEncCache[$Encoder] }
     $exe = "$($Context.FFmpeg)"
+    $esCaps = ($script:CvGpuCapsExe -eq '' -or $exe -eq $script:CvGpuCapsExe)
+    if ($esCaps -and $script:CvGpuEncCache.ContainsKey($Encoder)) { return $script:CvGpuEncCache[$Encoder] }
+    $clave = "{0}|{1}" -f $exe, $Encoder
+    if ($script:CvGpuEncByExe.ContainsKey($clave)) { return $script:CvGpuEncByExe[$clave] }
     if ([string]::IsNullOrWhiteSpace($exe) -or -not (Test-Path -LiteralPath $exe)) { return $true }
     if ($Context.Debug) { Write-CvLog 'GLOBAL' ("[GPU] - Sondeando soporte de '{0}' en la GPU (encode sintetico)..." -f $Encoder) }
     $r = Invoke-ToolCapture -Exe $exe -Arguments @(
@@ -551,8 +572,35 @@ function Test-CvGpuEncoder {
         '-'
     ) -Context $Context
     $ok = ($r.ExitCode -eq 0)
-    $script:CvGpuEncCache[$Encoder] = $ok
+    $script:CvGpuTransient = ((-not $ok) -and (Test-CvGpuProbeTransient -StdErr "$($r.StdErr)"))
+    if ($script:CvGpuTransient) { return $ok }   # no se memoriza: puede ir bien en un rato
+    $script:CvGpuEncByExe[$clave] = $ok
+    if ($esCaps) { $script:CvGpuEncCache[$Encoder] = $ok }
     $ok
+}
+
+function Test-CvGpuProbeTransient {
+    <#
+        PURO. El fallo de la sonda NVENC es PASAJERO? Con otros workers codificando, la GPU puede no
+        dar mas sesiones ('incompatible client key', 'out of memory'): ese 'no' no dice nada de lo que
+        la GPU SOPORTA, y guardado en gpuCache dejaba el encoder rechazado para siempre.
+    #>
+    param([string]$StdErr = '')
+    return ("$StdErr" -match '(?i)out of memory|incompatible client key')
+}
+
+function Get-CvGpuCacheId {
+    <#
+        Con que se CLAVA la cache de la sonda (gpuCache): la GPU y su DRIVER. Solo con el nombre, un
+        'NVENC no' de un driver viejo se quedaba aunque se actualizara el driver.
+    #>
+    try {
+        $ids = @(Get-CimInstance -ClassName Win32_VideoController -ErrorAction Stop |
+            ForEach-Object { ("{0} {1}" -f "$($_.Name)".Trim(), "$($_.DriverVersion)".Trim()).Trim() } | Where-Object { $_ })
+        return ($ids -join ' | ')
+    } catch {
+        return ''
+    }
 }
 
 function Test-CvEncoderSupported {
@@ -672,7 +720,8 @@ function Initialize-CvGpuCaps {
     param([Parameter(Mandatory)]$Context, [string]$CfgPath = '', [bool]$Persist = $true)
     $gpuEnc = @(Get-CvGpuEncoders)
     $ffVer  = "$($Context.FFmpegVersion)"
-    $gpuNm  = Get-CvGpuName
+    $gpuNm  = Get-CvGpuCacheId
+    $script:CvGpuCapsExe = "$($Context.FFmpeg)"
 
     $cached = Read-CvGpuCache -CfgPath $CfgPath -Ffmpeg $ffVer -Gpu $gpuNm
     if ($cached) {
@@ -684,22 +733,31 @@ function Initialize-CvGpuCaps {
     # Sin cache valida (primera vez, o cambio de ffmpeg/GPU): sondear y (si procede) persistir.
     Write-CvLog 'GLOBAL' (Get-CvText -Key 'tl.gpu.probe')
     $map = [ordered]@{}
-    foreach ($e in $gpuEnc) { $map[$e] = [bool](Test-CvGpuEncoder -Context $Context -Encoder $e) }
-    if ($Persist) { Save-CvGpuCache -CfgPath $CfgPath -Ffmpeg $ffVer -Gpu $gpuNm -Encoders $map }
+    $pasajero = $false
+    foreach ($e in $gpuEnc) {
+        $map[$e] = [bool](Test-CvGpuEncoder -Context $Context -Encoder $e)
+        if ($script:CvGpuTransient) { $pasajero = $true }
+    }
+    # Un 'no' pasajero (GPU ocupada) no se guarda: se volvera a sondear en el siguiente arranque.
+    if ($Persist -and -not $pasajero) { Save-CvGpuCache -CfgPath $CfgPath -Ffmpeg $ffVer -Gpu $gpuNm -Encoders $map }
     Write-CvGpuCapsSummary -Cached $false
     return @($gpuEnc | Where-Object { $map[$_] })
 }
 
 function Test-CvTools {
-    <# Devuelve la lista de herramientas que faltan (vacia = todo OK). #>
-    param([Parameter(Mandatory)]$Context)
+    <# Devuelve la lista de herramientas que faltan (vacia = todo OK). -SkipOptional: sin aacgain. #>
+    param([Parameter(Mandatory)]$Context, [switch]$SkipOptional)
     $missing = @()
+    # Ruta LITERAL: con el programa en una carpeta con corchetes ('D:\Apps [x]\...'), Test-Path los
+    # tomaba por un comodin y daba por faltar herramientas que estaban.
     foreach ($t in 'FFmpeg','FFprobe','FFplay') {
-        if (-not (Test-Path $Context.$t)) { $missing += $Context.$t }
+        if ([string]::IsNullOrWhiteSpace("$($Context.$t)") -or -not (Test-Path -LiteralPath $Context.$t)) { $missing += "$($Context.$t)" }
     }
-    # aacgain solo es necesario si el metodo de volumen es 'aacgain'.
-    if ("$($Context.VolumeMethod)".ToLower() -eq 'aacgain' -and -not (Test-Path $Context.AacGain)) {
-        $missing += $Context.AacGain
+    # aacgain solo es necesario si el metodo de volumen es 'aacgain'. Desatendido NO es imprescindible:
+    # el worker ya aviso de que se seguia sin el (cv.ag.desat), y aqui se le daba por roto y salia.
+    if ("$($Context.VolumeMethod)".ToLower() -eq 'aacgain' -and -not $SkipOptional -and
+        ([string]::IsNullOrWhiteSpace("$($Context.AacGain)") -or -not (Test-Path -LiteralPath $Context.AacGain))) {
+        $missing += "$($Context.AacGain)"
     }
     return $missing
 }

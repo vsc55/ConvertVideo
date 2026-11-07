@@ -361,7 +361,10 @@ function Resolve-CvProgressSpeed {
     )
     $inv = [System.Globalization.CultureInfo]::InvariantCulture
     $spd = 0.0
-    if ([double]::TryParse(($Speed -replace '[^0-9.]', ''), [System.Globalization.NumberStyles]::Float, $inv, [ref]$spd) -and $spd -gt 0) { return $spd }
+    # Solo se quita la 'x' del final: ffmpeg escribe las velocidades de 1000x o mas como '1.23e+03x',
+    # y quitando todo lo que no fuera cifra o punto quedaba '1.2303'.
+    $limpia = ("$Speed".Trim() -replace '(?i)x$', '').Trim()
+    if ([double]::TryParse($limpia, [System.Globalization.NumberStyles]::Float, $inv, [ref]$spd) -and $spd -gt 0) { return $spd }
     if ($Seconds -gt 0 -and $Elapsed -gt 0) { return [double]($Seconds / $Elapsed) }
     return 0.0
 }
@@ -421,12 +424,12 @@ function Invoke-ToolProgress {
     $pubProgress = $null -ne (Get-Command Update-CvWorkerProgress -ErrorAction SilentlyContinue)
 
     while ($null -ne ($line = $reader.ReadLine())) {
-        if     ($line.StartsWith('out_time_us=')) { $n = 0L; if ([long]::TryParse($line.Substring(12), [ref]$n) -and $n -ge 0) { $outSec = $n / 1000000.0; $hasOut = $true } }
-        elseif ($line.StartsWith('frame='))         { $fr = 0L; if ([long]::TryParse($line.Substring(6).Trim(), [ref]$fr) -and $fr -ge 0) { $frames = [double]$fr } }
-        elseif ($line.StartsWith('speed='))        { $speed = $line.Substring(6).Trim() }
-        elseif ($line.StartsWith('bitrate='))       { $bitrate = $line.Substring(8).Trim() }
+        if     ($line.StartsWith('out_time_us=', [System.StringComparison]::Ordinal)) { $n = 0L; if ([long]::TryParse($line.Substring(12), [ref]$n) -and $n -ge 0) { $outSec = $n / 1000000.0; $hasOut = $true } }
+        elseif ($line.StartsWith('frame=', [System.StringComparison]::Ordinal))         { $fr = 0L; if ([long]::TryParse($line.Substring(6).Trim(), [ref]$fr) -and $fr -ge 0) { $frames = [double]$fr } }
+        elseif ($line.StartsWith('speed=', [System.StringComparison]::Ordinal))        { $speed = $line.Substring(6).Trim() }
+        elseif ($line.StartsWith('bitrate=', [System.StringComparison]::Ordinal))       { $bitrate = $line.Substring(8).Trim() }
         elseif ($line -match '^stream_\d+_\d+_q=')  { $qv = ($line -split '=', 2)[1].Trim() }
-        elseif ($line.StartsWith('progress=')) {
+        elseif ($line.StartsWith('progress=', [System.StringComparison]::Ordinal)) {
             # Fin de bloque de progreso: renderizar (limitado a cambio de % o cada 2 s, para no
             # inundar el transcript con cientos de lineas). Los segundos producidos y la velocidad
             # salen de ffmpeg o, si los da como 'N/A', se estiman (Resolve-CvProgressSeconds/Speed).

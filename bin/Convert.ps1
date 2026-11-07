@@ -119,8 +119,9 @@ $cvLog   = $sess.LogFile
 Start-CvWorkerState -Context $ctx -Role $(if ($WorkerOnly) { 'worker' } else { 'convert' }) -LogPath "$cvLog"
 # Abrir el conversor A MANO es un "adelante" explicito: se retira cualquier bandera de parada que
 # hubiera quedado de una sesion anterior (si no, un stop.flag olvidado dejaria la cola muerta sin
-# explicacion). Los workers desatendidos NO la tocan: es justo la orden que tienen que obedecer.
-if (-not $Unattended) { Clear-CvWorkerStop -Context $ctx }
+# explicacion). Los workers desatendidos NO la tocan: es justo la orden que tienen que obedecer. Ni
+# los que abre otro conversor (-WorkerOnly): borraban un 'Parar' pulsado mientras arrancaban.
+if (-not $Unattended -and -not $WorkerOnly) { Clear-CvWorkerStop -Context $ctx }
 
 # Separadores de secciones (ancho comun de la UI; fuente unica en Console.psm1).
 $sepLine  = Get-CvSepLine
@@ -134,6 +135,8 @@ $didInstall = $false
 if (-not (Test-CvToolInstalled -Context $ctx -Name 'ffmpeg' -Version $ctx.FFmpegVersion)) {
     if (-not (Test-CvToolSupported -Context $ctx -Name 'ffmpeg')) {
         Write-Host (Get-CvText -Key 'cv.ff.nosop' -Values @($ctx.Platform)) -ForegroundColor Red
+        Remove-CvWorkerState -Context $ctx
+        if ($cvLog) { Stop-CvLog }
         exit 1
     }
     Write-CvLog 'GLOBAL' (Get-CvText -Key 'cv.ff.falta' -Values @($ctx.FFmpegVersion))
@@ -160,6 +163,8 @@ if (-not (Test-CvToolInstalled -Context $ctx -Name 'ffmpeg' -Version $ctx.FFmpeg
 if ("$($ctx.VolumeMethod)".ToLower() -eq 'aacgain' -and -not (Test-CvToolInstalled -Context $ctx -Name 'aacgain' -Version $ctx.AacGainVersion)) {
     if (-not (Test-CvToolSupported -Context $ctx -Name 'aacgain')) {
         Write-Host (Get-CvText -Key 'cv.ag.nosop' -Values @($ctx.Platform)) -ForegroundColor Red
+        Remove-CvWorkerState -Context $ctx
+        if ($cvLog) { Stop-CvLog }
         exit 1
     }
     Write-CvLog 'GLOBAL' (Get-CvText -Key 'cv.ag.falta' -Values @($ctx.AacGainVersion))
@@ -190,11 +195,14 @@ if ($ctx.StripTags -and [string]::IsNullOrWhiteSpace("$($ctx.MkvPropEditOverride
     }
 }
 
-$missing = Test-CvTools -Context $ctx
+# Desatendido, aacgain no es imprescindible: ya se aviso arriba de que se sigue sin el.
+$missing = @(Test-CvTools -Context $ctx -SkipOptional:$Unattended)
 if ($missing.Count -gt 0) {
     # Si algo falta (o una descarga fallo) se deja el error en pantalla, no se limpia.
     Write-Host (Get-CvText -Key 'cv.faltan') -ForegroundColor Red
     $missing | ForEach-Object { Write-Host ("  - {0}" -f $_) -ForegroundColor Red }
+    Remove-CvWorkerState -Context $ctx
+    if ($cvLog) { Stop-CvLog }
     exit 1
 }
 
@@ -301,6 +309,9 @@ if (-not $WorkerOnly) {
     foreach ($f in $files) {
         $tn = $f.BaseName
         if ($tn.StartsWith('TEST_', [System.StringComparison]::OrdinalIgnoreCase) -and (Test-CvJob -Context $ctx -Name $tn)) {
+            # Uno que esta codificando OTRO worker no se toca: al acabar borraria el job nuevo.
+            $tnLock = Join-Path $ctx.Proceso ("{0}.lock" -f $tn)
+            if ((Test-Path -LiteralPath $tnLock) -and -not (Test-CvLockStale $tnLock)) { continue }
             Remove-CvJob -Context $ctx -Name $tn
             Write-CvLog 'GLOBAL' (Get-CvText -Key 'cv.test.job' -Values @($tn))
         }
@@ -598,6 +609,8 @@ while ($didAny) {
             # Se ha tirado el video recodificado y se usa el del original (solo puede pasar en el
             # pipeline por etapas; se declara aqui porque el resumen de mas abajo lo mira).
             $vOriginal = $false
+            # La comparacion fina (pista contra pista, por etapas) ya decidio: la del final no la deshace.
+            $keepExacto = $false
             # Ejecucion en UNA sola pasada (RC, activada de serie) si el job es elegible; si no, por etapas.
             # Indice de la pista de video elegida (congelado en PREPARAR); jobs antiguos sin el campo -> -1.
             $vIdxOne = $(if ($null -ne $job.video.index) { [int]$job.video.index } else { -1 })
@@ -686,6 +699,10 @@ while ($didAny) {
                     -Hdr ([bool]$job.video.hdr) -TonemapHdr "$($jctx.TonemapHdr)" `
                     -SrcFps (Get-CvMediaFps -Info $info) -OutFps (Get-CvOutputFps -Context $jctx -Info $info) `
                     -SrcWidth ([int]$vSrcOne.width) -SrcHeight ([int]$vSrcOne.height)
+                # Con el tamano de la pista original SABIDO (no la cota del fichero entero), esta es la
+                # decision buena: la ultima palabra compara ficheros enteros, y un audio de salida mas
+                # gordo (FLAC, mas pistas) le hacia devolver el video original aunque ocupara MAS.
+                if ($encBytes -gt 0 -and "$($origV.From)" -in @('tag', 'bitrate', 'bps')) { $keepExacto = $true }
                 $keep  = Get-CvVideoKeepPlan -EncodedBytes $encBytes -OriginalBytes ([long]$origV.Bytes) -Enabled $true `
                     -Ratio ([double]$jctx.KeepOriginalRatio) -Untouched ([bool]$img.Untouched)
                 if ([bool]$keep.UseOriginal) {
@@ -706,7 +723,7 @@ while ($didAny) {
                 $ok = $false
             } else {
                 if ($jctx.Debug) { Write-Host '' }
-                $ok = Invoke-Multiplex -Context $jctx -File $f.FullName -Info $info -VideoSkipped $vSkip -AudioSkipped ([bool]$job.audio.skip) -AudioTracks $audioTracks -Subtitles $job.subtitles -VideoIndex $vIdx -VideoFromSource $vOriginal
+                $ok = Invoke-Multiplex -Context $jctx -File $f.FullName -Info $info -VideoSkipped $vSkip -AudioSkipped ([bool]$job.audio.skip) -AudioTracks $audioTracks -Subtitles $job.subtitles -VideoIndex $vIdx -VideoFromSource $vOriginal -Attachments @($spec.Attachments)
                 if (-not $ok) { $failReason = (Get-CvText -Key 'cv.mux.mal') }
             }
             }   # fin del pipeline por etapas (else de la ejecucion unica)
@@ -718,7 +735,7 @@ while ($didAny) {
             # escapar casos. Esto es la red de seguridad, y no estima nada: si la SALIDA ha quedado
             # mas grande que la ENTRADA y la imagen no se ha tocado, se le cambia la pista de video
             # por la del original con un remux (el audio y los subtitulos ya estan hechos).
-            if ($ok -and -not $vOriginal -and -not [bool]$job.video.skip -and
+            if ($ok -and -not $vOriginal -and -not $keepExacto -and -not [bool]$job.video.skip -and
                 (Get-CvJobKeepOriginal -Job $job -Default ([bool]$jctx.KeepOriginal))) {
                 $outFin = Get-OutputPath $jctx $name
                 $imgFin = Get-CvVideoPictureState -Crop "$($job.video.crop)" -Resize "$($job.video.resize)" `
@@ -756,12 +773,18 @@ while ($didAny) {
 
                 # Control de calidad de la salida vs origen (encode.qualityCheck; no en 'copy'). Es una
                 # pasada extra de ffmpeg (fuera del tiempo de conversion de arriba); fail-soft.
-                if ($ctx.QualityCheck -ne 'off' -and -not $job.video.skip -and -not $vOriginal) {
+                # Un HDR pasado a SDR no se mide: la referencia sigue en PQ/HLG y la nota saldria mala
+                # aunque la imagen este bien (no son comparables).
+                $qTonemap = ([bool]$job.video.hdr -and "$($jctx.TonemapHdr)".ToLower() -ne 'off')
+                if ($ctx.QualityCheck -ne 'off' -and -not $job.video.skip -and -not $vOriginal -and $qTonemap) {
+                    Write-CvLog 'WORKER' (Get-CvText -Key 'cv.qc.hdr' -Values @($ctx.QualityCheck.ToUpper()))
+                }
+                elseif ($ctx.QualityCheck -ne 'off' -and -not $job.video.skip -and -not $vOriginal) {
                     # Measure-CvQuality muestra su propia linea de progreso en vivo (Invoke-ToolProgress).
                     $qScore = Measure-CvQuality -Context $jctx -Source $f.FullName -Output $out -Metric $ctx.QualityCheck `
                         -Crop "$($job.video.crop)" -VideoIndex $(if ($null -ne $job.video.index) { [int]$job.video.index } else { -1 })
                     if ($null -ne $qScore) {
-                        $qTxt = if ($ctx.QualityCheck -eq 'vmaf') { "{0} / 100" -f (Format-CvNumber $qScore) } else { "{0}  (0-1, 1 = identico)" -f (Format-CvNumber $qScore) }
+                        $qTxt = if ($ctx.QualityCheck -eq 'vmaf') { "{0} / 100" -f (Format-CvNumber $qScore) } else { (Get-CvText -Key 'cv.qc.ssim' -Values @((Format-CvNumber $qScore))) }
                         Write-CvLog 'WORKER' (Get-CvText -Key 'cv.qc' -Values @($ctx.QualityCheck.ToUpper(), $qTxt))
                     } else {
                         Write-CvLog 'WORKER' (Get-CvText -Key 'cv.qc.no' -Values @($ctx.QualityCheck))

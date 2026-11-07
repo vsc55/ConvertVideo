@@ -216,6 +216,15 @@ function Get-CvVideoQualityPair {
     $geo = Get-CvOutputSize -Width $Width -Height $Height -Crop $Crop -Resize $Resize
     if ([int]$geo.Width -le 0) { return $res }
     $ow = $(if ("$Resize" -match 'setsar=1') { [int]$geo.Width } else { Get-CvDisplayWidth -Width ([int]$geo.Width) -Sar $Sar })
+    # Con un 'W:H' FIJO que cambia la proporcion almacenada, scale reajusta el SAR para conservar la
+    # proporcion MOSTRADA: el ancho mostrado sale del de la entrada, no del SAR de origen (un HDV
+    # 1440x1080 4:3 a '1280:720' es un 1280x720 cuadrado, no 1707 de ancho).
+    $spec = (("$Resize" -split ',')[0]).Trim()
+    if ("$Resize" -notmatch 'setsar=1' -and $spec -match '^(\d+):(\d+)$' -and [int]$Matches[1] -gt 0 -and [int]$Matches[2] -gt 0) {
+        $iw = if ([bool]$geo.Cropped) { [int]$geo.CropWidth } else { $Width }
+        $ih = if ([bool]$geo.Cropped) { [int]$geo.CropHeight } else { $Height }
+        if ($ih -gt 0) { $ow = [int][math]::Floor((Get-CvDisplayWidth -Width $iw -Sar $Sar) * [double]$geo.Height / $ih + 0.5) }
+    }
     $res.Output = Get-CvVideoQuality -Width $ow -Height ([int]$geo.Height) -Tolerance $Tolerance
     return $res
 }
@@ -499,8 +508,10 @@ function Find-CropDetectSamples {
     if ($Samples -lt 1)  { $Samples = 1 }
 
     if ($Samples -le 1 -or $VideoDuration -le 0) {
-        $p0 = @(Get-CvBorderSamplePositions -VideoDuration $VideoDuration -Window $Duration -Head $Start -Tail $Tail -Samples 1)[0]
-        $c = Find-CropDetect -Context $Context -File $File -Start $p0 -Duration $Duration -Index $Index
+        # Con el mismo suelo de 5 s que los demas puntos (y que ensena la ventana).
+        $win1 = Get-CvCropSampleWindow -Duration $Duration
+        $p0 = @(Get-CvBorderSamplePositions -VideoDuration $VideoDuration -Window $win1 -Head $Start -Tail $Tail -Samples 1)[0]
+        $c = Find-CropDetect -Context $Context -File $File -Start $p0 -Duration $win1 -Index $Index
         $g = if ($c) {
             @([pscustomobject]@{
                 Crop  = $c
@@ -903,7 +914,15 @@ function Invoke-VideoAsk {
             while (-not $done -and -not $reScan) {
                 $crop = $null
                 if ($autoWin) {
+                    # La UNION de lo que vio cada punto (Merge-CvCropBoxes), no el mas votado: con
+                    # votos, varios planos oscuros ganaban a la muestra que veia el fotograma entero y
+                    # el recorte cortaba imagen (y con la pregunta con tiempo, se aceptaba solo).
                     $crop = $groups[0].Crop
+                    if ($groups.Count -gt 1) {
+                        $union = Merge-CvCropBoxes -Boxes @($groups | ForEach-Object { "$($_.Crop)" }) `
+                            -Width ([int]$vstream.width) -Height ([int]$vstream.height) -MinPct ([double]$Context.BorderMinCropPct)
+                        $crop = "$union"   # '' = algun punto ve la imagen entera: no hay barra que quitar
+                    }
                 } else {
                     # Numero alineado a la derecha (Get-CvMenuNumWidth) para que las etiquetas queden
                     # en columna con indices de 1 y 2+ cifras; 'M'/'R'/'0' se alinean igual.
@@ -978,10 +997,13 @@ function Invoke-VideoAsk {
     # ya es <= el destino, no se reescala (no se amplia). MaxWidth reduce solo HACIA ABAJO: se decide
     # AQUI comparando el ancho de origen; si es mayor se reescala a ese ancho ('W:-2' = mantiene
     # aspecto y altura par), y si ya es <= no se reescala (Resize vacio). ChangeSize tiene prioridad.
+    # Con recorte, el escalado se decide sobre el tamaño RECORTADO (Get-CvCroppedSize): con el de
+    # origen, 'square' aplastaba la imagen y maxWidth podia ampliar un recorte mas estrecho.
+    $tam = Get-CvCroppedSize -Width ([int]$vstream.width) -Height ([int]$vstream.height) -Crop "$($res.Crop)"
     if ($Prof.ChangeSize) {
         if ([bool]$Prof.NoUpscale) {
-            $sw = [int]$vstream.width
-            $sh = [int]$vstream.height
+            $sw = [int]$tam.Width
+            $sh = [int]$tam.Height
             $cs = Get-CvChangeSizeResize -ChangeSize $Prof.ChangeSize -Width $sw -Height $sh
             if ($cs) { $res.Resize = $cs }
             else { Write-CvLog 'VIDEO' (Get-CvText -Key 'vd.rs.noampl' -Values @($sw, $sh, $Prof.ChangeSize)) -Indent 3 }
@@ -994,8 +1016,8 @@ function Invoke-VideoAsk {
         # el que se ve. Con Anamorphic 'square'/'squareheight' se cuadra a pixeles cuadrados (setsar=1)
         # aunque no haya maxWidth; con 'keep' solo se capa por maxWidth conservando el SAR del origen.
         $mw   = if ($null -ne $Prof.MaxWidth -and [int]$Prof.MaxWidth -gt 0) { [int]$Prof.MaxWidth } else { 0 }
-        $sw   = [int]$vstream.width
-        $sh   = [int]$vstream.height
+        $sw   = [int]$tam.Width
+        $sh   = [int]$tam.Height
         $sar  = "$($vstream.sample_aspect_ratio)"
         $dw   = Get-CvDisplayWidth -Width $sw -Sar $sar
         $anam = $anamMode   # modo elegido en la pregunta anamorfica (o el configurado si no se pregunto)
@@ -1050,7 +1072,7 @@ function Get-VideoArgs {
     # Tuning del encoder (preset por familia, rc-lookahead NVENC, refs x26x, tier hevc): fuente unica
     # encode.video.tuning via el Context. Si el Context no lo trae (contextos sinteticos de test), se
     # cae a los defaults de config, para no hardcodear los valores aqui.
-    $tune        = (Get-CvConfigDefaults).encode.video.tuning
+    $tune        = (Get-CvConfigDefaultsShared).encode.video.tuning
     $presetNvenc = if ("$($Context.PresetNvenc)")    { "$($Context.PresetNvenc)" }    else { "$($tune.presetNvenc)" }
     $presetX26x  = if ("$($Context.PresetX26x)")     { "$($Context.PresetX26x)" }     else { "$($tune.presetX26x)" }
     $presetSvt   = if ("$($Context.PresetSvtav1)")   { "$($Context.PresetSvtav1)" }   else { "$($tune.presetSvtav1)" }
@@ -1137,19 +1159,21 @@ function Get-VideoArgs {
 
 function Get-CvTonemapFormat {
     <#
-        Pixel format del tone-mapping HDR->SDR con perfil main10 (10 bits): 'p010le' en los encoders
-        NVENC/HEVC (hevc_nvenc/libx265/av1_nvenc) y 'yuv420p10le' en SVT-AV1 (libsvtav1); 'yuv420p'
-        (8 bits) en el resto.
+        Pixel format del tone-mapping HDR->SDR: el MISMO que luego pide el encoder (Get-VideoArgs), para
+        que no haya otra conversion entre medias ni se pierdan bits. 10 bits = 'p010le' en NVENC
+        (hevc_nvenc/av1_nvenc) y 'yuv420p10le' en CPU (libx265, libx264 high10, libsvtav1); si no,
+        'yuv420p'. Antes libx264 high10 salia del tonemap en 8 bits (y se rellenaba a 10: bandas) y
+        libx265 en p010le (una conversion de mas).
     #>
     param([string]$VideoProfile, [string]$VideoEncoder)
-    $p010Encoders = @(
-        'hevc_nvenc'
-        'libx265'
-        'av1_nvenc'
-    )
-    if ("$VideoProfile" -eq 'main10') {
-        if ($VideoEncoder -in $p010Encoders)  { return 'p010le' }
-        if ($VideoEncoder -eq 'libsvtav1')    { return 'yuv420p10le' }
+    $diez = ("$VideoProfile" -in @('main10', 'high10'))
+    if (-not $diez) { return 'yuv420p' }
+    switch ("$VideoEncoder") {
+        'hevc_nvenc' { if ("$VideoProfile" -eq 'main10') { return 'p010le' } }
+        'av1_nvenc'  { if ("$VideoProfile" -eq 'main10') { return 'p010le' } }
+        'libx265'    { return 'yuv420p10le' }
+        'libx264'    { return 'yuv420p10le' }
+        'libsvtav1'  { if ("$VideoProfile" -eq 'main10') { return 'yuv420p10le' } }
     }
     return 'yuv420p'
 }

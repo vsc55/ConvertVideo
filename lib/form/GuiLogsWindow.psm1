@@ -135,7 +135,9 @@ function Show-CvLogsWindow {
     $btnDel.Add_Click({
         $l = & $current
         if ($null -eq $l) { return }
-        if ($l.IsCurrent) { Show-CvGuiInfo -Title (Get-CvText -Key 'logs.tit') -Message (Get-CvText -Key 'logs.enuso'); return }
+        # El de esta sesion, o uno que tiene abierto otra (un worker): no se puede borrar, y antes el
+        # fallo se callaba y el log volvia a salir como si nada.
+        if ($l.IsCurrent -or [bool]$l.InUse) { Show-CvGuiInfo -Title (Get-CvText -Key 'logs.tit') -Message (Get-CvText -Key 'logs.enuso'); return }
         if (-not (Show-CvGuiConfirm -Title (Get-CvText -Key 'logs.del.tit') -Message (Get-CvText -Key 'logs.del.msg' -Values @($l.Name)))) { return }
         Remove-Item -Force -LiteralPath $l.Path -ErrorAction SilentlyContinue
         $txt.Text = ''

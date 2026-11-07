@@ -76,21 +76,20 @@ function Get-CvSetupProfilesText {
     $serie = @(Get-CvBuiltinProfileRows).Count
     $sb = New-Object System.Text.StringBuilder
     if ($rows.Count -eq 0) {
-        [void]$sb.AppendLine('No hay perfiles propios guardados.')
+        [void]$sb.AppendLine((Get-CvText -Key 'setup.perf.ninguno'))
         [void]$sb.AppendLine('')
-        [void]$sb.AppendLine('Con "Perfiles..." creas uno y aparece en el menu de perfiles al preparar,')
-        [void]$sb.AppendLine('tanto en la ventana de la cola como en la consola.')
-        [void]$sb.AppendLine(("Ahi estan tambien los {0} de serie: no se editan, pero se DUPLICAN para partir de ellos." -f $serie))
+        [void]$sb.AppendLine((Get-CvText -Key 'setup.perf.como'))
+        [void]$sb.AppendLine((Get-CvText -Key 'setup.perf.serie0' -Values @($serie)))
         return $sb.ToString()
     }
-    [void]$sb.AppendLine(("{0} perfil(es) propios en {1}:" -f $rows.Count, (Split-Path -Leaf $CfgPath)))
+    [void]$sb.AppendLine((Get-CvText -Key 'setup.perf.cuantos' -Values @($rows.Count, (Split-Path -Leaf $CfgPath))))
     [void]$sb.AppendLine('')
     foreach ($r in $rows) {
         [void]$sb.AppendLine(("  {0}" -f $r.Label))
         [void]$sb.AppendLine(("      {0}" -f $r.Text))
     }
     [void]$sb.AppendLine('')
-    [void]$sb.AppendLine(("Y los {0} de serie, que salen en la misma ventana en solo lectura: no se editan, pero se DUPLICAN para partir de ellos." -f $serie))
+    [void]$sb.AppendLine((Get-CvText -Key 'setup.perf.serie' -Values @($serie)))
     return $sb.ToString()
 }
 
@@ -98,15 +97,16 @@ function Get-CvSetupGpuText {
     <# Sonda EN VIVO de los encoders por GPU como texto (lo mismo que Show-GpuStatus, sin badges). #>
     param([Parameter(Mandatory)]$Context)
     $L = New-Object System.Collections.Generic.List[string]
-    $L.Add('Codecs por GPU (NVENC) soportados por esta grafica (comprobacion en vivo):')
+    $L.Add((Get-CvText -Key 'setup.gpu.cab'))
     $g = Get-CvSetupGpuStatus -Context $Context
-    $L.Add(("  GPU: {0}" -f $(if ($g.Gpu) { $g.Gpu } else { '(no detectada)' })))
+    $L.Add((Get-CvText -Key 'setup.gpu.nombre' -Values @($(if ($g.Gpu) { $g.Gpu } else { (Get-CvText -Key 'setup.gpu.nodet') }))))
     if (-not $g.Ready) {
-        $L.Add('  [AVISO] - ffmpeg no instalado: no se puede comprobar. Instala ffmpeg primero.')
+        # El marcador [AVISO] no se traduce (es para buscarlo), el resto si.
+        $L.Add(("  [AVISO] - {0}" -f (Get-CvText -Key 'setup.gpu.sinff')))
         return ($L -join [Environment]::NewLine)
     }
     foreach ($e in $g.Encoders) {
-        $txt = if ($e.Ok) { 'soportado' } else { 'NO soportado' }
+        $txt = if ($e.Ok) { (Get-CvText -Key 'setup.gpu.si') } else { (Get-CvText -Key 'setup.gpu.no') }
         $L.Add(("  {0} {1,-12} {2}" -f (Get-CvMark $e.Ok), $e.Name, $txt))
     }
     return ($L -join [Environment]::NewLine)

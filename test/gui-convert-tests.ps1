@@ -146,9 +146,21 @@ function Connect-Tools {
     } catch { return $false }
 }
 
+# Un lock VIVO es el que su dueno tiene ABIERTO (como Enter-Lock): con el PID de este proceso se deja
+# abierto (compartiendo el borrado, para que el test pueda quitarlo); con uno muerto, cerrado.
+$script:fakeLocks = @{}
 function New-FakeLock {
     param([string]$Name, [int]$OwnerPid)
-    Set-Content -Path (Join-Path $ctx.Proceso ("{0}.lock" -f $Name)) -Value ("PID={0};HOST={1}" -f $OwnerPid, $env:COMPUTERNAME) -Encoding UTF8
+    $p = Join-Path $ctx.Proceso ("{0}.lock" -f $Name)
+    if ($script:fakeLocks.ContainsKey($p)) { $script:fakeLocks[$p].Dispose(); $script:fakeLocks.Remove($p) }
+    if ($OwnerPid -ne $PID) {
+        Set-Content -Path $p -Value ("PID={0};HOST={1}" -f $OwnerPid, $env:COMPUTERNAME) -Encoding UTF8
+        return
+    }
+    $fs = [System.IO.File]::Open($p, 'Create', 'ReadWrite', ([System.IO.FileShare]::Read -bor [System.IO.FileShare]::Delete))
+    $b = [System.Text.Encoding]::UTF8.GetBytes(("PID={0};HOST={1}" -f $OwnerPid, $env:COMPUTERNAME))
+    $fs.Write($b, 0, $b.Length); $fs.Flush()
+    $script:fakeLocks[$p] = $fs
 }
 
 try {
@@ -307,9 +319,12 @@ Assert-True 'Parada: se pide'             (Set-CvWorkerStop -Context $ctx)
 Assert-True 'Parada: se ve'               (Test-CvWorkerStop -Context $ctx)
 Clear-CvWorkerStop -Context $ctx
 Assert-Eq   'Parada: se retira'           $false (Test-CvWorkerStop -Context $ctx)
-# La bandera vive en Proceso\ y se limpia con los bloqueos (patrones de Job.psm1).
+# La bandera vive en Proceso\ y es de los bloqueos (patrones de Job.psm1)... pero mientras haya un
+# archivo EN CURSO (aqui, el lock vivo sembrado de Serie_1x02) la limpieza no se la lleva: los workers
+# la miran entre archivo y archivo, y quitarla tras pulsar Parar hacia que siguieran.
 [void](Set-CvWorkerStop -Context $ctx)
-Assert-True 'Parada: la recoge la limpieza' (@(Get-CvSetupCleanTargets -Context $ctx -What locks | ForEach-Object { $_.Name }) -contains 'stop.flag')
+Assert-True 'Parada: es de los bloqueos'     ((Get-CvProcesoPatterns -What locks) -contains 'stop.flag')
+Assert-True 'Parada: con trabajo en curso, la limpieza no la quita' (-not (@(Get-CvSetupCleanTargets -Context $ctx -What locks | ForEach-Object { $_.Name }) -contains 'stop.flag'))
 Clear-CvWorkerStop -Context $ctx
 
 # Sin ffmpeg instalado en el root temporal NO se puede trabajar: se avisa con el motivo (y con las
@@ -2406,6 +2421,7 @@ Remove-Item -LiteralPath $onlyEco, $onlySal -Force -ErrorAction SilentlyContinue
 Remove-CvWorkerState -Context $ctx
 
 } finally {
+    foreach ($h in @($script:fakeLocks.Values)) { try { $h.Dispose() } catch { } }
     Remove-Item -Recurse -Force -LiteralPath $tmpRoot -ErrorAction SilentlyContinue
 }
 

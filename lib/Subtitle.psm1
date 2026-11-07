@@ -223,10 +223,21 @@ function Split-CvSubtitlesByRole {
         $known = @($counts.Values | Where-Object { $_ -ge 0 })
         if ($known.Count -ge 1) {
             $max = ($known | Measure-Object -Maximum).Maximum
+            # El maximo se toma entre pistas del MISMO codec: un PGS cuenta ~2 paquetes por frase
+            # (aparecer y borrar), y un SRT completo junto a un PGS completo salia "forzado".
+            $maxDe = @{}
+            foreach ($s in $pref) {
+                $c = "$($s.codec_name)".ToLower()
+                $n = [int]$counts[[int]$s.index]
+                if (-not $maxDe.ContainsKey($c) -or $n -gt $maxDe[$c]) { $maxDe[$c] = $n }
+            }
             if ($max -gt 0) {
                 # > 0, no >= 0: una pista de 0 cues (vacia) no es un "forzado pequeño"; se deja como
                 # completa para que no herede default+forced (normalmente ya la filtro Select-Subtitles).
-                $f = @($pref | Where-Object { $counts[[int]$_.index] -gt 0 -and $counts[[int]$_.index] -lt ($max * 0.5) })
+                $f = @($pref | Where-Object {
+                    $n = $counts[[int]$_.index]
+                    $n -gt 0 -and $n -lt ($maxDe["$($_.codec_name)".ToLower()] * 0.5)
+                })
                 return @{
                     Forced   = $f
                     Complete = @($pref | Where-Object { $f -notcontains $_ })
@@ -333,7 +344,8 @@ function Export-CvSubtitleFile {
     $ext   = Get-CvSubtitleFileExt -Codec $codec -Context $Context
     if ($ext -eq '') { return '' }
     [void](Clear-CvSubtitleViewTemps -Hours ([int]$Context.SubtitleTempHours))
-    $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("cv_sub_{0}_{1}{2}" -f ([System.IO.Path]::GetFileNameWithoutExtension($File)), $idx, $ext)
+    # Con el PID: dos ventanas que miran la misma pista se pisaban (o se borraban) el fichero.
+    $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("cv_sub_{0}_{1}_{2}{3}" -f ([System.IO.Path]::GetFileNameWithoutExtension($File)), $idx, $PID, $ext)
     $ok = {
         param([string]$Path)
         (Test-Path -LiteralPath $Path) -and ((Get-Item -LiteralPath $Path).Length -gt 0)
@@ -391,10 +403,11 @@ function Show-SubtitleContent {
         return
     }
     [void](Clear-CvSubtitleViewTemps -Hours ([int]$Context.SubtitleTempHours))
-    $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("cv_sub_{0}_{1}.srt" -f ([System.IO.Path]::GetFileNameWithoutExtension($File)), $idx)
+    $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("cv_sub_{0}_{1}_{2}.srt" -f ([System.IO.Path]::GetFileNameWithoutExtension($File)), $idx, $PID)
     if (Test-Path -LiteralPath $tmp) { Remove-Item -Force -LiteralPath $tmp -ErrorAction SilentlyContinue }
     [void](Invoke-ToolCapture -Exe $Context.FFmpeg -Arguments @('-hide_banner','-loglevel','error','-y','-i',$File,'-map',"0:$idx",'-c:s','srt',$tmp) -Context $Context)
-    if (Test-Path -LiteralPath $tmp) {
+    # Vacio = ffmpeg no saco nada: no se abre un .srt de 0 bytes como si fuera la pista.
+    if ((Test-Path -LiteralPath $tmp) -and ((Get-Item -LiteralPath $tmp).Length -gt 0)) {
         # Modo/exe efectivos: el override puntual del comando 'V N <modo> [exe]' si viene; si no, lo
         # configurado (Context). Cada uno cae por separado a lo configurado, asi que 'V N external' sin
         # exe usa el .exe de preview.subtitleEditorExe.

@@ -54,7 +54,10 @@ function Save-CvTextFile {
         [System.IO.File]::WriteAllText($Path, $Text, $enc)
         return $Path
     }
-    $tmp = "$Path.tmp"
+    # El temporal lleva el PID: con un nombre fijo, dos procesos que guardaban el mismo fichero a la vez
+    # (varios workers dejando la cache de la GPU en config.json) chocaban en el .tmp o publicaban lo
+    # del otro. Get-CvProcesoPatterns y Remove-CvTemps conocen este nombre.
+    $tmp = "{0}.{1}.tmp" -f $Path, $PID
     [System.IO.File]::WriteAllText($tmp, $Text, $enc)
     # REINTENTOS: el fichero destino puede estar abierto un instante por quien lo lee (la ventana de
     # la cola relee los estados de los workers, y tambien pasa el antivirus o el propio explorador),
@@ -119,6 +122,26 @@ function Get-CvFileStamp {
         return ("{0}|{1}|{2}" -f $Path, $fi.Length, $fi.LastWriteTimeUtc.Ticks)
     } catch {
         return ("{0}|?" -f $Path)
+    }
+}
+
+function Test-CvFileInUse {
+    <#
+        $true si algun proceso tiene el fichero ABIERTO (se prueba a abrirlo sin compartir nada). Para
+        no contar como borrable el log de otra sesion o de un worker, que Start-Transcript tiene
+        abierto: se contaba, se intentaba borrar y salia como error.
+    #>
+    param([Parameter(Mandatory)][string]$Path)
+    try {
+        $fs = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+        $fs.Dispose()
+        return $false
+    } catch [System.IO.FileNotFoundException] {
+        return $false
+    } catch [System.IO.IOException] {
+        return $true
+    } catch {
+        return $false
     }
 }
 

@@ -148,6 +148,8 @@ function New-CvContext {
 
     $cfgFile = if ([string]::IsNullOrWhiteSpace($ConfigPath)) { Get-CvDefaultConfigPath -Root $Root } else { $ConfigPath }
     $cfg = Get-CvConfig -Root $Root -Path $cfgFile
+    # La salida de audio global en vigor, para los perfiles que no la fijan (Get-CvActiveEncodeAudio).
+    Set-CvActiveEncodeAudio -Audio $cfg.encode.audio
     # Defaults (fuente unica): se usan como fallback cuando un valor de $cfg es INVALIDO (no cuando
     # falta, que ya lo cubre la fusion de Get-CvConfig). Asi los numeros/opciones por defecto viven
     # SOLO en Get-CvConfigDefaults y no se re-hardcodean aqui.
@@ -580,7 +582,9 @@ function ConvertTo-InvDouble {
     $out = 0.0
     $t = "$Text".Trim()
     if ($t -match '^[-+]?\d+,\d+$') { $t = $t.Replace(',', '.') }
-    if ([double]::TryParse($t, [System.Globalization.NumberStyles]::Float, $inv, [ref]$out)) { return $out }
+    # NaN / Infinito no son un numero que se pueda usar (y un NaN en el job ni siquiera es JSON valido).
+    if ([double]::TryParse($t, [System.Globalization.NumberStyles]::Float, $inv, [ref]$out) -and
+        -not [double]::IsNaN($out) -and -not [double]::IsInfinity($out)) { return $out }
     return $null
 }
 

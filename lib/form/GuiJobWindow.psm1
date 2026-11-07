@@ -73,6 +73,9 @@ function Show-CvJobWindow {
         CropPct    = $CropPct # % de los puntos del escaneo que ven ese recorte
         CropKind = ''         # con que parametros se escaneo: 'auto' (pre-escaneo) o 'full'
         CropNote = ''         # que se decidio con esos bordes, para contarlo abajo
+        AutoResize = $null    # el escalado que salio SOLO (del perfil); si el campo sigue asi, se rehace
+        Head     = ''         # la cabecera de cuando acabo el analisis ($restoreHead)
+        Leido    = $null      # el job ya leido de disco al analizar (no se lee dos veces)
         SyncNotes = @()       # retardos de audio detectados (se aplican y se cuentan, como en consola)
         EditA    = $null      # la fila de audio que estan editando los campos de su barra
         EditS    = $null      # idem en subtitulos (ver los manejadores de los campos de texto)
@@ -439,7 +442,8 @@ function Show-CvJobWindow {
         if ($null -eq $r) { return }
         $r.Lang = (ConvertTo-CvJobLangCode $txtLang.Text)
         $v = ConvertTo-InvDouble (($txtSync.Text.Trim()) -replace ',', '.')
-        if ($null -ne $v) { $r.Sync = [double]$v }
+        # Negativo no: el encode solo aplica retardos > 0 (al campo vuelve lo que habia).
+        if ($null -ne $v -and $v -ge 0) { $r.Sync = [double]$v }
         $st.Loading = $true
         try {
             $txtLang.Text = "$($r.Lang)"
@@ -509,6 +513,24 @@ function Show-CvJobWindow {
         } finally { $st.Loading = $false }
     }
 
+    # El escalado que sale SOLO del perfil para el recorte y la pista de ahora (Get-CvJobResize: el
+    # filtro va 'crop' y despues 'scale', asi que depende del recorte).
+    $calcResize = {
+        $vo = @(@($st.VidOpts) | Where-Object { [int]$_.Index -eq [int]$st.Draft.VideoIndex })
+        if ($vo.Count -eq 0 -or $null -eq $st.Draft.Prof) { return $null }
+        return (Get-CvJobResize -Context $Context -Prof $st.Draft.Prof -Video $vo[0] -Crop "$($st.Draft.Crop)")
+    }
+    # Tras cambiar el recorte o la pista: si el escalado es el automatico (no se ha tecleado otro), se
+    # rehace para el recorte nuevo; uno escrito a mano no se toca.
+    $reResize = {
+        if ($null -eq $st.Draft) { return }
+        if ("$($st.Draft.Resize)" -ne "$($st.AutoResize)") { return }
+        $nuevo = & $calcResize
+        if ($null -eq $nuevo) { return }
+        $st.Draft.Resize = "$nuevo"
+        $st.AutoResize   = "$nuevo"
+    }
+
     # ---- Manejadores ----
     $cmbProf.Add_SelectedIndexChanged({
         if ($st.Loading -or $st.Closing) { return }
@@ -523,12 +545,22 @@ function Show-CvJobWindow {
         $st.Draft.VideoSkip = $nd.VideoSkip
         $st.Draft.AudioSkip = $nd.AudioSkip
         $st.Draft.Resize    = $nd.Resize
+        $st.AutoResize      = $nd.Resize
         $st.Draft.Anim      = $nd.Anim
         # El recorte tambien depende del perfil (AUTO-BORDE): se aplica al cambiarlo. El escaneo solo
         # se hace la primera vez -no depende del perfil-, asi que cambiar de perfil no vuelve a leer
         # el video salvo que se pase de pre-escaneo a escaneo completo.
-        $form.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
-        try { & $autoCrop $p } finally { $form.Cursor = [System.Windows.Forms.Cursors]::Default }
+        # Ventana APAGADA mientras escanea: el DoEvents de $say dejaba pulsar otra vez el desplegable
+        # (flecha abajo varias veces) y se anidaban escaneos, y el de fuera acababa decidiendo el
+        # recorte con el perfil de ANTES. Al acabar vuelve la cabecera (con sus motivos).
+        $form.Cursor  = [System.Windows.Forms.Cursors]::WaitCursor
+        $form.Enabled = $false
+        try { & $autoCrop $p } finally {
+            $form.Enabled = $true
+            $form.Cursor  = [System.Windows.Forms.Cursors]::Default
+            & $restoreHead
+        }
+        & $reResize
         & $syncVideoControls
         & $validate
         if ("$($st.CropNote)" -ne '') {
@@ -547,11 +579,12 @@ function Show-CvJobWindow {
         $st.Draft.VideoSkip = $nd.VideoSkip
         $st.Draft.AudioSkip = $nd.AudioSkip
         $st.Draft.Resize    = $nd.Resize
+        $st.AutoResize      = $nd.Resize
         $st.Draft.Anim      = $nd.Anim
         $lblTuned = Format-CvProfileLabel -Prof $tuned
         $own = [pscustomobject]@{
             Key    = 'job'
-            Text   = ("(el de este job) {0}" -f $lblTuned)
+            Text   = (Get-CvText -Key 'job.prof.este' -Values @($lblTuned))
             Group  = 'job'
             Prof   = $tuned
             IsAuto = $false
@@ -568,8 +601,14 @@ function Show-CvJobWindow {
             $cmbProf.SelectedIndex = 0
         } finally { $st.Loading = $false }
         # Si el perfil ajustado pide bordes, se aplican igual que al cambiarlo en el desplegable.
-        $form.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
-        try { & $autoCrop $tuned } finally { $form.Cursor = [System.Windows.Forms.Cursors]::Default }
+        $form.Cursor  = [System.Windows.Forms.Cursors]::WaitCursor
+        $form.Enabled = $false
+        try { & $autoCrop $tuned } finally {
+            $form.Enabled = $true
+            $form.Cursor  = [System.Windows.Forms.Cursors]::Default
+            & $restoreHead
+        }
+        & $reResize
         & $syncVideoControls
         & $validate
         if ("$($st.CropNote)" -ne '') {
@@ -581,7 +620,14 @@ function Show-CvJobWindow {
         if ($st.Loading -or $st.Closing) { return }
         $vo = @($st.VidOpts)
         $i = $cmbVid.SelectedIndex
-        if ($i -ge 0 -and $i -lt $vo.Count) { $st.Draft.VideoIndex = [int]$vo[$i].Index }
+        if ($i -ge 0 -and $i -lt $vo.Count -and [int]$vo[$i].Index -ne [int]$st.Draft.VideoIndex) {
+            $st.Draft.VideoIndex = [int]$vo[$i].Index
+            # Los bordes escaneados eran de la OTRA pista, y el escalado se decidio con su tamaño.
+            $st.CropScan = $null
+            $st.CropKind = ''
+            & $reResize
+            & $syncVideoControls
+        }
         & $validate
     })
     $chkCopy.Add_CheckedChanged({
@@ -596,9 +642,19 @@ function Show-CvJobWindow {
         if ($st.Loading -or $st.Closing) { return }
         $st.Draft.Crop = $txtCrop.Text.Trim()
         $btnPrev.Enabled = ((-not [bool]$st.Draft.VideoSkip) -and $st.Draft.Crop -ne '')
+        $antes = "$($st.Draft.Resize)"
+        & $reResize
+        if ("$($st.Draft.Resize)" -ne $antes) {
+            $st.Loading = $true
+            try { $txtResize.Text = "$($st.Draft.Resize)" } finally { $st.Loading = $false }
+        }
         & $validate
     })
-    $txtResize.Add_TextChanged({ if (-not ($st.Loading -or $st.Closing)) { $st.Draft.Resize = $txtResize.Text.Trim() } })
+    $txtResize.Add_TextChanged({
+        if ($st.Loading -or $st.Closing) { return }
+        $st.Draft.Resize = $txtResize.Text.Trim()
+        & $validate      # un escalado mal escrito se dice ya (Test-CvJobDraft), no al codificar
+    })
 
     $btnCrop.Add_Click({
         # Escaneo REAL de bordes (varios ffmpeg): se avisa arriba y se bloquea la ventana con el
@@ -640,7 +696,7 @@ function Show-CvJobWindow {
             $form.Enabled = $true
             $form.Cursor  = [System.Windows.Forms.Cursors]::Default
             $bar.Visible  = $false
-            $lblHead.Text = (Get-CvText -Key 'job.preparando' -Values @($Name))
+            & $restoreHead
         }
     })
     # Al cerrarse ffplay, Windows NO devuelve el foco a quien lo lanzo: la ventana se queda DEBAJO
@@ -657,9 +713,9 @@ function Show-CvJobWindow {
     # consola y esta ventana no dejaba hacer.
     $playVideo = {
         param([string]$Crop)
-        $vo = @($st.VidOpts)
-        $pos = 0
-        for ($k = 0; $k -lt $vo.Count; $k++) { if ([int]$vo[$k].Index -eq [int]$st.Draft.VideoIndex) { $pos = [int]$vo[$k].Pos } }
+        # Posicion entre TODAS las pistas de video, caratulas incluidas, que es como cuenta ffplay
+        # ('-vst v:N'): la de Get-CvJobVideoOptions salta las caratulas y ensenaba la portada.
+        $pos = Get-VideoStreamPos -Info $st.Info -Index ([int]$st.Draft.VideoIndex)
         $form.Enabled = $false
         try { Show-Preview -Context $Context -File $File -Crop $Crop -VideoPos $pos -Duration (Get-MediaDuration $st.Info) }
         catch { $lblMsg.Text = (Get-CvText -Key 'job.noreproducir' -Values @($_.Exception.Message)) }
@@ -708,7 +764,7 @@ function Show-CvJobWindow {
         # Decimal independiente del locale: se admite coma (lo natural al teclear en es-ES) y se
         # guarda como numero; al job llega ya numerico, no como texto con coma.
         $v = ConvertTo-InvDouble (($txtSync.Text.Trim()) -replace ',', '.')
-        if ($null -ne $v) { $r.Sync = [double]$v }
+        if ($null -ne $v -and $v -ge 0) { $r.Sync = [double]$v }
     })
     $txtSync.Add_KeyDown({ if ($_.KeyCode -eq [System.Windows.Forms.Keys]::Enter) { $_.SuppressKeyPress = $true; & $commitAudio } })
     $txtSync.Add_Leave({ if (-not ($st.Loading -or $st.Closing)) { & $commitAudio } })
@@ -766,9 +822,10 @@ function Show-CvJobWindow {
             $lblMsg.Text = (Get-CvText -Key 'job.sync.midiendo' -Values @($marcadas.Count))
             $lblMsg.Refresh()
             $sel = @{
-                File      = $File
-                AudioSkip = [bool]$st.Draft.AudioSkip
-                Audio     = $marcadas
+                File       = $File
+                AudioSkip  = [bool]$st.Draft.AudioSkip
+                Audio      = $marcadas
+                VideoIndex = [int]$st.Draft.VideoIndex   # se mide contra la pista de video ELEGIDA
             }
             $notas = @(Set-CvJobDraftAudioSync -Context $Context -Draft $sel -Info $st.Info -Force)
             & $renderAudio
@@ -892,7 +949,7 @@ function Show-CvJobWindow {
         catch { $lblMsg.Text = (Get-CvText -Key 'job.abrir.fallo' -Values @($_.Exception.Message)) }
         finally {
             $form.Enabled = $true
-            $lblHead.Text = (Get-CvText -Key 'job.preparando' -Values @($Name))
+            & $restoreHead
         }
     })
 
@@ -907,11 +964,27 @@ function Show-CvJobWindow {
         }
         $lblHead.Text = (Get-CvText -Key 'job.guardando')
         [System.Windows.Forms.Application]::DoEvents()
-        [void](Save-CvJobDraft -Context $Context -Draft $d -Info $st.Info)
+        # Un fallo al guardar (disco, permisos, el perfil Auto sin poder resolverse) se cuenta abajo y
+        # la ventana sigue: sin esto se quedaba 'Guardando...' y la excepcion iba suelta a WinForms.
+        try {
+            [void](Save-CvJobDraft -Context $Context -Draft $d -Info $st.Info)
+        } catch {
+            & $restoreHead
+            $lblMsg.ForeColor = (Get-CvGuiCurrentPalette).Error
+            $lblMsg.Text = (Get-CvText -Key 'job.guardar.no' -Values @($_.Exception.Message))
+            return
+        }
         $st.Saved = $true
         $form.Close()
     })
     $btnCancel.Add_Click({ $form.Close() })
+
+    # La cabecera de cuando se termino de analizar (con los MOTIVOS de revision, si los hay): ver un
+    # subtitulo o escanear bordes la cambian mientras trabajan, y al acabar ponian el texto de serie,
+    # que borraba por que se habia parado el archivo.
+    $restoreHead = {
+        $lblHead.Text = if ("$($st.Head)" -ne '') { "$($st.Head)" } else { (Get-CvText -Key 'job.preparando' -Values @($Name)) }
+    }
 
     # ---------- Analisis (con la ventana YA abierta) ----------
     $say = {
@@ -975,7 +1048,11 @@ function Show-CvJobWindow {
                 $st.Draft.Crop = ''
                 $st.CropNote = (Get-CvText -Key 'job.recorte.sinbordes')
             }
+            & $reResize
         } catch {
+            # Cerrar la ventana a mitad (lo que lanza $say) no es un fallo del recorte: se deja pasar
+            # para que el analisis se corte de verdad, en vez de seguir con el paso siguiente.
+            if ("$($_.Exception.Message)" -eq "$($st.Abort)") { throw }
             $st.CropNote = (Get-CvText -Key 'job.recorte.fallo' -Values @($_.Exception.Message))
         }
     }
@@ -1015,7 +1092,10 @@ function Show-CvJobWindow {
             try {
                 $sabidas = $null
                 if ($null -ne $st.Draft -and $st.Draft.PSObject.Properties['SubCues']) { $sabidas = $st.Draft.SubCues }
-                elseif (Test-CvJob -Context $Context -Name $Name) { $sabidas = (Read-CvJobDraft -Context $Context -Name $Name).SubCues }
+                elseif (Test-CvJob -Context $Context -Name $Name) {
+                    $st.Leido = Read-CvJobDraft -Context $Context -Name $Name   # se reutiliza abajo
+                    $sabidas = $st.Leido.SubCues
+                }
                 if ($null -ne $sabidas) { [void](Set-CvSubtitleCueCache -File $File -Counts $sabidas) }
             } catch { }
             $subOpts     = @(Get-CvJobSubtitleOptions -Context $Context -Info $st.Info)
@@ -1023,7 +1103,7 @@ function Show-CvJobWindow {
             if ($null -eq $st.Draft) {
                 & $say (Get-CvText -Key 'job.paso.propuesta')
                 if (Test-CvJob -Context $Context -Name $Name) {
-                    $st.Draft = Read-CvJobDraft -Context $Context -Name $Name
+                    $st.Draft = if ($null -ne $st.Leido) { $st.Leido } else { Read-CvJobDraft -Context $Context -Name $Name }
                 } else {
                     $base = $st.BaseProf
                     if ($null -eq $base) {
@@ -1031,14 +1111,18 @@ function Show-CvJobWindow {
                         $base = if ($auto.Count -gt 0) { $auto[0].Prof } else { $st.ProfOpts[0].Prof }
                     }
                     $st.Draft = New-CvJobDraft -Context $Context -Prof $base -Info $st.Info -File $File
+                    $st.AutoResize = "$($st.Draft.Resize)"
                     # Job NUEVO: si el perfil pide bordes, se detectan AHORA (con la barra en marcha),
                     # no se deja el recorte vacio. Un job que YA existe trae su recorte congelado y no
                     # se toca: eso se decidio al prepararlo.
                     & $autoCrop $st.Draft.Prof
                     # Y la sincronia del audio, igual que en consola (se aplica y se cuenta abajo).
-                    $st.SyncNotes = @(Set-CvJobDraftAudioSync -Context $Context -Draft $st.Draft -Info $st.Info -OnStep $say)
+                    $st.SyncNotes = @(Set-CvJobDraftAudioSync -Context $Context -Draft $st.Draft -Info $st.Info -OnStep $say -AbortMessage "$($st.Abort)")
                 }
             }
+            # Un job que ya existe (o el borrador de Preparar): su escalado cuenta como automatico si es
+            # el que sale del perfil para su recorte; si no, se escribio a mano y se respeta.
+            if ($null -eq $st.AutoResize) { $st.AutoResize = "$(& $calcResize)" }
             $st.Audio = @(Get-CvJobAudioRows -Options $audOpts -Tracks $st.Draft.Audio)
             $st.Subs  = @(Get-CvJobSubRows  -Options $subOpts -Selected $st.Draft.Subtitles)
 
@@ -1055,7 +1139,7 @@ function Show-CvJobWindow {
             if ($i -lt 0) {
                 $own = [pscustomobject]@{
                     Key    = 'job'
-                    Text   = ("(el de este job) {0}" -f $lblProf)
+                    Text   = (Get-CvText -Key 'job.prof.este' -Values @($lblProf))
                     Group  = 'job'
                     Prof   = $st.Draft.Prof
                     IsAuto = $false
@@ -1115,6 +1199,7 @@ function Show-CvJobWindow {
             } else {
                 $lblHead.Text = (Get-CvText -Key 'job.preparando' -Values @($Name))
             }
+            $st.Head = "$($lblHead.Text)"   # lo que vuelve a la cabecera tras escanear bordes o ver un subtitulo
 
             # Si se ha parado a CONFIRMAR UN RECORTE, lo mismo que la consola en ese punto: ensenar el
             # ORIGINAL y luego CON EL RECORTE antes de preguntar (gui.previewCropOnAsk). Una sola vez:

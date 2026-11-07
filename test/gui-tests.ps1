@@ -145,7 +145,7 @@ $verFake = '9.9.9'
 $dirFake = Get-CvToolDir -Context $ctx -Name 'ffmpeg' -Version $verFake
 $rNo = Set-CvSetupVersionInUse -Context $ctx -CfgPath $tmpCfg -Name 'ffmpeg' -Version $verFake
 Assert-Eq   'Version en uso: no instalada -> no' $false $rNo.Ok
-Assert-True 'Version en uso: dice por que'       ($rNo.Reason -match 'no esta instalada')
+Assert-True 'Version en uso: dice por que'       ($rNo.Reason -match 'no est. instalada')
 Assert-Eq   'Version en uso: sin version -> no'  $false (Set-CvSetupVersionInUse -Context $ctx -CfgPath $tmpCfg -Name 'ffmpeg').Ok
 # Se finge instalada creando sus ficheros (es lo que mira Test-CvToolInstalled).
 New-Item -ItemType Directory -Path $dirFake -Force | Out-Null
@@ -181,7 +181,10 @@ Assert-Eq 'Borrado devuelve n' 1 (Remove-CvSetupFiles -Files @(Get-CvSetupCleanT
 Assert-Eq 'Tras borrar: 0 jobs' 0 (Get-CvSetupProcesoStatus -Context $ctx).Jobs
 Assert-Eq 'Borrado de nada = 0' 0 (Remove-CvSetupFiles -Files @())
 # Lo de un worker VIVO no se limpia: su lock, sus temporales y su estado. Lo de uno muerto, si.
-Set-Content -LiteralPath (Join-Path $ctx.Proceso 'viva.lock') -Value ("PID={0};HOST={1}" -f $PID, $env:COMPUTERNAME) -NoNewline
+# El lock VIVO es el que su dueno tiene ABIERTO (como Enter-Lock), no el que lleva un PID que existe.
+$hViva = [System.IO.File]::Open((Join-Path $ctx.Proceso 'viva.lock'), 'CreateNew', 'ReadWrite', 'Read')
+$bViva = [System.Text.Encoding]::UTF8.GetBytes(("PID={0};HOST={1}" -f $PID, $env:COMPUTERNAME))
+$hViva.Write($bViva, 0, $bViva.Length); $hViva.Flush()
 Set-Content -LiteralPath (Join-Path $ctx.Proceso 'viva.mkv') -Value '' -Encoding UTF8
 Set-Content -LiteralPath (Join-Path $ctx.Proceso 'viva_a1.m4a') -Value '' -Encoding UTF8
 Set-Content -LiteralPath (Join-Path $ctx.Proceso ('{0}.worker.json' -f $PID)) -Value '{}' -Encoding UTF8
@@ -191,6 +194,11 @@ Assert-Eq   'Limpieza: ni sus temporales'                 $false (($lim -contain
 Assert-Eq   'Limpieza: ni el estado de un worker vivo'    $false ($lim -contains ('{0}.worker.json' -f $PID))
 Assert-True 'Limpieza: lo demas si (el lock vacio, basura)' ($lim -contains 'peli.lock')
 Assert-True 'En uso: un temporal de otro nombre no'      (-not (Test-CvSetupFileInUse -File ([pscustomobject]@{ Name = 'vivas.mkv' }) -LiveNames @('viva')))
+# La orden de PARAR no se limpia mientras quede un worker: la miran entre archivo y archivo.
+Assert-True 'En uso: stop.flag con workers vivos'        (Test-CvSetupFileInUse -File ([pscustomobject]@{ Name = 'stop.flag' }) -WorkersAlive $true)
+Assert-True 'En uso: stop.flag con un archivo en curso'  (Test-CvSetupFileInUse -File ([pscustomobject]@{ Name = 'stop.flag' }) -LiveNames @('viva'))
+Assert-True 'En uso: stop.flag sin nadie, se limpia'     (-not (Test-CvSetupFileInUse -File ([pscustomobject]@{ Name = 'stop.flag' })))
+$hViva.Dispose()
 foreach ($n in 'viva.lock', 'viva.mkv', 'viva_a1.m4a', ('{0}.worker.json' -f $PID)) { Remove-Item -LiteralPath (Join-Path $ctx.Proceso $n) -Force }
 # El recuento es lo BORRADO de verdad: uno abierto por otro (ffmpeg) no cuenta.
 $abierto = Join-Path $ctx.Proceso 'abierto.mkv'

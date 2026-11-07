@@ -201,7 +201,11 @@ function Get-CvSetupCleanTargets {
         if ("$txt" -notmatch 'PID=\d+;HOST=') { continue }
         if (-not (Test-CvLockStale $l.FullName)) { $vivos += [System.IO.Path]::GetFileNameWithoutExtension($l.Name) }
     }
-    return @($files | Where-Object { -not (Test-CvSetupFileInUse -File $_ -LiveNames $vivos) })
+    $hayWorkers = $false
+    foreach ($w in @(Get-ChildItem -LiteralPath $proc -Filter '*.worker.json' -File -ErrorAction SilentlyContinue)) {
+        if ($w.Name -match '^(\d+)\.worker\.json$' -and (Test-CvProcessAlive -ProcessId ([int]$Matches[1]))) { $hayWorkers = $true; break }
+    }
+    return @($files | Where-Object { -not (Test-CvSetupFileInUse -File $_ -LiveNames $vivos -WorkersAlive $hayWorkers) })
 }
 
 function Test-CvSetupFileInUse {
@@ -212,10 +216,13 @@ function Test-CvSetupFileInUse {
         Un lock de OTRO equipo (Proceso\ en red) cuenta como vivo: desde aqui no se puede saber si su
         worker sigue, y borrarlo dejaria que dos equipos codificaran el mismo archivo.
     #>
-    param([Parameter(Mandatory)]$File, [string[]]$LiveNames = @())
+    param([Parameter(Mandatory)]$File, [string[]]$LiveNames = @(), [bool]$WorkersAlive = $false)
     $n = "$($File.Name)"
     # El job no: el worker ya lo leyo al empezar, y borrarlo es justo lo que se pide al limpiar jobs.
     if ($n.EndsWith('.job.json', [System.StringComparison]::OrdinalIgnoreCase)) { return $false }
+    # La orden de PARAR mientras quede algun worker vivo: la miran entre archivo y archivo, y quitarla
+    # tras pulsar Parar hacia que siguieran cogiendo archivos.
+    if ($n -eq 'stop.flag') { return ($WorkersAlive -or @($LiveNames | Where-Object { "$_" -ne '' }).Count -gt 0) }
     if ($n -match '^(\d+)\.worker\.json$') { return (Test-CvProcessAlive -ProcessId ([int]$Matches[1])) }
     foreach ($v in @($LiveNames)) {
         if ("$v" -eq '') { continue }
@@ -259,7 +266,7 @@ function Get-CvSetupMaintenanceItems {
             Warn   = [bool]$par.Warn
         }
     }
-    $logs = @(Get-CvSetupLogFiles -Context $Context -CurrentPath $CurrentLog | Where-Object { -not $_.IsCurrent })
+    $logs = @(Get-CvSetupLogFiles -Context $Context -CurrentPath $CurrentLog | Where-Object { -not $_.IsCurrent -and -not $_.InUse })
     $kb   = 0
     foreach ($l in $logs) { $kb += [int]$l.SizeKb }
     $out += [pscustomobject]@{
@@ -312,14 +319,14 @@ function Invoke-CvSetupMaintenance {
             'locks' { $n = Remove-CvSetupFiles -Files (Get-CvSetupCleanTargets -Context $Context -What 'locks') }
             'temps' { $n = Remove-CvSetupFiles -Files (Get-CvSetupCleanTargets -Context $Context -What 'temps') }
             'logs'  {
-                $viejos = @(Get-CvSetupLogFiles -Context $Context -CurrentPath $CurrentLog | Where-Object { -not $_.IsCurrent })
+                $viejos = @(Get-CvSetupLogFiles -Context $Context -CurrentPath $CurrentLog | Where-Object { -not $_.IsCurrent -and -not $_.InUse })
                 foreach ($l in $viejos) {
                     try { Remove-Item -LiteralPath $l.Path -Force -ErrorAction Stop; $n++ } catch { $ok = $false; $err = "$_" }
                 }
             }
             'cacheLayout' { $r = Clear-CvGuiCache -Context $Context -What 'layout'; $n = [int]$r.Removed; $ok = [bool]$r.Ok; $err = "$($r.Error)" }
             'cacheFiles'  { $r = Clear-CvGuiCache -Context $Context -What 'files';  $n = [int]$r.Removed; $ok = [bool]$r.Ok; $err = "$($r.Error)" }
-            default { $ok = $false; $err = 'no se sabe que es eso' }
+            default { $ok = $false; $err = (Get-CvText -Key 'mant.desconocido' -Values @($k)) }
         }
         $res += [pscustomobject]@{
             Key     = $k
@@ -354,17 +361,17 @@ function Get-CvSetupCacheText {
     param([Parameter(Mandatory)]$Context)
     $c = Get-CvGuiCacheStatus -Context $Context
     $L = New-Object System.Collections.Generic.List[string]
-    $L.Add(("Fichero: {0}" -f $c.Path))
+    $L.Add((Get-CvText -Key 'cache.fichero' -Values @($c.Path)))
     if (-not $c.Exists) {
-        $L.Add('  (no existe: no hay nada cacheado)')
+        $L.Add((Get-CvText -Key 'cache.noexiste'))
         return ($L -join [Environment]::NewLine)
     }
-    $L.Add(("  ocupa {0} KB" -f $c.SizeKb))
-    $L.Add(("  ventanas recordadas : {0}{1}" -f $c.Layouts, $(if ($c.Layouts -gt 0) { "   ({0})" -f ((@($c.LayoutKeys)) -join ', ') } else { '' })))
-    $L.Add(("  archivos analizados : {0}   (bordes deducidos de los ya convertidos)" -f $c.Files))
+    $L.Add((Get-CvText -Key 'cache.ocupa' -Values @($c.SizeKb)))
+    $L.Add((Get-CvText -Key 'cache.ventanas' -Values @($c.Layouts, $(if ($c.Layouts -gt 0) { "   ({0})" -f ((@($c.LayoutKeys)) -join ', ') } else { '' }))))
+    $L.Add((Get-CvText -Key 'cache.archivos' -Values @($c.Files)))
     $L.Add('')
-    $L.Add('Es ESTADO: borrarlo no pierde nada. Las ventanas volveran a abrirse con los tamanos de')
-    $L.Add('config.json y los bordes se volveran a deducir la proxima vez que se abra la cola.')
+    $L.Add((Get-CvText -Key 'cache.estado1'))
+    $L.Add((Get-CvText -Key 'cache.estado2'))
     return ($L -join [Environment]::NewLine)
 }
 
@@ -397,7 +404,11 @@ function Set-CvSetupAppSelected {
         [Parameter(Mandatory)][string]$Name,
         [Parameter(Mandatory)][string]$Version
     )
-    $cfg = Read-CvConfigFile -Path $CfgPath
+    # Sin config todavia (setup no lo crea; solo el conversor de consola al guardar la cache de la
+    # GPU) se empieza uno vacio: leerlo lanzaba y 'Usar version' o '-SetDefault' fallaban.
+    $cfg = if (Test-Path -LiteralPath $CfgPath) { Read-CvConfigFile -Path $CfgPath } else { [pscustomobject]@{} }
+    $dirCfg = Split-Path -Parent $CfgPath
+    if ($dirCfg -and -not (Test-Path -LiteralPath $dirCfg)) { New-Item -ItemType Directory -Path $dirCfg -Force | Out-Null }
     if (-not $cfg.PSObject.Properties['downloads'] -or $null -eq $cfg.downloads) {
         $cfg | Add-Member -NotePropertyName 'downloads' -NotePropertyValue ([pscustomobject]@{}) -Force
     }
@@ -429,20 +440,30 @@ function Set-CvSetupVersionInUse {
         [string]$Version = ''
     )
     if ([string]::IsNullOrWhiteSpace($Version)) {
-        return [pscustomobject]@{ Ok = $false; Reason = 'no se ha indicado ninguna version' }
+        return [pscustomobject]@{
+            Ok     = $false
+            Reason = (Get-CvText -Key 'setup.uso.sinver')
+        }
     }
     if (-not (Test-CvToolInstalled -Context $Context -Name $Name -Version $Version)) {
         $inst = @(Get-CvInstalledVersions -Context $Context -Name $Name)
-        $hay  = if ($inst.Count -gt 0) { "instalada(s): {0}" -f ($inst -join ', ') } else { 'no hay ninguna instalada' }
+        $hay  = if ($inst.Count -gt 0) { (Get-CvText -Key 'setup.uso.hay' -Values @(($inst -join ', '))) } else { (Get-CvText -Key 'setup.uso.ninguna') }
         return [pscustomobject]@{
             Ok     = $false
-            Reason = ("{0} {1} no esta instalada ({2}); instalala antes de ponerla en uso." -f $Name, $Version, $hay)
+            Reason = (Get-CvText -Key 'setup.uso.noinst' -Values @($Name, $Version, $hay))
         }
     }
-    [void](Set-CvSetupAppSelected -CfgPath $CfgPath -Name $Name -Version $Version)
+    try {
+        [void](Set-CvSetupAppSelected -CfgPath $CfgPath -Name $Name -Version $Version)
+    } catch {
+        return [pscustomobject]@{
+            Ok     = $false
+            Reason = (Get-CvText -Key 'setup.uso.noguarda' -Values @($_.Exception.Message))
+        }
+    }
     return [pscustomobject]@{
         Ok     = $true
-        Reason = ("{0} pasa a usar la version {1}" -f $Name, $Version)
+        Reason = (Get-CvText -Key 'setup.uso.ok' -Values @($Name, $Version))
     }
 }
 
@@ -528,6 +549,8 @@ function Get-CvSetupLogFiles {
             SizeKb    = [int][math]::Ceiling($f.Length / 1024.0)
             Date      = $f.LastWriteTime
             IsCurrent = ("$CurrentPath" -ne '' -and $f.FullName -eq "$CurrentPath")
+            # Abierto por otra sesion o un worker: no se puede borrar (y no se cuenta como borrable).
+            InUse     = (Test-CvFileInUse -Path $f.FullName)
         }
     }
     return @($out)

@@ -289,7 +289,20 @@ function Show-CvProfileEditorWindow {
             -DownmixCoeffs $p.DownmixCoeffs
     }
 
+    # Lo tecleado se valida ANTES de usarlo o guardarlo (Test-CvProfileFields): antes un valor que
+    # no era un numero se convertia en 'vacio' sin avisar.
+    $revisar = {
+        $v = Test-CvProfileFields -Encoder "$(Get-CvGuiComboValue -Combo $cbEnc)" -Crf $tbCrf.Text -Qmin $tbQmin.Text -Qmax $tbQmax.Text `
+            -MaxWidth $tbMaxW.Text -AudioBitrate $tbABr.Text -AudioHz $tbAHz.Text
+        if (-not $v.Ok) {
+            Show-CvGuiInfo -Title (Get-CvText -Key 'perfiles.tit') -Message (@($v.Errors) -join [Environment]::NewLine)
+            return $false
+        }
+        return $true
+    }
+
     $btnOk.Add_Click({
+        if (-not (& $revisar)) { return }
         $st.Result = & $build
         $form.Close()
     })
@@ -298,6 +311,7 @@ function Show-CvProfileEditorWindow {
             $nm  = "$($tbName.Text)".Trim()
             $chk = Test-CvProfileName -Name $nm -Existing (Get-CvConfigProfiles -Path $CfgPath) -Allow $Name
             if (-not $chk.Ok) { Show-CvGuiInfo -Title (Get-CvText -Key 'perfiles.tit') -Message "$($chk.Error)"; return }
+            if (-not (& $revisar)) { return }
             $prof = & $build
             $r = Save-CvConfigProfile -Path $CfgPath -Prof $prof -Label $nm -Replace $Name
             if (-not $r.Ok) { Show-CvGuiInfo -Title (Get-CvText -Key 'perfiles.tit') -Message (Get-CvText -Key 'perfiles.guardar.no' -Values @($r.Error)); return }

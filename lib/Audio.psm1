@@ -8,7 +8,9 @@ function Get-CvChannelLayout {
     <# Nombre de layout de ffmpeg para N canales (para aformat/aevalsrc del audio de salida). #>
     param([int]$Channels)
     switch ($Channels) {
-        1 { 'mono' }; 2 { 'stereo' }; 6 { '5.1' }; 8 { '7.1' }
+        # Los de por defecto de ffmpeg para cada numero de canales. Con solo 1/2/6/8, un 5.0 o un 6.1
+        # caia en 'stereo': se mezclaba a estereo y luego se codificaba con '-ac 5' / '-ac 7'.
+        1 { 'mono' }; 2 { 'stereo' }; 3 { '2.1' }; 4 { '4.0' }; 5 { '5.0' }; 6 { '5.1' }; 7 { '6.1' }; 8 { '7.1' }
         default { 'stereo' }
     }
 }
@@ -89,7 +91,9 @@ function Measure-CvPeakGain {
     Start-CvStep $Context $Tag (Get-CvText -Key 'au.vol.an')
     $peak = Get-MaxVolume -Context $Context -InputArgs $InputArgs
     $txt  = if ($null -ne $peak) { (Get-CvText -Key 'au.vol.pico') -f $peak } else { (Get-CvText -Key 'au.vol.nopico') }
-    Stop-CvStep $Context $Tag $true -Extra $txt -OkMsg (Get-CvText -Key 'au.vol.ok' -Values @($txt))
+    # Sin pico no se sube nada: es un FALLO del paso (antes salia OK y el archivo quedaba sin
+    # normalizar sin que se viera).
+    Stop-CvStep $Context $Tag ($null -ne $peak) -Extra $txt -OkMsg (Get-CvText -Key 'au.vol.ok' -Values @($txt)) -FailMsg (Get-CvText -Key 'au.vol.fallo' -Values @($txt))
     $gain = 0.0
     if ($null -ne $peak -and $peak -lt $Target) { $gain = [math]::Round($Target - $peak, 1) }
     $filter = ''
@@ -159,6 +163,13 @@ function Measure-CvPeakGains {
     $a = Get-CvPeakMultiArgs -File $File -Indexes $idx -Limit ([double]$Context.TestLimit)
     $r = Invoke-ToolCapture -Exe $Context.FFmpeg -Arguments $a -Context $Context
     $picos = ConvertTo-CvPeakList -Text "$($r.StdErr)" -Count $idx.Count
+    # Si ffmpeg fallo (o no salio ningun pico) es un FALLO del paso, no un 'OK sin pico', y no se
+    # devuelve nada: por etapas, cada pista se mide entonces por su cuenta (Invoke-AudioRun).
+    if ([int]$r.ExitCode -ne 0 -or @($picos | Where-Object { $null -ne $_ }).Count -eq 0) {
+        $txt = (Get-CvText -Key 'au.vol.nopico')
+        Stop-CvStep $Context $Tag $false -Extra $txt -FailMsg (Get-CvText -Key 'au.vol.fallo' -Values @($txt))
+        return @()
+    }
     $txts = @()
     $out = @()
     foreach ($peak in $picos) {
@@ -1105,7 +1116,14 @@ function Invoke-AudioAsk {
                         # PASO 1: retardo a usar (ENTER/timeout = detectado o ultimo). CUALQUIER valor -incluido
                         # 0 (ninguno)- pasa por preview + confirmacion: no hay atajo que salga del loop sin validar.
                         $ans = (Read-CvLine -Prompt (Get-CvText -Key 'au.sync.ret.q' -Values @((Format-CvNumber $cur))) -TimeoutSec $timeout).Trim()
-                        if ($ans -ne '') { $v = ConvertTo-InvDouble $ans; if ($null -eq $v) { continue }; $cur = $v }
+                        if ($ans -ne '') {
+                            $v = ConvertTo-InvDouble $ans
+                            if ($null -eq $v) { continue }
+                            # Un retardo negativo no se aplica (los dos caminos solo usan Sync > 0): se
+                            # guardaba en el job y no hacia nada. Se dice y se vuelve a preguntar.
+                            if ($v -lt 0) { Write-CvLog 'AUDIO' (Get-CvText -Key 'au.sync.neg') -Indent 3; continue }
+                            $cur = $v
+                        }
                         # PASO 2: preview forzoso del valor definido (con 0 = "sin retardo", tal cual).
                         & $prevOf $cur
                         # PASO 3: confirmar. SIN timeout (lectura bloqueante): el loop NO sale hasta que se
@@ -1280,6 +1298,9 @@ function Invoke-AudioRun {
         Start-CvStep $Context 'AUDIO' (Get-CvText -Key 'au.sil.gen' -Values @($Sync))
         $wavArgs = @('-hide_banner','-y','-i',$File,'-filter_complex',$fc,'-map','[out]')
         if ($Context.TestLimit -gt 0) { $wavArgs += @('-t',"$($Context.TestLimit)") }  # modo pruebas
+        # RF64 si pasa de 4 GB (un 5.1 de mas de ~2,5 h): la cabecera WAV es de 32 bits y, sin esto, el
+        # tamano daba la vuelta y al leerlo el audio se cortaba con ffmpeg diciendo que todo fue bien.
+        $wavArgs += @('-rf64', 'auto')
         $wavArgs += $wav
         $wavCode = Invoke-ToolShow -Exe $Context.FFmpeg -Arguments $wavArgs -Context $Context
         # Bien = ffmpeg acabo con 0 Y dejo algo. Mirando solo si existia el .wav, un fallo a mitad de
@@ -1367,7 +1388,7 @@ function Invoke-AudioRun {
 
     # AACGAIN: aplicar la ganancia ReplayGain sobre el m4a ya codificado (sin recodificar).
     if ($method -eq 'aacgain' -and (Test-Path -LiteralPath $outM4a)) {
-        if (Test-Path $Context.AacGain) {
+        if ("$($Context.AacGain)" -ne '' -and (Test-Path -LiteralPath $Context.AacGain)) {
             Start-CvStep $Context 'AUDIO' (Get-CvText -Key 'au.aacg.apl')
             # Su codigo de salida cuenta: antes se daba por bueno siempre. Un fallo no tira el archivo
             # (aacgain no toca el .m4a si no termina), pero se dice: el audio queda sin ajustar.

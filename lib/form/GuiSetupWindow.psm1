@@ -49,7 +49,10 @@ function Show-CvSetupWindow {
     if ([bool]$tam.Maximized) { $form.WindowState = [System.Windows.Forms.FormWindowState]::Maximized }
     $form.Add_FormClosing({
         # En FormClosing una excepcion se lleva la aplicacion por delante: esto no puede lanzar.
-        if (-not [bool]$Context.GuiRemember) { return }
+        # Con el contexto de AHORA ($vivo, se rehace al guardar config): apagar gui.rememberLayout en
+        # el editor no servia hasta volver a abrir setup.
+        $ctxAhora = if ($null -ne $vivo -and $null -ne $vivo.Ctx) { $vivo.Ctx } else { $Context }
+        if (-not [bool]$ctxAhora.GuiRemember) { return }
         try {
             $max = ($form.WindowState -eq [System.Windows.Forms.FormWindowState]::Maximized)
             $rb  = $(if ($form.WindowState -eq [System.Windows.Forms.FormWindowState]::Normal) { $form.Bounds } else { $form.RestoreBounds })
@@ -229,7 +232,10 @@ function Show-CvSetupWindow {
     [void](& $addButton ('  ' + (Get-CvText -Key 'setup.btn.reset' -Values @($CfgName))) {
         $msg = Get-CvText -Key 'setup.reset.msg' -Values @($CfgName)
         if (-not (Show-CvGuiConfirm -Title (Get-CvText -Key 'setup.reset.tit') -Message $msg)) { & $write (Get-CvText -Key 'setup.cab.config') (Get-CvText -Key 'setup.reset.cancel'); return }
-        [void](Reset-CvConfig -Path $CfgPath)
+        if (-not (Reset-CvConfig -Path $CfgPath)) {
+            & $write (Get-CvText -Key 'setup.cab.config') (Get-CvText -Key 'setup.reset.nobak' -Values @($CfgName))
+            return
+        }
         # Como al guardar desde el editor: el contexto se REHACE. Si no, las demas ventanas de setup
         # (mantenimiento, limpieza, logs, herramientas) seguian con las carpetas de ANTES del reset, y
         # mantenimiento podia limpiar un Proceso\ que ya no era el bueno.

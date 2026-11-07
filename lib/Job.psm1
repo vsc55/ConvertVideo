@@ -107,9 +107,11 @@ function Get-CvProcesoPatterns {
         sincronizada. -What: jobs | locks | temps | all.
     #>
     param([ValidateSet('jobs','locks','temps','all')][string]$What = 'all')
+    # Los temporales de la escritura atomica: '<fichero>.<pid>.tmp' (Save-CvTextFile) y el de antes,
+    # '<fichero>.tmp'. '*.json*.tmp' casa con los dos (job y estado de worker).
     $jobs  = @(
         '*.job.json'
-        '*.job.json.tmp'
+        '*.job.json*.tmp'
     )
     # 'locks' = ficheros de CONTROL de los workers: el reclamo de cada archivo (*.lock), el estado que
     # cada worker publica para la ventana de la cola (<pid>.worker.json, WorkerCore) y la bandera de
@@ -124,7 +126,7 @@ function Get-CvProcesoPatterns {
         '*.m4a'
         '*.mka'
         '*_concat.wav'
-        '*.job.json.tmp'
+        '*.json*.tmp'
     )
     switch ($What) {
         'jobs'  { $jobs }
@@ -149,6 +151,9 @@ function Remove-CvTemps {
         $tmp.AudioMka
         $tmp.SyncWav
         $tmp.JobTmp
+        # La salida a medio escribir (Convertido\<name>_fix.mkv.part) de un intento que fallo o de un
+        # worker muerto: no vale para nada y eran varios GB que nadie borraba. Quien llama tiene el lock.
+        (Get-CvPartialPath (Get-OutputPath $Context $Name))
     )
     foreach ($p in $tmpFiles) {
         if (Test-Path -LiteralPath $p) { Remove-Item -Force -LiteralPath $p -ErrorAction SilentlyContinue }
@@ -156,7 +161,7 @@ function Remove-CvTemps {
     # Temporales POR-PISTA de la multipista (<name>_aN.m4a/.mka/_aN_concat.wav). Regex ESTRICTA (solo
     # digitos tras '_a') para no tocar temporales de otro archivo con prefijo parecido ("Peli" vs
     # "Peli 2" o "Peli_a"). Enumeracion .NET con nombre exacto (los corchetes del nombre no son globs).
-    $rx = [regex]("^" + [regex]::Escape($Name) + "_a\d+(_concat\.wav|\.m4a|\.mka)$")
+    $rx = [regex]("^" + [regex]::Escape($Name) + "(_a\d+(_concat\.wav|\.m4a|\.mka)|\.job\.json\.\d+\.tmp)$")
     if (Test-Path -LiteralPath $Context.Proceso) {
         foreach ($f in [System.IO.Directory]::GetFiles($Context.Proceso)) {
             if ($rx.IsMatch([System.IO.Path]::GetFileName($f))) { try { [System.IO.File]::Delete($f) } catch {} }
@@ -182,25 +187,52 @@ function Test-CvLockStale {
         Se lee compartido (Read-CvTextFileShared): leerlo con ReadAllText impedia al worker borrar su
         lock en ese mismo instante.
 
-        -Processes (PID -> nombre, de Get-CvProcessNames) evita preguntar a Windows por cada lock: con
-        'Get-Process -Id' eran ~40 ms POR LOCK en cada refresco de la cola.
+        Lo que DECIDE ya no es el PID sino si alguien tiene el fichero ABIERTO (Test-CvLockHeld): el
+        dueno vivo lo tiene abierto sin dejar escribir a nadie. Mirando el PID, uno muerto cuyo numero
+        le tocaba a OTRO PowerShell (la cola, otro worker, una consola) contaba como vivo y el archivo
+        se quedaba bloqueado para siempre; igual con un lock vacio (el worker murio al crearlo) o uno
+        que no se pudo borrar al soltarlo.
+
+        -Processes se acepta por compatibilidad; ya no hace falta (abrir el fichero es lo barato).
     #>
     param([string]$LockPath, $Processes = $null)
     if (-not (Test-Path -LiteralPath $LockPath)) { return $false }
-    try { $txt = Read-CvTextFileShared -Path $LockPath } catch { return $false }
+    # De OTRO equipo (carpeta compartida) no se roba: ni su PID ni sus ficheros abiertos son de aqui.
+    try { $txt = Read-CvTextFileShared -Path $LockPath } catch { $txt = '' }
     $m = [regex]::Match("$txt", 'PID=(\d+);HOST=(.+)')
+    if ($m.Success -and $m.Groups[2].Value.Trim() -ne $env:COMPUTERNAME) { return $false }
+    if ($script:CvLockHandles.ContainsKey($LockPath)) { return $false }   # es nuestro y lo tenemos
+    $held = Test-CvLockHeld -LockPath $LockPath
+    if ($null -ne $held) { return (-not $held) }
+    # No se pudo saber (permisos): como antes, por el PID.
     if (-not $m.Success) { return $false }
-    if ($m.Groups[2].Value.Trim() -ne $env:COMPUTERNAME) { return $false }
     $lockPid = [int]$m.Groups[1].Value
-    if ($null -ne $Processes) {
-        if (-not $Processes.ContainsKey($lockPid)) { return $true }
-        return (@('powershell', 'pwsh') -notcontains "$($Processes[$lockPid])".ToLower())
-    }
     if (-not (Test-CvProcessAlive -ProcessId $lockPid)) { return $true }
     try {
         $p = Get-Process -Id $lockPid -ErrorAction Stop
         return (@('powershell', 'pwsh') -notcontains "$($p.ProcessName)".ToLower())
     } catch { return $true }
+}
+
+function Test-CvLockHeld {
+    <#
+        $true si el lock esta ABIERTO por su dueno (Enter-Lock lo deja abierto sin compartir la
+        escritura), $false si nadie lo tiene, $null si no se puede saber. Se prueba a abrirlo para
+        escribir compartiendo todo: un lector de paso (la cola, Read-CvTextFileShared) no lo estorba.
+    #>
+    param([Parameter(Mandatory)][string]$LockPath)
+    try {
+        $fs = [System.IO.File]::Open($LockPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::ReadWrite,
+            ([System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete))
+        $fs.Dispose()
+        return $false
+    } catch [System.IO.FileNotFoundException] {
+        return $false
+    } catch [System.IO.IOException] {
+        return $true    # violacion de uso compartido: alguien lo tiene abierto
+    } catch {
+        return $null
+    }
 }
 
 function Get-CvProcessNames {

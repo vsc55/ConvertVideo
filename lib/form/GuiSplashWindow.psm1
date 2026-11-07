@@ -106,9 +106,11 @@ function Start-CvSplashWindow {
             # En la barra de tareas solo con el icono del programa (con el generico de WinForms
             # parecia otra cosa).
             $f.ShowInTaskbar   = $false
+            $ico = $null    # el NUESTRO (el de serie de WinForms es compartido: ese no se suelta)
             if ("$($estado.Icon)" -ne '') {
                 try {
-                    $f.Icon = New-Object System.Drawing.Icon("$($estado.Icon)")
+                    $ico = New-Object System.Drawing.Icon("$($estado.Icon)")
+                    $f.Icon = $ico
                     $f.ShowInTaskbar = $true
                 } catch { }
             }
@@ -187,7 +189,11 @@ function Start-CvSplashWindow {
             $t.Start()
             [System.Windows.Forms.Application]::Run($f)
             $t.Dispose()
+            # El icono y las dos fuentes son de esta ventana: se sueltan con ella.
             $f.Dispose()
+            try { if ($null -ne $ico) { $ico.Dispose() } } catch { }
+            $titulo.Dispose()
+            $letra.Dispose()
         })
         $h = $ps.BeginInvoke()
         return @{

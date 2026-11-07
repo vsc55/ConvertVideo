@@ -158,6 +158,9 @@ try {
             # La pantalla de arranque se quita mientras se elige (estaria encima del selector) y
             # vuelve despues, para lo que queda.
             Stop-CvSplashWindow -Splash $splash
+            # El selector con el tema del config (gui.theme), como la pantalla de arranque: sin esto
+            # salia con el del sistema aunque el config dijera otro.
+            [void](Set-CvGuiThemeDefault -Theme "$($ini.Theme)")
             $Config = Show-CvSetupConfigChooser -Root $Root
             if ([string]::IsNullOrWhiteSpace($Config)) { return }   # cancelado por el usuario
             $splash = & $abrirSplash 'splash.sesion'

@@ -36,6 +36,13 @@ function Read-CvSrtText {
     if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
         return [Text.Encoding]::UTF8.GetString($bytes, 3, $bytes.Length - 3)
     }
+    # UTF-16 (Subtitle Edit, el 'Unicode' del Bloc de notas): sin esto caia en 1252 y salia basura.
+    if ($bytes.Length -ge 2 -and $bytes[0] -eq 0xFF -and $bytes[1] -eq 0xFE) {
+        return [Text.Encoding]::Unicode.GetString($bytes, 2, $bytes.Length - 2)
+    }
+    if ($bytes.Length -ge 2 -and $bytes[0] -eq 0xFE -and $bytes[1] -eq 0xFF) {
+        return [Text.Encoding]::BigEndianUnicode.GetString($bytes, 2, $bytes.Length - 2)
+    }
     try {
         $strict = New-Object System.Text.UTF8Encoding($false, $true)   # valida -> lanza si no es UTF-8
         return $strict.GetString($bytes)
@@ -53,9 +60,19 @@ function Write-CvSrtText {
 }
 
 function Get-CvSrtBlocks {
-    <# Divide el texto en bloques de cue (separados por linea en blanco); solo los que tienen linea de tiempos. #>
+    <#
+        Divide el texto en bloques de cue (separados por linea en blanco). Una linea "en blanco" con
+        espacios o tabuladores tambien separa (antes juntaba dos cues y la segunda no se movia). Un
+        trozo SIN linea de tiempos es texto de la cue anterior que llevaba una linea en blanco dentro:
+        se le devuelve (antes se tiraba, y al resincronizar ese texto desaparecia).
+    #>
     param([Parameter(Mandatory)][string]$Text)
-    [regex]::Split($Text.Trim(), '(?:\r?\n){2,}') | Where-Object { $_ -match $script:CvSrtTs }
+    $out = New-Object System.Collections.Generic.List[string]
+    foreach ($b in [regex]::Split($Text.Trim(), '\r?\n(?:[ \t]*\r?\n)+')) {
+        if ($b -match $script:CvSrtTs) { $out.Add($b) }
+        elseif ($out.Count -gt 0 -and "$b".Trim() -ne '') { $out[$out.Count - 1] = $out[$out.Count - 1] + "`r`n`r`n" + $b }
+    }
+    $out
 }
 
 function Get-CvSrtBlockNum {
@@ -88,7 +105,9 @@ function Repair-CvSrtOcr {
         $w = $m.Value
         if ($w.Contains('l')) {
             $noL = $w -replace 'l', ''
-            if ($noL.Length -gt 0 -and $noL -cmatch '^\p{Lu}+$') {
+            # Al menos DOS mayusculas aparte de las 'l': con una sola, 'El', 'Al' o 'All' (palabras
+            # normales) pasaban a 'EI', 'AI', 'AII'.
+            if ($noL.Length -ge 2 -and $noL -cmatch '^\p{Lu}+$') {
                 $nw = $w -replace 'l', 'I'
                 if ($nw -ne $w) { $changed.Add("$w -> $nw") }
                 return $nw
@@ -131,12 +150,23 @@ function Invoke-CvSrtResync {
         dejan intactas). Offset constante = A 1 con el B deseado. Devuelve el texto re-sincronizado.
     #>
     param([Parameter(Mandatory)][string]$Text, [double]$A = 1.0, [double]$B = 0.0, [int]$FromCue = 1)
+    $pos = 0
     $out = foreach ($bk in (Get-CvSrtBlocks $Text)) {
+        $pos++
+        # Sin numero (o numerada desde 0) cuenta su POSICION: antes esas cues no se movian nunca.
         $num = Get-CvSrtBlockNum $bk
-        $lines = $bk -split "\r?\n"
-        if ($num -ge $FromCue -and $bk -match $script:CvSrtTs) {
-            $t1 = ConvertTo-CvSrtSeconds $Matches[1]; $t2 = ConvertTo-CvSrtSeconds $Matches[2]
-            $lines[1] = '{0} --> {1}' -f (ConvertTo-CvSrtStamp ($A*$t1 + $B)), (ConvertTo-CvSrtStamp ($A*$t2 + $B))
+        if ($num -le 0) { $num = $pos }
+        $lines = @($bk -split "\r?\n")
+        if ($num -ge $FromCue) {
+            # La linea de TIEMPOS, este donde este (sin numero es la primera): antes se reescribia
+            # siempre la segunda, y en una cue sin numero se comia la primera linea del texto.
+            for ($li = 0; $li -lt $lines.Count; $li++) {
+                if ($lines[$li] -match $script:CvSrtTs) {
+                    $t1 = ConvertTo-CvSrtSeconds $Matches[1]; $t2 = ConvertTo-CvSrtSeconds $Matches[2]
+                    $lines[$li] = '{0} --> {1}' -f (ConvertTo-CvSrtStamp ($A*$t1 + $B)), (ConvertTo-CvSrtStamp ($A*$t2 + $B))
+                    break
+                }
+            }
         }
         ($lines -join "`r`n").TrimEnd()
     }

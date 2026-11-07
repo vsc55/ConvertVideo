@@ -246,7 +246,7 @@ function Show-CvConvertWindow {
     $lblWHelp = New-Object System.Windows.Forms.Label
     $lblWHelp.Text      = (Get-CvText -Key 'cola.opt.workers.h')
     $lblWHelp.Name      = 'cvWorkersHelp'
-    $lblWHelp.ForeColor = (Get-CvGuiCurrentPalette).Muted
+    [void](Set-CvGuiRole -Control $lblWHelp -Role 'muted')   # con ROL: el tema lo respeta (un ForeColor suelto lo pisaba)
     $lblWHelp.Margin    = New-Object System.Windows.Forms.Padding(2, 0, 0, 12)
     $optFlow.Controls.Add($lblWHelp)
     [void](Set-CvGuiWrapLabel -Label $lblWHelp -Container $optFlow)
@@ -256,7 +256,7 @@ function Show-CvConvertWindow {
     $lblCHelp = New-Object System.Windows.Forms.Label
     $lblCHelp.Text      = (Get-CvText -Key 'cola.opt.consolas.h')
     $lblCHelp.Name      = 'cvConsolesHelp'
-    $lblCHelp.ForeColor = (Get-CvGuiCurrentPalette).Muted
+    [void](Set-CvGuiRole -Control $lblCHelp -Role 'muted')   # con ROL: el tema lo respeta (un ForeColor suelto lo pisaba)
     $lblCHelp.Margin    = New-Object System.Windows.Forms.Padding(2, 0, 0, 12)
     $optFlow.Controls.Add($lblCHelp)
     [void](Set-CvGuiWrapLabel -Label $lblCHelp -Container $optFlow)
@@ -273,7 +273,7 @@ function Show-CvConvertWindow {
     $lblKHelp = New-Object System.Windows.Forms.Label
     $lblKHelp.Text      = (Get-CvText -Key 'cola.opt.keep.h')
     $lblKHelp.Name      = 'cvKeepHelp'
-    $lblKHelp.ForeColor = (Get-CvGuiCurrentPalette).Muted
+    [void](Set-CvGuiRole -Control $lblKHelp -Role 'muted')   # con ROL: el tema lo respeta (un ForeColor suelto lo pisaba)
     $lblKHelp.Margin    = New-Object System.Windows.Forms.Padding(2, 0, 0, 0)
     $optFlow.Controls.Add($lblKHelp)
     [void](Set-CvGuiWrapLabel -Label $lblKHelp -Container $optFlow)
@@ -290,7 +290,7 @@ function Show-CvConvertWindow {
     $lblTHelp = New-Object System.Windows.Forms.Label
     $lblTHelp.Text      = (Get-CvText -Key 'cola.opt.tray.h')
     $lblTHelp.Name      = 'cvTrayHelp'
-    $lblTHelp.ForeColor = (Get-CvGuiCurrentPalette).Muted
+    [void](Set-CvGuiRole -Control $lblTHelp -Role 'muted')   # con ROL: el tema lo respeta (un ForeColor suelto lo pisaba)
     $lblTHelp.Margin    = New-Object System.Windows.Forms.Padding(2, 0, 0, 0)
     $optFlow.Controls.Add($lblTHelp)
     [void](Set-CvGuiWrapLabel -Label $lblTHelp -Container $optFlow)
@@ -367,7 +367,7 @@ function Show-CvConvertWindow {
     $lblCount.Text      = (Get-CvText -Key 'cola.men.pie')
     $lblCount.AutoSize  = $false
     $lblCount.AutoEllipsis = $true
-    $lblCount.ForeColor = (Get-CvGuiCurrentPalette).Muted
+    [void](Set-CvGuiRole -Control $lblCount -Role 'muted')   # con ROL: el tema lo respeta (un ForeColor suelto lo pisaba)
     $lblCount.Name      = 'cvSumHint'
     $sumGrid.Controls.Add($lblCount, 0, 1)
 
@@ -440,6 +440,9 @@ function Show-CvConvertWindow {
         LogChoices = @()   # lo que ofrece el desplegable de logs (Get-CvConvertLogChoices), en su orden
         LogPathsSig = ''   # las rutas de esa lista: si no cambian, el desplegable no se rehace
         LogQuiet = $false  # actualizando solo los textos del desplegable (su evento no recarga)
+        StartKey = $null   # el atajo del boton Iniciar (para su ayuda emergente), una vez
+        Rebuilding = $false  # rehaciendo la lista: su evento de seleccion no cuenta como toque
+        ActPending = $false  # hay un refresco de 'volver a la ventana' pendiente (BeginInvoke)
         Stopping = $false  # hay parada pedida: lo mira el menu contextual
         Running  = $false  # hay workers vivos
         StartedAt = 0      # ticks del ultimo 'Iniciar': el boton se apaga ya, sin esperar al refresco
@@ -490,8 +493,9 @@ function Show-CvConvertWindow {
     $current = {
         if ($lv.SelectedIndices.Count -eq 0) { return $null }
         $i = $lv.SelectedIndices[0]
-        if ($i -lt 0 -or $i -ge @($st.Rows).Count) { return $null }
-        return @($st.Rows)[$i]
+        $filas = @($st.Rows)
+        if ($i -lt 0 -or $i -ge $filas.Count) { return $null }
+        return $filas[$i]
     }
     # TODAS las filas marcadas, para las acciones en bloque. Lo que es por-archivo (editar el job, ver
     # el job, abrir la carpeta) sigue usando $current = la primera.
@@ -576,6 +580,10 @@ function Show-CvConvertWindow {
         } finally {
             $st.SumBusy = $false
         }
+        # Si durante el DoEvents se marco OTRA fila, lo pintado es del archivo de antes: se repite
+        # para el de ahora (la llamada de esa fila se habia saltado por SumBusy).
+        $ahora = & $current
+        if ($null -ne $r -and $null -ne $ahora -and "$($ahora.Name)" -ne "$($r.Name)") { & $updateSummary $true }
     }
     $miCopy.Add_Click({
         try { if ("$($txtSum.Text)" -ne '') { [System.Windows.Forms.Clipboard]::SetText($txtSum.Text) } } catch { }
@@ -649,7 +657,14 @@ function Show-CvConvertWindow {
         $ss = Get-CvQueueStartState -Queued ([int]$totals.Queued) -Live ([int]$st.Live) `
                                     -Stopping ([bool]$st.Stopping) -JustStarted ([bool](& $arrancando)) -Max ([int]$numW.Value)
         $btnStart.Enabled = [bool]$ss.Enabled
-        $tipBar.SetToolTip($btnStart, "$($ss.Tip)")
+        # Con su atajo (F9) al final, como los demas botones: poniendo solo el motivo, el primer
+        # refresco le quitaba el atajo. Y solo si cambia (esto corre en cada tick).
+        if ($null -eq $st.StartKey) {
+            $st.StartKey = "$(@(Get-CvQueueShortcuts | Where-Object { "$($_.Button)" -eq "$($btnStart.Name)" } | ForEach-Object { $_.Label })[0])"
+        }
+        $tipStart = "$($ss.Tip)"
+        if ("$($st.StartKey)" -ne '') { $tipStart = (Get-CvText -Key 'cola.atajo.tip' -Values @($tipStart, "$($st.StartKey)")) }
+        if ("$($tipBar.GetToolTip($btnStart))" -cne $tipStart) { $tipBar.SetToolTip($btnStart, $tipStart) }
         $btnStop.Enabled  = ([int]$st.Live -gt 0) -and (-not [bool]$st.Stopping)
         $btnKill.Enabled  = ([int]$st.Live -gt 0)
         # 'Editar job': con una fila elegida vale la suya; sin elegir nada, el primero que este sin
@@ -666,6 +681,7 @@ function Show-CvConvertWindow {
     # ventana segundos: ahora '$selected' la recorre una sola vez, y Ctrl+A (que marca todas desde
     # aqui) apaga el evento mientras marca y actualiza UNA vez al final (SelBulk).
     $lv.Add_SelectedIndexChanged({
+        if ([bool]$st.Rebuilding) { return }
         $st.Touch = [datetime]::UtcNow.Ticks
         if ([bool]$st.SelBulk) { return }
         & $updateSummary $false
@@ -790,6 +806,9 @@ function Show-CvConvertWindow {
 
     # ---- Refresco (lo dispara el temporizador y el boton Actualizar) ----
     $refreshCore = {
+        # Un 'Preparar pendientes' cancelado sigue hasta acabar su archivo: se libera en cuanto acaba,
+        # no al abrir el siguiente (eran decenas de MB de runspace esperando).
+        try { [void](Clear-CvPrepareOrphans) } catch { }
         # Deducir los bordes de un archivo ya convertido cuesta dos ffprobe (~300 ms medidos), asi que
         # solo se hace con la cola PARADA: mientras hay workers el refresco tiene que seguir siendo
         # barato -la lista dejaba de responder por mucho menos- y ademas el disco esta ocupado. Se
@@ -853,8 +872,13 @@ function Show-CvConvertWindow {
                     for ($i = 1; $i -lt $cells.Count; $i++) { [void]$it.SubItems.Add("$($cells[$i])") }
                     $nuevos.Add($it)
                 }
-                $lv.Items.Clear()
-                $lv.Items.AddRange($nuevos.ToArray())
+                # Rehacer la lista no es un toque TUYO: vaciarla con una fila marcada dispara el evento
+                # de seleccion, que paraba el 'seguir al worker' unos segundos tras cada rehacer.
+                $st.Rebuilding = $true
+                try {
+                    $lv.Items.Clear()
+                    $lv.Items.AddRange($nuevos.ToArray())
+                } finally { $st.Rebuilding = $false }
                 $st.Names = $names
                 $st.LastTop = -1   # la lista vuelve arriba sola: no cuenta como scroll tuyo
             } else {
@@ -908,12 +932,24 @@ function Show-CvConvertWindow {
         $rutas = (@($choices | ForEach-Object { "$($_.Path)" }) -join '|')
         if ($rutas -ne "$($st.LogPathsSig)" -or $cmbLog.Items.Count -ne $txts.Count) {
             $keep = "$($st.LogPath)"
-            $cmbLog.Items.Clear()
-            foreach ($t in $txts) { [void]$cmbLog.Items.Add($t) }
-            $idx = 0
-            for ($i = 0; $i -lt $choices.Count; $i++) { if ($choices[$i].Path -eq $keep) { $idx = $i } }
-            if ($cmbLog.Items.Count -gt 0) { $cmbLog.SelectedIndex = $idx }
+            # Callado mientras se rehace: Clear y SelectedIndex disparan su evento, que vaciaba el
+            # panel y leia el log entero (128 KB formateados) cada vez que aparecia un log nuevo, con
+            # la pestana del log a la vista o no. Solo se recarga si la eleccion CAMBIA de verdad.
+            $st.LogQuiet = $true
+            try {
+                $cmbLog.Items.Clear()
+                foreach ($t in $txts) { [void]$cmbLog.Items.Add($t) }
+                $idx = 0
+                for ($i = 0; $i -lt $choices.Count; $i++) { if ($choices[$i].Path -eq $keep) { $idx = $i } }
+                if ($cmbLog.Items.Count -gt 0) { $cmbLog.SelectedIndex = $idx }
+            } finally { $st.LogQuiet = $false }
             $st.LogPathsSig = $rutas
+            $nueva = if ($choices.Count -gt 0) { "$($choices[$idx].Path)" } else { '' }
+            if ($nueva -ne $keep) {
+                $txtLog.Text = ''
+                $st.LogStamp = ''
+                $st.LogPath  = $nueva
+            }
         } elseif (-not $cmbLog.DroppedDown -and (@($cmbLog.Items) -join '|') -ne ($txts -join '|')) {
             $antes = $cmbLog.SelectedIndex
             $st.LogQuiet = $true
@@ -968,8 +1004,11 @@ function Show-CvConvertWindow {
         foreach ($w in $live) { if ("$($w.File)" -ne '') { $porArchivo["$($w.File)"] = $w } }
         $lv.BeginUpdate()
         try {
-            for ($k = 0; $k -lt @($st.Rows).Count -and $k -lt $lv.Items.Count; $k++) {
-                $r = @($st.Rows)[$k]
+            # La lista UNA vez: '@($st.Rows)' copia el array entero, y hacerlo en la condicion y en
+            # cada vuelta eran dos copias por fila en cada tick (cuadratico con cientos de archivos).
+            $filas = @($st.Rows)
+            for ($k = 0; $k -lt $filas.Count -and $k -lt $lv.Items.Count; $k++) {
+                $r = $filas[$k]
                 $w = $porArchivo["$($r.Name)"]
                 if ($null -eq $w) { continue }
                 $r.WorkerPid = [int]$w.Pid
@@ -1072,7 +1111,9 @@ function Show-CvConvertWindow {
             }
             return
         }
-        & $startWorkers $sel
+        # Marcadas TODAS las de la cola (Ctrl+A) es 'la cola entera', no una lista: con cientos de
+        # nombres en -Only no cabia en la linea de comandos, y ademas dejaba fuera lo que se anadiera.
+        if ($sel.Count -ge $tot) { & $startWorkers @() } else { & $startWorkers $sel }
     })
 
     $btnStop.Add_Click({
@@ -1119,13 +1160,20 @@ function Show-CvConvertWindow {
         # refresco lo hace Shown, sin sondas, para pintar cuanto antes. Si no, este hacia uno completo
         # con sus ffprobe (~0,9 s medido) antes de que la ventana se viera.
         if (-not [bool]$st.ShownDone) { return }
-        # Al volver de un dialogo (editar el job, preparar...) el boton que lo abrio YA ha refrescado:
-        # otro refresco completo justo detras era trabajo repetido. Se salta si el ultimo es de hace
-        # menos de un intervalo de refresco (gui.queueRefreshMs).
-        if (([datetime]::UtcNow.Ticks - [long]$st.LastRefresh) / 10000 -lt [int]$Context.GuiQueueRefreshMs) { return }
-        if ($st.Busy) { return }
-        $st.Busy = $true
-        try { & $refresh } catch { Write-CvLog 'COLA' (Get-CvText -Key 'cw.refresco' -Values @($_)) } finally { $st.Busy = $false }
+        # Al volver de un dialogo (editar el job, preparar...) el boton que lo abrio YA refresca. Pero
+        # WinForms reactiva la ventana DENTRO de ShowDialog, antes de que el boton siga: mirando aqui
+        # mismo, el ultimo refresco era el de antes del dialogo y se hacian dos. Se deja para DESPUES
+        # del manejador (BeginInvoke) y entonces se salta si el ultimo es de hace menos de un
+        # intervalo de refresco (gui.queueRefreshMs).
+        if ([bool]$st.ActPending) { return }
+        $st.ActPending = $true
+        [void]$form.BeginInvoke([System.Action]{
+            $st.ActPending = $false
+            if (([datetime]::UtcNow.Ticks - [long]$st.LastRefresh) / 10000 -lt [int]$Context.GuiQueueRefreshMs) { return }
+            if ($st.Busy -or $form.IsDisposed) { return }
+            $st.Busy = $true
+            try { & $refresh } catch { Write-CvLog 'COLA' (Get-CvText -Key 'cw.refresco' -Values @($_)) } finally { $st.Busy = $false }
+        })
     })
     # Elegir otro log lo carga YA: antes solo vaciaba el panel y la ruta se cambiaba en el refresco
     # COMPLETO, que con workers en marcha puede tardar minutos, asi que volvia el log anterior.
@@ -1265,7 +1313,9 @@ function Show-CvConvertWindow {
         $r = & $current
         if ($null -eq $r) { return }
         $p = Get-CvJobPath $Context $r.Name
-        $txt = try { Get-Content -Raw -LiteralPath $p } catch { "(no se pudo leer el job: $_)" }
+        # -ErrorAction Stop: un job que ya no esta (se borro con el menu abierto) no llegaba al catch
+        # y se abria una ventana vacia.
+        $txt = try { Get-Content -Raw -LiteralPath $p -ErrorAction Stop } catch { (Get-CvText -Key 'cola.job.noleido' -Values @($_.Exception.Message)) }
         [void](Show-CvTextWindow -Title (Get-CvText -Key 'cola.job.tit' -Values @($r.Name)) -Text "$txt")
     })
     # Ver el archivo: con lo que diga preview.player (por defecto, el reproductor asociado de
@@ -1310,6 +1360,12 @@ function Show-CvConvertWindow {
         foreach ($w in @(Get-CvWorkerStates -Context $Context)) { $porPid[[int]$w.Pid] = $w }
         foreach ($r in $rows) {
             $w = $porPid[[int]$r.WorkerPid]
+            # Mientras se leia la confirmacion, ese worker pudo acabar este archivo y coger OTRO: solo
+            # se corta si sigue con el que se marco (si no, se mataba la codificacion de otro).
+            if ($null -eq $w -or "$($w.File)" -ne "$($r.Name)") {
+                Write-CvLog 'COLA' (Get-CvText -Key 'cw.kill.yano' -Values @($r.Name, $r.WorkerPid))
+                continue
+            }
             $ok = $(if ($null -ne $w) {
                 Stop-CvConvertWorker -ProcessId ([int]$r.WorkerPid) -Started $w.Started -StatePath "$($w.Path)"
             } else {
@@ -1353,8 +1409,15 @@ function Show-CvConvertWindow {
                 $rows.Count, ((@($rows | Select-Object -First 12 | ForEach-Object { $_.Name }) -join "`n") + $(if ($rows.Count -gt 12) { "`n..." } else { '' })))
         }
         if (-not (Show-CvGuiConfirm -Title (Get-CvText -Key 'cola.drop.tit') -Message $msg)) { return }
-        foreach ($r in $rows) { Remove-CvJob -Context $Context -Name $r.Name }
-        Write-CvLog 'COLA' (Get-CvText -Key 'cw.jobs.fuera' -Values @($rows.Count))
+        # El que un worker cogio mientras se confirmaba no se quita (lo esta codificando).
+        $quitados = 0
+        foreach ($r in $rows) {
+            $lk = Join-Path $Context.Proceso ("{0}.lock" -f $r.Name)
+            if ((Test-Path -LiteralPath $lk) -and -not (Test-CvLockStale $lk)) { continue }
+            Remove-CvJob -Context $Context -Name $r.Name
+            $quitados++
+        }
+        Write-CvLog 'COLA' (Get-CvText -Key 'cw.jobs.fuera' -Values @($quitados))
         & $refresh
     })
 
@@ -1383,6 +1446,13 @@ function Show-CvConvertWindow {
         if ($lv.Columns[$iProg].Width -ne $w) { $lv.Columns[$iProg].Width = $w }
     }
     $lv.Add_Resize($fitCols)
+    # ...y al cambiar a mano el ancho de OTRA (el comentario lo prometia y no estaba enganchado):
+    # ensanchar una columna echaba la de progreso fuera hasta redimensionar la ventana. El de la
+    # propia columna de progreso se ignora, que es el que pone $fitCols.
+    $lv.Add_ColumnWidthChanged({
+        param($s, $e)
+        if ($e.ColumnIndex -ne $iProg) { & $fitCols }
+    })
 
     $form.Add_Shown({
         # Lo ya deducido en otras sesiones (bordes de los archivos convertidos): asi la columna sale

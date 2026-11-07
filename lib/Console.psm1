@@ -470,7 +470,8 @@ function Write-CvOptionUnsupported {
           -Hint:   sugerencia opcional de que elegir en su lugar.
     #>
     param([Parameter(Mandatory)][string]$Option, [Parameter(Mandatory)][string]$Reason, [string]$Hint = '')
-    $msg = "[AVISO] - '{0}' no disponible en este equipo: {1}." -f $Option, $Reason
+    # El marcador [AVISO] no se traduce (es para buscarlo en el log); la frase si.
+    $msg = "[AVISO] - {0}" -f (Get-CvText -Key 'con.nodisp' -Values @($Option, $Reason))
     if ($Hint) { $msg = "$msg $Hint" }
     Write-CvLog 'GLOBAL' $msg
 }

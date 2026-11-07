@@ -174,9 +174,11 @@ function Get-CvWorkerStates {
     # PID -> nombre, en UNA consulta: vivo = su PID existe Y es un PowerShell. Solo con el PID, uno
     # muerto cuyo numero le tocaba a otro programa volvia a contar como worker: ocupaba hueco en el
     # maximo, dejaba 'Cancelar' encendido... y 'Cancelar' habria matado a ese otro programa.
+    $estados = @(Get-ChildItem -LiteralPath $dir -Filter '*.worker.json' -File -ErrorAction SilentlyContinue)
+    if ($estados.Count -eq 0) { return @() }   # cola parada: ni se pregunta a Windows por los procesos
     $procesos = Get-CvProcessNames
     $out = @()
-    foreach ($f in @(Get-ChildItem -LiteralPath $dir -Filter '*.worker.json' -File -ErrorAction SilentlyContinue)) {
+    foreach ($f in $estados) {
         $stamp = "{0}|{1}" -f $f.LastWriteTimeUtc.Ticks, $f.Length
         $hit   = $script:CvWorkerPeek[$f.FullName]
         if ($null -ne $hit -and "$($hit.Stamp)" -eq $stamp) {
@@ -193,6 +195,17 @@ function Get-CvWorkerStates {
         } else { $true }
         $empezo = [datetime]::MinValue
         [void][datetime]::TryParse("$($s.started)", [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::RoundtripKind, [ref]$empezo)
+        # Que sea un PowerShell no basta: Windows reutiliza los PID, y la cola, otro worker o una
+        # consola pueden llevar el de uno muerto (cerrado con la X, sin limpiar). Ese fantasma ocupaba
+        # hueco y dejaba su archivo 'codificando' para siempre. Se mira tambien que el proceso
+        # arrancara ANTES que el estado (Test-CvWorkerProcess), una vez por PID y arranque.
+        if ($alive -and $mine -and ($procesos.Count -gt 0) -and $empezo -ne [datetime]::MinValue) {
+            $clave = "{0}|{1}" -f $wpid, "$($s.started)"
+            if (-not $script:CvWorkerStartOk.ContainsKey($clave)) {
+                $script:CvWorkerStartOk[$clave] = [bool](Test-CvWorkerProcess -ProcessId $wpid -Started $empezo)
+            }
+            $alive = [bool]$script:CvWorkerStartOk[$clave]
+        }
         $out += [pscustomobject]@{
             Pid     = $wpid
             Host    = "$($s.host)"
@@ -352,6 +365,8 @@ $script:CvDoneBorder = @{}
 # Cache del tamano de los ORIGINALES que no lo traen en su job (ver Get-CvSourceVideoPeek).
 $script:CvSrcVideo   = @{}
 $script:CvWorkerPeek = @{}
+# PID|arranque de un estado de worker -> si ese proceso es de verdad el worker (Get-CvWorkerStates).
+$script:CvWorkerStartOk = @{}
 
 function Get-CvJobPeek {
     <#
@@ -489,6 +504,13 @@ function Find-CvFileLog {
             $txt = Get-CvSetupLogText -Path $l.FullName -MaxKb $MaxKb -Raw
             if ("$txt" -eq '' -or "$txt".IndexOf("$Name", [System.StringComparison]::Ordinal) -lt 0) { continue }
             $sec = Get-CvLogSection -Lines ($txt -split "`r?`n") -Name $Name
+            # El nombre sale en la cola pero su cabecera quedo ANTES (un log largo de muchos archivos):
+            # se relee ese log con mas margen en vez de pasar a uno mas viejo, que ensenaria un
+            # intento anterior como si fuera el de ahora.
+            if ("$sec" -eq '' -and $l.Length -gt ([long]$MaxKb * 1024)) {
+                $txt = Get-CvSetupLogText -Path $l.FullName -MaxKb ([int][Math]::Min([long]$MaxKb * 16, [long]($l.Length / 1024) + 1)) -Raw
+                $sec = Get-CvLogSection -Lines ($txt -split "`r?`n") -Name $Name
+            }
             if ("$sec" -ne '') {
                 $r.Found = $true
                 $r.Path  = $l.FullName
@@ -707,6 +729,10 @@ function Save-CvDoneBorderCache {
             $src = "$($e.Src)"
             $out = "$($e.Out)"
             if ($src -eq '' -or $out -eq '') { continue }
+            # El 'no se pudo' vale para esta sesion (no repetir el ffprobe en cada refresco), pero no
+            # se guarda: un fallo pasajero se quedaba en disco hasta que cambiara alguno de los dos.
+            if ($null -ne $e.Data -and $e.Data.PSObject.Properties['Known'] -and -not [bool]$e.Data.Known) { continue }
+            if ($e.Data -is [System.Collections.IDictionary] -and $e.Data.Contains('Known') -and -not [bool]$e.Data['Known']) { continue }
             if (-not (Test-Path -LiteralPath $src) -or -not (Test-Path -LiteralPath $out)) {
                 $script:CvDoneBorder.Remove($k)
                 continue
@@ -812,6 +838,8 @@ function Save-CvSourceVideoCache {
                 $script:CvSrcVideo.Remove($k)
                 continue
             }
+            # Igual que los bordes: el 'no se pudo' no se guarda en disco.
+            if ($e.Data -is [System.Collections.IDictionary] -and $e.Data.Contains('Known') -and -not [bool]$e.Data['Known']) { continue }
             $vivas += [pscustomobject]@{
                 Path  = $k
                 Stamp = "$($e.Stamp)"
@@ -860,9 +888,7 @@ function Get-CvQueueStatus {
     $mirarCalidad = ([int]$Context.GuiQueueQualityProbe -gt 0)
     $todos   = $(if ($null -ne $Workers) { @($Workers) } else { @(Get-CvWorkerStates -Context $Context) })
     $workers = @($todos | Where-Object { $_.Alive })
-    # Una sola consulta de procesos para todos los locks, y el texto de cada estado una vez (antes,
-    # un Get-Process por lock -~40 ms- y el catalogo de estados rehecho por cada fila).
-    $procesos = $null
+    # El texto de cada estado, una vez (antes, el catalogo de estados se rehacia por cada fila).
     $textoEstado = @{}
     foreach ($e in @(Get-CvQueueStates)) { $textoEstado["$($e.Value)"] = "$($e.Text)" }
     # Las carpetas se listan UNA vez y se decide en memoria. Preguntando fichero a fichero
@@ -891,8 +917,9 @@ function Get-CvQueueStatus {
         $lock   = Join-Path $Context.Proceso ("{0}.lock" -f $name)
         $lInfo  = $proceso[("{0}.lock" -f $name)]
         $locked = ($null -ne $lInfo)
-        if ($locked -and $null -eq $procesos) { $procesos = Get-CvProcessNames }
-        $stale  = $locked -and (Test-CvLockStale $lock -Processes $procesos)
+        # Si esta caducado lo dice el propio fichero (abierto o no por su dueno, Test-CvLockStale): ya
+        # no hace falta la lista de procesos, que era otra consulta entera a Windows por refresco.
+        $stale  = $locked -and (Test-CvLockStale $lock)
         $jInfo  = $proceso[("{0}.job.json" -f $name)]
         $hasJob = ($null -ne $jInfo)
         $w      = $workers | Where-Object { $_.File -eq $name -and $_.Status -eq 'working' } | Select-Object -First 1
@@ -925,6 +952,10 @@ function Get-CvQueueStatus {
         # bordes ya trae los dos tamanos); con job, lo que el job le va a hacer; sin nada, el original.
         $calidad = ''
         $calidadOut = ''
+        # Fuera del literal: '$(... @() ...)' convierte la lista VACIA en $null, y la celda contaba una
+        # pista fantasma en vez de decir 'sin audio'.
+        $pistas = @()
+        if ($null -ne $peek) { $pistas = @($peek.Tracks) }
         $sondeando = ($done -and -not $hasJob -and $null -eq $dp -and $mirarBordes)
         if ($done -and -not $hasJob -and $null -ne $dp -and [int]$dp.SrcW -gt 0) {
             $calidad    = Get-CvVideoQuality -Width ([int]$dp.SrcW) -Height ([int]$dp.SrcH) -Tolerance $QualityTolerance
@@ -960,7 +991,7 @@ function Get-CvQueueStatus {
             SizeKb    = [long]($f.Length / 1024)
             Crop      = $(if ($null -ne $peek) { "$($peek.Crop)" } else { '' })
             Detect    = $(if ($null -ne $peek) { [bool]$peek.Detect } else { $false })
-            AudioTracks = $(if ($null -ne $peek) { @($peek.Tracks) } else { @() })
+            AudioTracks = $pistas
             AudioSkip = $(if ($null -ne $peek) { [bool]$peek.AudioSkip } else { $false })
             OutPath   = $outPath
             OutSizeKb = $outKb
@@ -1192,11 +1223,19 @@ function Stop-CvConvertWorker {
         & $quitarEstado
         return $true
     }
+    # Se apuntan los hijos, se mata al WORKER y luego a los hijos (los apuntados y los que hubiera
+    # lanzado entre medias): matando primero al ffmpeg, el worker lo veia morir y podia lanzar el
+    # siguiente (ffprobe/ffmpeg del archivo que venia), que se quedaba huerfano.
+    $hijos = {
+        @(Get-CimInstance Win32_Process -Filter ("ParentProcessId={0}" -f $ProcessId) -ErrorAction SilentlyContinue |
+            ForEach-Object { [int]$_.ProcessId })
+    }
     try {
-        foreach ($c in @(Get-CimInstance Win32_Process -Filter ("ParentProcessId={0}" -f $ProcessId) -ErrorAction SilentlyContinue)) {
-            try { Stop-Process -Id ([int]$c.ProcessId) -Force -ErrorAction SilentlyContinue } catch {}
-        }
+        $antes = & $hijos
         Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue
+        foreach ($c in @(@($antes) + @(& $hijos) | Select-Object -Unique)) {
+            try { Stop-Process -Id $c -Force -ErrorAction SilentlyContinue } catch {}
+        }
     } catch {}
     $muerto = (-not (Test-CvProcessAlive -ProcessId $ProcessId))
     if ($muerto) { & $quitarEstado }
@@ -1215,8 +1254,12 @@ function Test-CvWorkerProcess {
         $p = Get-Process -Id $ProcessId -ErrorAction Stop
         if (@('powershell', 'pwsh') -notcontains "$($p.ProcessName)".ToLower()) { return $false }
         if ($Started -ne [datetime]::MinValue) {
-            $arranque = $p.StartTime.ToUniversalTime()
-            if ($arranque -gt $Started.ToUniversalTime().AddSeconds(5)) { return $false }
+            # Un worker lanzado como administrador no deja leer su hora de arranque a una cola que no
+            # lo es: entonces vale con el nombre. Antes eso contaba como 'ya no esta' y se borraba el
+            # estado de un worker que seguia codificando.
+            $arranque = $null
+            try { $arranque = $p.StartTime.ToUniversalTime() } catch { $arranque = $null }
+            if ($null -ne $arranque -and $arranque -gt $Started.ToUniversalTime().AddSeconds(5)) { return $false }
         }
         return $true
     } catch {

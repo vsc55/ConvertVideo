@@ -723,7 +723,12 @@ Assert-Eq 'layout 1' 'mono'   (Get-CvChannelLayout 1)
 Assert-Eq 'layout 2' 'stereo' (Get-CvChannelLayout 2)
 Assert-Eq 'layout 6' '5.1'    (Get-CvChannelLayout 6)
 Assert-Eq 'layout 8' '7.1'    (Get-CvChannelLayout 8)
-Assert-Eq 'layout 3 -> stereo' 'stereo' (Get-CvChannelLayout 3)
+# Los de por defecto de ffmpeg: con 3, 5 o 7 canales caia en 'stereo' (mezclaba a estereo y luego
+# codificaba con -ac 3/5/7).
+Assert-Eq 'layout 3 -> 2.1' '2.1' (Get-CvChannelLayout 3)
+Assert-Eq 'layout 5 -> 5.0' '5.0' (Get-CvChannelLayout 5)
+Assert-Eq 'layout 7 -> 6.1' '6.1' (Get-CvChannelLayout 7)
+Assert-Eq 'layout 9 -> stereo (no hay)' 'stereo' (Get-CvChannelLayout 9)
 Assert-Eq 'rank eac3>ac3' $true ((Get-CvAudioCodecRank 'eac3') -gt (Get-CvAudioCodecRank 'ac3'))
 Assert-Eq 'rank truehd 100' 100 (Get-CvAudioCodecRank 'truehd')
 Assert-Eq 'rank aac 40'      40 (Get-CvAudioCodecRank 'aac')
@@ -1839,7 +1844,10 @@ Assert-Eq   'cruce: encuentra el desplazamiento' 30 ([int]$lagCx[0])
 Assert-True 'cruce: con encaje perfecto'         ($lagCx[1] -gt 0.999)
 # Get-CvTonemapFormat
 Assert-Eq 'tonemap main10 hevc -> p010le' 'p010le'  (Get-CvTonemapFormat -VideoProfile 'main10' -VideoEncoder 'hevc_nvenc')
-Assert-Eq 'tonemap main10 x264 -> yuv420p' 'yuv420p' (Get-CvTonemapFormat -VideoProfile 'main10' -VideoEncoder 'libx264')
+# El MISMO formato que pide luego el encoder (Get-VideoArgs): x264/x265 de 10 bits en yuv420p10le.
+Assert-Eq 'tonemap main10 x264 -> 420p10le' 'yuv420p10le' (Get-CvTonemapFormat -VideoProfile 'main10' -VideoEncoder 'libx264')
+Assert-Eq 'tonemap high10 x264 -> 420p10le' 'yuv420p10le' (Get-CvTonemapFormat -VideoProfile 'high10' -VideoEncoder 'libx264')
+Assert-Eq 'tonemap main10 x265 -> 420p10le' 'yuv420p10le' (Get-CvTonemapFormat -VideoProfile 'main10' -VideoEncoder 'libx265')
 Assert-Eq 'tonemap main10 av1_nvenc -> p010le'   'p010le'      (Get-CvTonemapFormat -VideoProfile 'main10' -VideoEncoder 'av1_nvenc')
 Assert-Eq 'tonemap main10 libsvtav1 -> 420p10le' 'yuv420p10le' (Get-CvTonemapFormat -VideoProfile 'main10' -VideoEncoder 'libsvtav1')
 Assert-Eq 'tonemap main hevc -> yuv420p'   'yuv420p' (Get-CvTonemapFormat -VideoProfile 'main' -VideoEncoder 'hevc_nvenc')
@@ -2461,7 +2469,7 @@ try {
     $ioJson = Join-Path $ioDir 'x.json'
     Assert-True 'Io: guarda json'      (Save-CvJsonFile -Path $ioJson -Object ([pscustomobject]@{ a = 1; b = 'dos' }))
     Assert-Eq   'Io: releido'          'dos' "$((Read-CvJsonFile -Path $ioJson).b)"
-    Assert-True 'Io: sin .tmp de sobra' (-not (Test-Path -LiteralPath "$ioJson.tmp"))
+    Assert-True 'Io: sin .tmp de sobra' (-not (Test-Path -LiteralPath "$ioJson.$PID.tmp"))
     # UTF-8 SIN BOM: con BOM, ffmpeg y media herramienta se atragantan.
     $ioBytes = [System.IO.File]::ReadAllBytes($ioJson)
     Assert-True 'Io: sin BOM'          (-not ($ioBytes[0] -eq 0xEF -and $ioBytes[1] -eq 0xBB))
@@ -2499,7 +2507,7 @@ try {
     try {
         Assert-Eq   'Io: bloqueado de verdad -> false' $false (Save-CvJsonFile -Path $ioDuro -Object ([pscustomobject]@{ a = 3 }) -Quiet)
     } finally { $fsDuro.Dispose() }
-    Assert-True 'Io: no deja el .tmp tirado' (-not (Test-Path -LiteralPath "$ioDuro.tmp"))
+    Assert-True 'Io: no deja el .tmp tirado' (-not (Test-Path -LiteralPath "$ioDuro.$PID.tmp"))
 } finally {
     Remove-Item -Recurse -Force -LiteralPath $ioDir -ErrorAction SilentlyContinue
 }
@@ -3002,14 +3010,14 @@ try {
     # Guardado atomico sobre un fichero que ya existe.
     [void](Save-CvTextFile -Path $rbB -Text 'guardado' -Atomic)
     Assert-Eq   'Guardado atomico: sustituye'          'guardado' (Get-Content -LiteralPath $rbB -Raw)
-    Assert-Eq   'Guardado atomico: sin .tmp suelto'    $false (Test-Path -LiteralPath "$rbB.tmp")
+    Assert-Eq   'Guardado atomico: sin .tmp suelto'    $false (Test-Path -LiteralPath "$rbB.$PID.tmp")
 
     # La config se lee en UTF-8 (como se escribe): una ruta con tilde llega entera.
     $rbCfg = Join-Path $rbDir 'config.json'
     $rbVid = 'D:\V' + [char]0x00ED + 'deos'
     Save-CvConfigFile -Path $rbCfg -Config ([pscustomobject]@{ paths = [pscustomobject]@{ base = $rbVid } })
     Assert-Eq   'Config: una ruta con tilde se lee bien' $rbVid "$((Get-CvConfig -Root $rbDir -Path $rbCfg).paths.base)"
-    Assert-Eq   'Config: guardado sin .tmp suelto'       $false (Test-Path -LiteralPath "$rbCfg.tmp")
+    Assert-Eq   'Config: guardado sin .tmp suelto'       $false (Test-Path -LiteralPath "$rbCfg.$PID.tmp")
 
     # NVENC: probar versiones anteriores solo con una NVIDIA (o sin saber que GPU hay).
     Assert-Eq   'NVENC: con NVIDIA, se prueban otras'   $true  (Test-CvNvencFallbackUseful -GpuName 'NVIDIA GeForce RTX 3060')
@@ -3132,13 +3140,23 @@ try {
     $pfClave = Get-CvCueCacheKey -File $pfFile -Index 3
     Set-Content -LiteralPath $pfFile -Value 'otro contenido' -NoNewline
     Assert-True 'Cues: fichero cambiado, otra clave (no se fia)' ((Get-CvCueCacheKey -File $pfFile -Index 3) -ne $pfClave)
-    # Locks: con la tabla de procesos (una consulta para todos) da lo mismo que preguntando uno a uno.
+    # Locks: lo que decide es si su dueno lo tiene ABIERTO (como Enter-Lock), no el PID. Con el PID,
+    # uno muerto cuyo numero le tocaba a otro PowerShell bloqueaba el archivo para siempre.
     $pfLock = Join-Path $pfDir 'x.lock'
-    Set-Content -LiteralPath $pfLock -Value ("PID={0};HOST={1}" -f $PID, $env:COMPUTERNAME) -NoNewline
     $pfProcs = Get-CvProcessNames
     Assert-True 'Procesos: estoy en la tabla'                  $pfProcs.ContainsKey($PID)
-    Assert-Eq   'Lock con tabla: el mio esta vivo'             $false (Test-CvLockStale $pfLock -Processes $pfProcs)
-    Assert-Eq   'Lock con tabla: un PID que no esta, caducado' $true  (Test-CvLockStale $pfLock -Processes @{})
+    $pfFs = [System.IO.File]::Open($pfLock, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::Read)
+    $pfB = [System.Text.Encoding]::UTF8.GetBytes(("PID={0};HOST={1}" -f $PID, $env:COMPUTERNAME))
+    $pfFs.Write($pfB, 0, $pfB.Length); $pfFs.Flush()
+    Assert-Eq   'Lock abierto por su dueno: vivo'              $false (Test-CvLockStale $pfLock -Processes $pfProcs)
+    Assert-Eq   'Lock abierto: vivo aunque el PID no este'     $false (Test-CvLockStale $pfLock -Processes @{})
+    Assert-Eq   'Lock abierto: leerlo no lo estorba'           $true  ("$(Read-CvTextFileShared -Path $pfLock)" -match 'PID=')
+    $pfFs.Dispose()
+    Assert-Eq   'Lock con PID vivo (reutilizado) y cerrado: caducado' $true (Test-CvLockStale $pfLock -Processes $pfProcs)
+    Set-Content -LiteralPath $pfLock -Value '' -NoNewline
+    Assert-Eq   'Lock vacio y cerrado: caducado'               $true  (Test-CvLockStale $pfLock)
+    Set-Content -LiteralPath $pfLock -Value 'PID=1;HOST=OTRO-EQUIPO-X' -NoNewline
+    Assert-Eq   'Lock de otro equipo: no se roba'              $false (Test-CvLockStale $pfLock)
 } finally {
     Remove-Item -Recurse -Force -LiteralPath $pfDir -ErrorAction SilentlyContinue
 }
@@ -3307,6 +3325,148 @@ Assert-Eq   'Marcas: se puede quitar'                     $false (Test-CvGuiMark
 [void](Get-CvGuiTrayFrameIcon -Frame @{ Key = 's|45'; Progress = -1; Spin = 45; Dot = $false; Pulse = $false })
 Assert-True 'Bandeja: libera sus iconos'                  ((Clear-CvGuiTrayFrameIcons) -ge 1)
 Assert-Eq   'Bandeja: y no queda ninguno'                 0 (Clear-CvGuiTrayFrameIcons)
+
+# ================================================================================================
+# 7a tanda: lo que encontro la revision linea a linea.
+Write-Host "`nRevision linea a linea" -ForegroundColor Cyan
+# Una linea partida a la que se le cae el acento grave sigue PARSEANDO (el lint no lo ve), pero el
+# parametro de la linea siguiente se ejecuta como un comando: el perfil personalizado de consola
+# rompia asi desde la v4.7.2. Se busca en todo el codigo.
+$rlRaiz = Split-Path -Parent $PSScriptRoot
+$rlPartidas = @()
+foreach ($rlF in @(Get-ChildItem -LiteralPath (Join-Path $rlRaiz 'lib'), (Join-Path $rlRaiz 'bin') -Recurse -Include *.ps1, *.psm1 -File)) {
+    $rlL = @(Get-Content -LiteralPath $rlF.FullName -Encoding UTF8)
+    for ($rlI = 1; $rlI -lt $rlL.Count; $rlI++) {
+        if ($rlL[$rlI - 1] -match '[^`]\s+$' -and $rlL[$rlI] -match '^\s+-[A-Z][A-Za-z]+(\s|$)') { $rlPartidas += ("{0}:{1}" -f $rlF.Name, $rlI) }
+    }
+}
+Assert-Eq   'Codigo: ninguna linea partida sin acento grave' '' ($rlPartidas -join ', ')
+# La salida de audio global (encode.audio del config) llega a los perfiles que no la fijan; antes
+# salia siempre la de fabrica.
+Set-CvActiveEncodeAudio -Audio ([ordered]@{ encoder = 'aac'; codec = 'eac3'; bitrate = '256k'; hz = 48000 })
+try {
+    $rlP = New-CvProfile -VideoEncoder 'libx265'
+    Assert-Eq   'Audio global: perfil de serie, su bitrate'  '256k' "$($rlP.AudioBitrate)"
+    Assert-Eq   'Audio global: y su codec'                   'eac3' "$($rlP.AudioCodec)"
+    Assert-Eq   'Audio global: y sus Hz'                     48000 ([int]$rlP.AudioHz)
+    $rlP2 = ConvertTo-CvProfile -Obj ([pscustomobject]@{ label = 'x'; videoEncoder = 'libx265' })
+    Assert-Eq   'Audio global: perfil propio sin audio'      '256k' "$($rlP2.AudioBitrate)"
+    $rlP3 = ConvertTo-CvProfile -Obj ([pscustomobject]@{ label = 'x'; videoEncoder = 'libx265'; audioBitrate = '96k' })
+    Assert-Eq   'Audio global: el suyo manda'                '96k' "$($rlP3.AudioBitrate)"
+} finally { Set-CvActiveEncodeAudio -Audio $null }
+Assert-Eq   'Audio global: sin config, el de fabrica'    "$((Get-CvConfigDefaultsShared).encode.audio.bitrate)" "$((New-CvProfile -VideoEncoder 'libx265').AudioBitrate)"
+# La semilla del perfil personalizado sigue al encode.* del config, salvo lo que se fijo a mano.
+$rlDir = Join-Path ([System.IO.Path]::GetTempPath()) ('cv_rl_' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+New-Item -ItemType Directory -Path $rlDir -Force | Out-Null
+try {
+    $rlCfg = Join-Path $rlDir 'config.json'
+    Set-Content -LiteralPath $rlCfg -Value '{ "encode": { "audio": { "bitrate": "256k" } }, "customProfile": { "audioCodec": "flac" } }' -Encoding UTF8
+    $rlC = Get-CvConfig -Root $rlDir -Path $rlCfg
+    Assert-Eq   'Semilla custom: sigue a encode.audio'       '256k' "$($rlC.customProfile.audioBitrate)"
+    Assert-Eq   'Semilla custom: lo fijado a mano se queda'  'flac' "$($rlC.customProfile.audioCodec)"
+} finally { Remove-Item -Recurse -Force -LiteralPath $rlDir -ErrorAction SilentlyContinue }
+# El escalado se decide sobre el tamano RECORTADO (el filtro va crop y despues scale).
+$rlT = Get-CvCroppedSize -Width 720 -Height 576 -Crop '720:432:0:72'
+Assert-Eq   'Recortado: tamano del recorte'              '720x432' ('{0}x{1}' -f $rlT.Width, $rlT.Height)
+Assert-Eq   'Recortado: sin recorte, el de origen'       1080 ([int](Get-CvCroppedSize -Width 1920 -Height 1080 -Crop '').Height)
+$rlCtx = [pscustomobject]@{ Anamorphic = 'square' }
+$rlVid = [pscustomobject]@{ Width = 720; Height = 576; Sar = '64:45' }
+$rlProf = [pscustomobject]@{ ChangeSize = ''; NoUpscale = $false; MaxWidth = $null }
+Assert-Eq   'Escalado: square con recorte, sobre el recorte' (Get-CvResize -Width 720 -Height 432 -Sar '64:45' -Anamorphic 'square') (Get-CvJobResize -Context $rlCtx -Prof $rlProf -Video $rlVid -Crop '720:432:0:72')
+Assert-True 'Escalado: y no el del original'             ((Get-CvJobResize -Context $rlCtx -Prof $rlProf -Video $rlVid -Crop '720:432:0:72') -ne (Get-CvJobResize -Context $rlCtx -Prof $rlProf -Video $rlVid))
+$rlCtx2 = [pscustomobject]@{ Anamorphic = 'keep' }
+$rlVid2 = [pscustomobject]@{ Width = 1920; Height = 1080; Sar = '1:1' }
+$rlProf2 = [pscustomobject]@{ ChangeSize = ''; NoUpscale = $false; MaxWidth = 1600 }
+Assert-Eq   'Escalado: maxWidth sin recorte, reduce'     '1600:-2' (Get-CvJobResize -Context $rlCtx2 -Prof $rlProf2 -Video $rlVid2)
+Assert-Eq   'Escalado: recorte mas estrecho, no amplia'  '' (Get-CvJobResize -Context $rlCtx2 -Prof $rlProf2 -Video $rlVid2 -Crop '1440:1080:240:0')
+# La correccion de OCR no toca palabras normales de una mayuscula.
+Assert-Eq   'OCR: El / Al / All se quedan'               'El Al All MANSION' ((Repair-CvSrtOcr -Text 'El Al All MANSlON').Text)
+# Un worker cuyo proceso arranco DESPUES de escribir su estado es otro con el mismo PID.
+Assert-Eq   'Worker: el mismo proceso, si'               $true  (Test-CvWorkerProcess -ProcessId $PID -Started ([datetime]::UtcNow))
+Assert-Eq   'Worker: un PID reutilizado, no'             $false (Test-CvWorkerProcess -ProcessId $PID -Started ([datetime]::UtcNow.AddHours(-12)))
+# Config escrito a mano: un numero como texto vale, un texto que no es numero se ignora (antes
+# tumbaba el arranque), 'false' entre comillas es falso y una seccion cambiada por un valor suelto
+# deja la de serie.
+Assert-Eq   'Config: "8" sobre un numero, 8'             8 ([int](ConvertTo-CvConfigValue -Default 4 -Value '8'))
+Assert-Eq   'Config: "0,8" sobre un decimal'             0.8 ([double](ConvertTo-CvConfigValue -Default 0.5 -Value '0,8'))
+Assert-Eq   'Config: "abc" sobre un numero, el de serie' 4 (ConvertTo-CvConfigValue -Default 4 -Value 'abc')
+Assert-Eq   'Config: "false" sobre un bool, falso'       $false (ConvertTo-CvConfigValue -Default $true -Value 'false')
+Assert-Eq   'Config: "auto" sobre un bool, se respeta'   'auto' (ConvertTo-CvConfigValue -Default $false -Value 'auto')
+$rlM = [ordered]@{ seccion = [ordered]@{ crf = 26 }; n = 3 }
+Merge-CvConfig -Default $rlM -Override ([pscustomobject]@{ seccion = ''; n = 'x' })
+Assert-Eq   'Config: seccion cambiada por un valor, la de serie' 26 ([int]$rlM.seccion.crf)
+Assert-Eq   'Config: numero roto, el de serie'           3 ([int]$rlM.n)
+Assert-Eq   'Numero: NaN no vale'                        $null (ConvertTo-InvDouble 'NaN')
+Assert-Eq   'Numero: infinito tampoco'                   $null (ConvertTo-InvDouble 'Infinity')
+# Perfiles: nombres de los de serie reservados, y lo tecleado en el editor se valida.
+Assert-Eq   'Perfil: no se puede llamar Auto'            $false ([bool](Test-CvProfileName -Name 'auto').Ok)
+Assert-Eq   'Perfil: ni Perfil 3'                        $false ([bool](Test-CvProfileName -Name 'Perfil 3').Ok)
+Assert-Eq   'Perfil: un nombre normal, si'               $true  ([bool](Test-CvProfileName -Name 'Anime 1080p').Ok)
+Assert-Eq   'Campos: todo vacio vale'                    $true  ([bool](Test-CvProfileFields -Encoder 'libx265').Ok)
+Assert-Eq   'Campos: CRF que no es numero, no'           $false ([bool](Test-CvProfileFields -Encoder 'libx265' -Crf '20.5').Ok)
+Assert-Eq   'Campos: CRF 99, fuera de rango'             $false ([bool](Test-CvProfileFields -Encoder 'libx265' -Crf '99').Ok)
+Assert-Eq   'Campos: CRF 40 en AV1, si'                  $true  ([bool](Test-CvProfileFields -Encoder 'libsvtav1' -Crf '40').Ok)
+Assert-Eq   'Campos: qmin mayor que qmax, no'            $false ([bool](Test-CvProfileFields -Encoder 'hevc_nvenc' -Qmin '30' -Qmax '20').Ok)
+Assert-Eq   'Campos: bitrate sin unidad, no'             $false ([bool](Test-CvProfileFields -Encoder 'libx265' -AudioBitrate '192').Ok)
+Assert-Eq   'Campos: bitrate 192k, si'                   $true  ([bool](Test-CvProfileFields -Encoder 'libx265' -AudioBitrate '192k').Ok)
+# El escalado de un job tiene que estar bien escrito (antes fallaba despues, en el worker).
+Assert-Eq   'Escalado: 1280:-2 vale'                     $true  (Test-CvJobResizeText -Text '1280:-2')
+Assert-Eq   'Escalado: con setsar=1 tambien'             $true  (Test-CvJobResizeText -Text '720:404,setsar=1')
+Assert-Eq   'Escalado: 1280x720 no'                      $false (Test-CvJobResizeText -Text '1280x720')
+# Un fallo PASAJERO de la sonda NVENC (GPU ocupada) no se guarda como 'no soportado'.
+Assert-Eq   'GPU: sesiones ocupadas, pasajero'           $true  (Test-CvGpuProbeTransient -StdErr 'OpenEncodeSessionEx failed: incompatible client key (21)')
+Assert-Eq   'GPU: sin dispositivo, no es pasajero'       $false (Test-CvGpuProbeTransient -StdErr 'No capable devices found')
+# Etiquetas de mkvmerge con idioma ('BPS-eng') tambien se leen.
+$rlSt = [pscustomobject]@{ tags = [pscustomobject]@{ 'NUMBER_OF_FRAMES-eng' = '750' } }
+Assert-Eq   'Tag: con sufijo de idioma'                  '750' "$(Get-Tag $rlSt 'NUMBER_OF_FRAMES')"
+# Un MJPEG de camara es video; una caratula suelta, no.
+Assert-Eq   'MJPEG: video de verdad'                     $true  (Test-CvImageCodecIsVideo -Stream ([pscustomobject]@{ nb_frames = '900'; duration = '30.0' }))
+Assert-Eq   'MJPEG: un fotograma, caratula'              $false (Test-CvImageCodecIsVideo -Stream ([pscustomobject]@{ nb_frames = '1'; duration = '' }))
+# Velocidades de 1000x o mas, que ffmpeg escribe con exponente.
+Assert-Eq   'Velocidad: 1.23e+03x'                       1230 ([int](Resolve-CvProgressSpeed -Speed '1.23e+03x'))
+Assert-Eq   'Velocidad: 2.5x'                            2.5 (Resolve-CvProgressSpeed -Speed '2.5x')
+# Huecos con ancho ({3,-22}) tambien cuentan al revisar las traducciones.
+Assert-Eq   'Huecos: con ancho'                          '0|3' ((Get-CvTextPlaceholders -Text '{0} y {3,-22}') -join '|')
+# HDV 1440x1080 (SAR 4:3) a '1280:720' es un 1280x720 cuadrado: 720p, no se mide con el SAR viejo.
+Assert-Eq   'Calidad: W:H fijo recalcula el SAR'         '720p' "$((Get-CvVideoQualityPair -Width 1440 -Height 1080 -Sar '4:3' -Resize '1280:720').Output)"
+# Las caches de archivos de '<config>.gui.json' son DOS (antes 'colaVideo' contaba como ventana).
+Assert-Eq   'Caches: las de archivos'                    'colaBordes|colaVideo' ((Get-CvGuiCacheKeys) -join '|')
+# SRT: una linea en blanco CON espacios separa cues, una cue sin numero se mueve, y UTF-16 se lee.
+$rlSrt = "1`r`n00:00:01,000 --> 00:00:02,000`r`nUno`r`n  `r`n2`r`n00:00:03,000 --> 00:00:04,000`r`nDos"
+Assert-Eq   'SRT: linea en blanco con espacios separa'   2 @(Get-CvSrtBlocks $rlSrt).Count
+Assert-True 'SRT: la segunda tambien se mueve'           ((Invoke-CvSrtResync -Text $rlSrt -B 1.0) -match '00:00:04,000 --> 00:00:05,000')
+$rlSin = "00:00:01,000 --> 00:00:02,000`r`nSin numero"
+Assert-True 'SRT: cue sin numero, se mueve y no pierde texto' ((Invoke-CvSrtResync -Text $rlSin -B 1.0) -match '(?s)00:00:02,000 --> 00:00:03,000.*Sin numero')
+$rlDir2 = Join-Path ([System.IO.Path]::GetTempPath()) ('cv_rl2_' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+New-Item -ItemType Directory -Path $rlDir2 -Force | Out-Null
+try {
+    $rlU16 = Join-Path $rlDir2 'u16.srt'
+    [System.IO.File]::WriteAllText($rlU16, $rlSrt, [System.Text.Encoding]::Unicode)
+    Assert-Eq   'SRT: UTF-16 se lee'                     2 @(Get-CvSrtBlocks (Read-CvSrtText -Path $rlU16)).Count
+    # Perfiles: renombrar el predeterminado se lo lleva; borrarlo deja 'Auto'.
+    $rlPc = Join-Path $rlDir2 'config.json'
+    Set-Content -LiteralPath $rlPc -Value '{ "defaultProfile": "Pelis" }' -Encoding UTF8
+    [void](Save-CvConfigProfile -Path $rlPc -Prof (New-CvProfile -VideoEncoder 'libx265') -Label 'Pelis')
+    [void](Save-CvConfigProfile -Path $rlPc -Prof (New-CvProfile -VideoEncoder 'libx265') -Label 'Cine' -Replace 'Pelis')
+    Assert-Eq   'Perfil: renombrar el predeterminado'    'Cine' (Get-CvConfigDefaultProfile -Path $rlPc)
+    [void](Remove-CvConfigProfile -Path $rlPc -Label 'Cine')
+    Assert-Eq   'Perfil: borrar el predeterminado, Auto' 'Auto' (Get-CvConfigDefaultProfile -Path $rlPc)
+    # Restablecer no congela los valores de serie: solo deja lo que se conserva.
+    Assert-True 'Reset: se hace'                         (Reset-CvConfig -Path $rlPc)
+    Assert-Eq   'Reset: sin los valores de serie dentro' $false ([bool]((Get-Content -LiteralPath $rlPc -Raw) -match '"encode"'))
+    # Un fichero abierto por otro (un log de un worker) cuenta como en uso.
+    $rlLog = Join-Path $rlDir2 'x.log'
+    Set-Content -LiteralPath $rlLog -Value 'x'
+    $rlH = [System.IO.File]::Open($rlLog, 'Open', 'Read', 'ReadWrite')
+    try { Assert-Eq 'En uso: abierto por otro' $true (Test-CvFileInUse -Path $rlLog) } finally { $rlH.Dispose() }
+    Assert-Eq   'En uso: cerrado, no'                    $false (Test-CvFileInUse -Path $rlLog)
+} finally { Remove-Item -Recurse -Force -LiteralPath $rlDir2 -ErrorAction SilentlyContinue }
+# Edicion en bloque: cambiar de perfil rehace el escalado con el tamano guardado en el job.
+$rlD = [pscustomobject]@{ Prof = (New-CvProfile -VideoEncoder 'libx265'); Crop = ''; Resize = ''; SrcWidth = 1920; SrcHeight = 1080; SrcSar = '1:1'; VideoSkip = $false; AudioSkip = $false; Anim = $false }
+$rlD2 = Set-CvJobBulkChanges -Draft $rlD -Changes @{ prof = (New-CvProfile -VideoEncoder 'libx265' -MaxWidth 1280) } -Context ([pscustomobject]@{ Anamorphic = 'keep' })
+Assert-Eq   'Bloque: perfil de 720p, escalado nuevo'     '1280:-2' "$($rlD2.Resize)"
+$rlD3 = Set-CvJobBulkChanges -Draft $rlD -Changes @{ prof = (New-CvProfile -VideoEncoder 'libx265' -MaxWidth 1280); resize = '' } -Context ([pscustomobject]@{ Anamorphic = 'keep' })
+Assert-Eq   'Bloque: con su propio escalado, manda ese'  '' "$($rlD3.Resize)"
 
 # ================================================================================================
 $total = $script:pass + $script:fail
