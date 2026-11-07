@@ -2,6 +2,7 @@
 
 ## VERSION 4.7.6 - 16/10/2026
 ### UPDATE
+  - **La pantalla de arranque en tema oscuro tiene borde.** No tiene marco y su fondo es casi el de las ventanas de detrás (el Explorador en modo oscuro), así que no se veía dónde acababa. Ahora lleva un borde de 1 px con el color de las líneas de la paleta oscura (`Edge` = `Border`, comprobado en la batería de la cola). En claro no hace falta: el azul ya la separa. Vale para la cola y para setup, que usan la misma pantalla.
   - **Las baterías de ventanas ya no molestan a quien está trabajando** (modo pruebas, solo en `test\gui-tests.ps1` y `test\gui-convert-tests.ps1`).
     - **Cómo funciona:**
       - Al empezar, `Set-CvGuiTestScreen` mira en qué monitor está la ventana que tiene el primer plano.

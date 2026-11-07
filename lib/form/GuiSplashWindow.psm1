@@ -29,7 +29,9 @@ function Get-CvSplashColors {
             barra blancas. Strip vacio: el fondo ya es el color de la marca.
           - Oscuro (-Dark): el fondo, el texto, el texto secundario, las lineas y el acento de la
             paleta oscura (Back / Fore / Muted / Border / Accent), y una franja arriba en el acento
-            para que se reconozca el programa.
+            para que se reconozca el programa. Y un BORDE de 1 px con el color de las lineas (Edge):
+            la pantalla no tiene marco, y en oscuro su fondo es casi el de las ventanas de detras
+            (el explorador en modo oscuro), asi que no se veia donde acababa.
     #>
     param([bool]$Dark = $false)
     if ($Dark) {
@@ -41,6 +43,7 @@ function Get-CvSplashColors {
             Track  = @(80, 80, 85)
             Bar    = @(0, 120, 215)
             Strip  = @(0, 120, 215)
+            Edge   = @(80, 80, 85)
         }
     }
     return @{
@@ -51,6 +54,7 @@ function Get-CvSplashColors {
         Track  = @(30, 110, 190)
         Bar    = @(255, 255, 255)
         Strip  = @()
+        Edge   = @()
     }
 }
 
@@ -177,6 +181,13 @@ function Start-CvSplashWindow {
                     $bBar = New-Object System.Drawing.SolidBrush (& $col $c.Bar)
                     $g.FillRectangle($bBar, $a, $y, ($b - $a), 6)
                     $bBar.Dispose()
+                }
+                # El borde, lo ULTIMO (encima de la franja). Sin suavizado: una linea de 1 px nitida.
+                if (@($c.Edge).Count -eq 3) {
+                    $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::None
+                    $pBorde = New-Object System.Drawing.Pen (& $col $c.Edge)
+                    $g.DrawRectangle($pBorde, 0, 0, ($r.Width - 1), ($r.Height - 1))
+                    $pBorde.Dispose()
                 }
             })
             $t = New-Object System.Windows.Forms.Timer

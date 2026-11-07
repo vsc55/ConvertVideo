@@ -603,6 +603,7 @@ foreach ($par in @(
     @{ S = 'Soft';   P = 'Muted' }
     @{ S = 'Track';  P = 'Border' }
     @{ S = 'Bar';    P = 'Accent' }
+    @{ S = 'Edge';   P = 'Border' }
 )) {
     $cp = $palO[$par.P]
     Assert-Eq ("Arranque oscuro: {0} = {1} de la paleta" -f $par.S, $par.P) ("{0},{1},{2}" -f $cp.R, $cp.G, $cp.B) (@($splO[$par.S]) -join ',')
