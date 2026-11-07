@@ -66,6 +66,9 @@ $modules = @(
 foreach ($m in $modules) {
     Import-Module (Join-Path $Lib ("{0}.psm1" -f $m)) -Force
 }
+# MODO PRUEBAS: las ventanas de la bateria salen en el monitor donde NO estas trabajando y ninguna te
+# quita el primer plano (Set-CvGuiTestScreen). Antes de abrir ninguna.
+if (Initialize-CvGui) { [void](Set-CvGuiTestScreen) }
 
 # --- Mini-harness (mismo estilo que unit-tests.ps1) ---
 $script:pass = 0
@@ -695,6 +698,7 @@ if (-not $sta) {
             $dlg.Size = New-Object System.Drawing.Size(300, 200)
             $dlg.StartPosition = 'CenterScreen'
             [void](Set-CvGuiTheme -Form $dlg)
+            [void](Set-CvGuiStartScreen -Form $dlg)   # modo pruebas: al monitor libre
             $dlg.Show()
             $esperado = Get-CvGuiCenteredLocation -Area ([System.Windows.Forms.Screen]::FromControl($f)).WorkingArea -Width $dlg.Width -Height $dlg.Height
             $script:monDlg = ("{0},{1}" -f $dlg.Location.X, $dlg.Location.Y)
@@ -1116,6 +1120,7 @@ if (-not $sta) {
 } else {
     $fF = New-Object System.Windows.Forms.Form
     $fF.Text = 'cv-front'
+    [void](Set-CvGuiStartScreen -Form $fF)   # modo pruebas: al monitor libre
     $fF.Show()
     [System.Windows.Forms.Application]::DoEvents()
     $rF = Set-CvGuiForeground -Form $fF
@@ -1244,6 +1249,7 @@ if (-not $sta) {
     Assert-True 'Barra: no se ve hasta que hace falta' (-not $niB.Visible)
     Assert-Eq   'Barra: su menu tiene abrir y cerrar' 2 $niB.ContextMenuStrip.Items.Count
 
+    [void](Set-CvGuiStartScreen -Form $fB)   # modo pruebas: al monitor libre
     $fB.Show()
     [System.Windows.Forms.Application]::DoEvents()
     $fB.WindowState = 'Minimized'

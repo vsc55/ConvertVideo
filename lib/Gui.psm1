@@ -2092,6 +2092,66 @@ function Get-CvGuiCenteredLocation {
     return (New-Object System.Drawing.Point([Math]::Max([int]$Area.X, $x), [Math]::Max([int]$Area.Y, $y)))
 }
 
+function Set-CvGuiTestScreen {
+    <#
+        MODO PRUEBAS de las baterias de ventanas (test\gui-tests.ps1, gui-convert-tests.ps1): que sus
+        ventanas no molesten a quien esta trabajando mientras corren. Se llama UNA vez al empezar,
+        antes de abrir ninguna, y deja dos variables de entorno (las heredan la pantalla de arranque,
+        que vive en otro hilo y no carga este modulo, y los procesos que lancen las pruebas):
+          CV_GUI_TEST      = 1: ninguna ventana se pone delante a la fuerza (Set-CvGuiForeground) ni
+                             se queda 'siempre encima' (la pantalla de arranque).
+          CV_GUI_TEST_AREA = 'x,y,ancho,alto': la zona de trabajo del monitor donde NO esta la ventana
+                             que tiene ahora el primer plano (la de quien trabaja). Con un solo
+                             monitor no se pone: las ventanas salen donde siempre, pero sin el foco.
+        La app normal no lo usa nunca. Devuelve la zona elegida (o $null).
+    #>
+    $env:CV_GUI_TEST = '1'
+    $env:CV_GUI_TEST_AREA = ''
+    try {
+        # Lo unico que se le pregunta a Windows: que monitores hay y en cual esta la ventana que tiene
+        # el primer plano (sin ninguna, el del raton). La ELECCION es pura: Select-CvGuiTestArea.
+        $fg = [CvGui.Native]::GetForegroundWindow()
+        $mio = if ($fg -ne [System.IntPtr]::Zero) { [System.Windows.Forms.Screen]::FromHandle($fg) } else { [System.Windows.Forms.Screen]::FromPoint([System.Windows.Forms.Cursor]::Position) }
+        $a = Select-CvGuiTestArea -Screens @([System.Windows.Forms.Screen]::AllScreens) -Current "$($mio.DeviceName)"
+        if ($null -ne $a) {
+            $env:CV_GUI_TEST_AREA = ("{0},{1},{2},{3}" -f $a.X, $a.Y, $a.Width, $a.Height)
+        }
+        return $a
+    } catch { }
+    return $null
+}
+
+function Select-CvGuiTestArea {
+    <#
+        PURO. De los monitores (-Screens: lo que tenga DeviceName y WorkingArea, como Screen.AllScreens),
+        la zona de trabajo del PRIMERO que no sea -Current (el monitor donde trabaja quien lanza las
+        pruebas). $null si no hay otro: con un solo monitor no hay a donde mandar las ventanas y salen
+        donde siempre. Sin saber cual es el de quien trabaja (-Current vacio) tampoco se elige: mandarlas
+        a uno cualquiera podria ser justo el suyo.
+    #>
+    param($Screens = @(), [string]$Current = '')
+    if ("$Current" -eq '') { return $null }
+    foreach ($s in @($Screens)) {
+        if ($null -eq $s) { continue }
+        if ("$($s.DeviceName)" -eq "$Current") { continue }
+        return $s.WorkingArea
+    }
+    return $null
+}
+
+function Test-CvGuiTestMode {
+    <# $true si las ventanas corren en el MODO PRUEBAS (Set-CvGuiTestScreen). #>
+    return ("$env:CV_GUI_TEST" -eq '1')
+}
+
+function Get-CvGuiTestArea {
+    <# La zona del monitor libre del modo pruebas (Set-CvGuiTestScreen), o $null. #>
+    $t = "$env:CV_GUI_TEST_AREA"
+    if (-not (Test-CvGuiTestMode) -or $t -notmatch '^-?\d+,-?\d+,\d+,\d+$') { return $null }
+    $n = @($t -split ',' | ForEach-Object { [int]$_ })
+    return (New-Object System.Drawing.Rectangle($n[0], $n[1], $n[2], $n[3]))
+}
+
 function Set-CvGuiStartScreen {
     <#
         Que una ventana que se abre se CENTRE en el monitor donde esta la ventana PRINCIPAL (la
@@ -2105,6 +2165,18 @@ function Set-CvGuiStartScreen {
     #>
     param([Parameter(Mandatory)]$Form)
     try {
+        # Modo pruebas: TODAS al monitor libre, se centren donde se centren (Set-CvGuiTestScreen).
+        if (Test-CvGuiTestMode) {
+            $zona = Get-CvGuiTestArea
+            if ($null -ne $zona) {
+                $Form.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
+                $Form.Location = New-Object System.Drawing.Point(($zona.X + 40), ($zona.Y + 40))
+                $Form.Add_Load({
+                    try { $Form.Location = Get-CvGuiCenteredLocation -Area $zona -Width $Form.Width -Height $Form.Height } catch { }
+                }.GetNewClosure())
+            }
+            return $Form
+        }
         $pos = "$($Form.StartPosition)"
         if ($pos -ne 'CenterScreen' -and $pos -ne 'WindowsDefaultLocation') { return $Form }
         $ref = $null
@@ -2258,6 +2330,8 @@ function Set-CvGuiForeground {
         if ($null -eq $Form -or -not $Form.IsHandleCreated) { return $false }
         $h = $Form.Handle
         if ($Form.WindowState -eq [System.Windows.Forms.FormWindowState]::Minimized) { $Form.WindowState = 'Normal' }
+        # Modo pruebas: nada de quitarle el primer plano a quien esta trabajando (Set-CvGuiTestScreen).
+        if (Test-CvGuiTestMode) { return $false }
         $Form.Activate()
         $Form.BringToFront()
         if ([CvGui.Native]::GetForegroundWindow() -eq $h) { return $true }

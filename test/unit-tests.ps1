@@ -3508,6 +3508,31 @@ Assert-True 'Listas: pinceles del tema oscuro'          ([bool]$rlT1.Dark)
 Assert-True 'Listas: la misma paleta, los mismos'       ([object]::ReferenceEquals($rlT1, (Get-CvGuiListPaintTools)))
 Set-CvGuiThemeDefault -Theme 'light' | Out-Null
 Assert-Eq   'Listas: otra paleta, se rehacen'            $false ([bool](Get-CvGuiListPaintTools).Dark)
+# MODO PRUEBAS de las baterias de ventanas: a que monitor van (pantallas simuladas, sin Windows).
+$rlPant = {
+    param([string]$Nombre, [int]$X)
+    [pscustomobject]@{ DeviceName = $Nombre; WorkingArea = (New-Object System.Drawing.Rectangle($X, 0, 1920, 1040)) }
+}
+$rlUno  = @(& $rlPant '\\.\DISPLAY1' 0)
+$rlDos  = @((& $rlPant '\\.\DISPLAY1' 0), (& $rlPant '\\.\DISPLAY2' -1920))
+$rlTres = @((& $rlPant '\\.\DISPLAY1' 0), (& $rlPant '\\.\DISPLAY2' -1920), (& $rlPant '\\.\DISPLAY3' 1920))
+Assert-Eq   'Monitor libre: con uno solo, ninguno'       $null (Select-CvGuiTestArea -Screens $rlUno -Current '\\.\DISPLAY1')
+Assert-Eq   'Monitor libre: con dos, el otro'            -1920 ([int](Select-CvGuiTestArea -Screens $rlDos -Current '\\.\DISPLAY1').X)
+Assert-Eq   'Monitor libre: trabajando en el segundo'    0 ([int](Select-CvGuiTestArea -Screens $rlDos -Current '\\.\DISPLAY2').X)
+Assert-Eq   'Monitor libre: con tres, el primero que no es el tuyo' 0 ([int](Select-CvGuiTestArea -Screens $rlTres -Current '\\.\DISPLAY2').X)
+Assert-Eq   'Monitor libre: sin saber el tuyo, ninguno'  $null (Select-CvGuiTestArea -Screens $rlDos -Current '')
+Assert-Eq   'Monitor libre: sin pantallas, ninguno'      $null (Select-CvGuiTestArea -Screens @() -Current '\\.\DISPLAY1')
+# La zona elegida viaja en una variable de entorno (la lee tambien la pantalla de arranque).
+$rlEnvT = $env:CV_GUI_TEST; $rlEnvA = $env:CV_GUI_TEST_AREA
+try {
+    $env:CV_GUI_TEST = '1'; $env:CV_GUI_TEST_AREA = '-1920,0,1920,1040'
+    Assert-Eq   'Modo pruebas: zona leida'               '-1920,0,1920,1040' ((Get-CvGuiTestArea) | ForEach-Object { '{0},{1},{2},{3}' -f $_.X, $_.Y, $_.Width, $_.Height })
+    $env:CV_GUI_TEST_AREA = ''
+    Assert-Eq   'Modo pruebas: un solo monitor, sin zona' $null (Get-CvGuiTestArea)
+    $env:CV_GUI_TEST = ''; $env:CV_GUI_TEST_AREA = '-1920,0,1920,1040'
+    Assert-Eq   'Sin modo pruebas: nada, aunque haya zona' $null (Get-CvGuiTestArea)
+    Assert-Eq   'Sin modo pruebas: no esta activo'       $false (Test-CvGuiTestMode)
+} finally { $env:CV_GUI_TEST = $rlEnvT; $env:CV_GUI_TEST_AREA = $rlEnvA }
 
 # ================================================================================================
 $total = $script:pass + $script:fail

@@ -85,6 +85,10 @@ function Start-CvSplashWindow {
             FrameMs = [Math]::Max(15, $FrameMs)
             Colors  = (Get-CvSplashColors -Dark $Dark)
             Icon    = $(if ("$IconPath" -ne '' -and (Test-Path -LiteralPath $IconPath)) { "$IconPath" } else { '' })
+            # Modo pruebas (Set-CvGuiTestScreen, en Gui.psm1, que aqui no esta cargado): ni encima ni
+            # activa, y en el monitor libre si lo hay ('x,y,ancho,alto').
+            Test    = ("$env:CV_GUI_TEST" -eq '1')
+            Area    = "$env:CV_GUI_TEST_AREA"
         })
         $rs = [runspacefactory]::CreateRunspace()
         $rs.ApartmentState = 'STA'
@@ -119,7 +123,14 @@ function Start-CvSplashWindow {
             # explorador desde el que se abrio): Activate() no basta. TopMost es orden de apilado, no
             # foco, y eso Windows si lo deja. No molesta: se quita en cuanto la cola tiene la lista
             # pintada (y antes de cualquier pregunta o aviso), y como mucho a los TimeoutSec.
-            $f.TopMost         = $true
+            $f.TopMost         = (-not [bool]$estado.Test)
+            if ([bool]$estado.Test) {
+                $f.ShowInTaskbar = $false
+                if ("$($estado.Area)" -match '^(-?\d+),(-?\d+),(\d+),(\d+)$') {
+                    $f.StartPosition = 'Manual'
+                    $f.Location = New-Object System.Drawing.Point(([int]$Matches[1] + 40), ([int]$Matches[2] + 40))
+                }
+            }
             $f.Text            = "$($estado.Title)"
             $f.Size            = New-Object System.Drawing.Size(440, 150)
             $f.BackColor       = (& $col $c.Bottom)
@@ -181,11 +192,11 @@ function Start-CvSplashWindow {
                 # ventana del proceso, que es esta: se veria solo en la barra de tareas (medido).
                 if ($f.WindowState -ne [System.Windows.Forms.FormWindowState]::Normal) {
                     $f.WindowState = [System.Windows.Forms.FormWindowState]::Normal
-                    $f.TopMost = $true
+                    $f.TopMost = (-not [bool]$estado.Test)
                 }
                 $f.Invalidate()
             })
-            $f.Add_Shown({ $estado.Shown = $true; $f.Activate() })
+            $f.Add_Shown({ $estado.Shown = $true; if (-not [bool]$estado.Test) { $f.Activate() } })
             $t.Start()
             [System.Windows.Forms.Application]::Run($f)
             $t.Dispose()

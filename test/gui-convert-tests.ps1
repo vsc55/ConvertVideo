@@ -77,6 +77,9 @@ $modules = @(
 foreach ($m in $modules) {
     Import-Module (Join-Path $Lib ("{0}.psm1" -f $m)) -Force
 }
+# MODO PRUEBAS: las ventanas de la bateria salen en el monitor donde NO estas trabajando y ninguna te
+# quita el primer plano (Set-CvGuiTestScreen). Antes de abrir ninguna.
+if (Initialize-CvGui) { [void](Set-CvGuiTestScreen) }
 
 # --- Mini-harness (mismo estilo que unit-tests.ps1 / gui-tests.ps1) ---
 $script:pass = 0

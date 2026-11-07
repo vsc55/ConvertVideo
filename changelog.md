@@ -2,6 +2,17 @@
 
 ## VERSION 4.7.6 - 16/10/2026
 ### UPDATE
+  - **Las baterías de ventanas ya no molestan a quien está trabajando** (modo pruebas, solo en `test\gui-tests.ps1` y `test\gui-convert-tests.ps1`).
+    - **Cómo funciona:**
+      - Al empezar, `Set-CvGuiTestScreen` mira en qué monitor está la ventana que tiene el primer plano.
+      - Las ventanas de la batería salen en el OTRO, splash incluido. La elección es pura y probada con pantallas simuladas: `Select-CvGuiTestArea`.
+      - Ninguna se pone delante a la fuerza (`Set-CvGuiForeground` no hace nada) ni se queda «siempre encima».
+    - **Con un solo monitor**, las ventanas salen donde siempre (no hay otro sitio), pero tampoco se ponen delante a la fuerza.
+    - **La aplicación normal no cambia**: el modo solo se activa con la variable `CV_GUI_TEST`, que ponen las baterías. La zona va en `CV_GUI_TEST_AREA`, porque la lee también la pantalla de arranque, que no carga `Gui.psm1`.
+    - El script de capturas del manual no lo usa: necesita las ventanas a la vista.
+    - Comprobado con dos monitores y trabajando en uno mientras corrían las dos baterías: ninguna ventana salió en él y no se perdió el foco. Con un solo monitor no está probado de verdad, solo su lógica.
+
+    Probado: unitarios 1605/1605, setup 456/456, cola 622/622.
   - **Lo que quedaba de la revisión línea a línea (8ª tanda).**
     - **Comprobado con un HDR10 de prueba**, sin cambios:
       - `cropdetect` ve las bandas en 10 bits con ffmpeg 7.1.1 y 8.1.2 (ajusta solo su umbral).
