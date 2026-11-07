@@ -95,6 +95,10 @@ function Show-CvPrepareWindow {
     # Bordes: en que archivos ha entrado el recorte y con que tamano quedan, sin tener que abrir nada.
     [void]$lv.Columns.Add((Get-CvText -Key 'prep.col.bordes'), 150)
     [void]$lv.Columns.Add((Get-CvText -Key 'prep.col.detalle'), 300)
+    # 'Detalle' se queda con lo que SOBRE (y crece con la ventana). Con los cuatro anchos fijos
+    # (940 px) no cabian en la lista de una ventana de 900 y salia la barra horizontal de entrada,
+    # sin nada largo que ver. Como las demas listas: Set-CvGuiListFillColumn.
+    [void](Set-CvGuiListFillColumn -List $lv -Index 3 -Min 160)
     [void](Set-CvGuiDoubleBuffered -Control $lv)
     foreach ($f in $items) {
         $it = New-Object System.Windows.Forms.ListViewItem("$($f.Name)")
@@ -334,7 +338,8 @@ function Show-CvPrepareWindow {
             return
         }
         [void](Set-CvGuiRole -Control $lblSt -Role "$($fin.Role)")
-        $lblSt.Text = "$($fin.Text)"
+        # Con 'Cerrar al terminar' marcada y algo que mirar, se dice POR QUE se queda abierta.
+        $lblSt.Text = $(if ("$($fin.Reason)" -ne '') { (Get-CvText -Key 'prep.hecho.motivo' -Values @("$($fin.Text)", "$($fin.Reason)")) } else { "$($fin.Text)" })
         if ($fin.Close) {
             # Un respiro antes de cerrar: si se cierra en el mismo tick no se llega a ver ni el 100% ni
             # el resumen. La espera la cuenta ESTE mismo temporizador: uno nuevo creado aqui dentro no

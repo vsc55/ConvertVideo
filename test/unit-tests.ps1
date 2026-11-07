@@ -3587,6 +3587,16 @@ try {
     Assert-Eq   'Sin modo pruebas: nada, aunque haya zona' $null (Get-CvGuiTestArea)
     Assert-Eq   'Sin modo pruebas: no esta activo'       $false (Test-CvGuiTestMode)
 } finally { $env:CV_GUI_TEST = $rlEnvT; $env:CV_GUI_TEST_AREA = $rlEnvA }
+# Un ENLACE (LinkLabel) toma el color del tema: el azul del sistema no se leia sobre fondo oscuro.
+$rlLnk = New-Object System.Windows.Forms.LinkLabel
+$rlPalD = Get-CvGuiPalette -Theme 'dark'
+[void](Set-CvGuiThemeControl -Control $rlLnk -Palette $rlPalD)
+Assert-Eq   'Enlace: en oscuro, el azul claro del tema'  $rlPalD.Edited.ToArgb() $rlLnk.LinkColor.ToArgb()
+Assert-Eq   'Enlace: y al pasar por encima, igual'       $rlPalD.Edited.ToArgb() $rlLnk.ActiveLinkColor.ToArgb()
+$rlPalL = Get-CvGuiPalette -Theme 'light'
+[void](Set-CvGuiThemeControl -Control $rlLnk -Palette $rlPalL)
+Assert-Eq   'Enlace: en claro, el suyo'                  $rlPalL.Edited.ToArgb() $rlLnk.LinkColor.ToArgb()
+$rlLnk.Dispose()
 # Devolver el foco a quien trabaja SOLO en modo pruebas: en la app normal no toca nada.
 $rlEnvT2 = $env:CV_GUI_TEST; $rlEnvU = $env:CV_GUI_TEST_USER
 try {

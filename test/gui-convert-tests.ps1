@@ -937,10 +937,16 @@ Assert-Eq   'Atajos: Intro fuera de la lista, nada'   $null (Find-CvQueueShortcu
 Write-Host "`nFinal del recorrido de preparar" -ForegroundColor Cyan
 
 # Todo bien: en verde, y si la casilla lo pedia, la ventana se cierra sola.
-$fin = Get-CvPrepareEndState -Done 3 -Manual 1 -Skipped 0 -Failed 0 -AutoClose
+$fin = Get-CvPrepareEndState -Done 3 -Manual 0 -Skipped 0 -Failed 0 -AutoClose
 Assert-Eq   'Final: rol del resumen cuando ha ido bien' 'ok' "$($fin.Role)"
-Assert-True 'Final: con la casilla marcada, se cierra sola' $fin.Close
+Assert-True 'Final: todo automatico, con la casilla, se cierra sola' $fin.Close
+Assert-Eq   'Final: y no hay nada que explicar'          '' "$($fin.Reason)"
 Assert-True 'Final: el resumen cuenta lo que ha hecho'      ("$($fin.Text)" -match '3')
+# Con algo REVISADO a mano no se cierra sola: es lo que hay que mirar. Y dice por que.
+$fin = Get-CvPrepareEndState -Done 3 -Manual 1 -AutoClose
+Assert-True 'Final: con uno revisado NO se cierra sola' (-not $fin.Close)
+Assert-Eq   'Final: y lo avisa en naranja'               'warn' "$($fin.Role)"
+Assert-True 'Final: diciendo el motivo'                  ("$($fin.Reason)" -match [regex]::Escape((Get-CvText -Key 'prep.motivo.revision' -Values @(1))))
 # Sin la casilla no se cierra nunca sola, haya ido como haya ido.
 Assert-True 'Final: sin la casilla, no se cierra' (-not (Get-CvPrepareEndState -Done 3).Close)
 # Con un error o cancelado, el aviso manda: se queda abierta aunque la casilla este marcada, porque
@@ -954,8 +960,11 @@ Assert-True 'Final: y tampoco se cierra sola'        (-not $fin.Close)
 Assert-True 'Final: el resumen dice que se cancelo'  ("$($fin.Text)" -match (Get-CvText -Key 'prep.cancelado').Trim())
 # Omitir un archivo (cerrar su editor sin guardar) es un final normal: lo ha decidido quien miraba.
 $fin = Get-CvPrepareEndState -Done 1 -Skipped 2 -AutoClose
-Assert-Eq   'Final: omitir no es un fallo'           'ok' "$($fin.Role)"
-Assert-True 'Final: con omitidos si se cierra sola'  $fin.Close
+Assert-True 'Final: con omitidos tampoco se cierra sola' (-not $fin.Close)
+Assert-True 'Final: y lo dice'                       ("$($fin.Reason)" -match [regex]::Escape((Get-CvText -Key 'prep.motivo.omitido' -Values @(2))))
+# Sin la casilla no hay nada que explicar (no se iba a cerrar).
+Assert-Eq   'Final: sin la casilla, sin motivo'      '' "$((Get-CvPrepareEndState -Done 1 -Manual 1).Reason)"
+Assert-True 'Final: los motivos, todos'              ("$((Get-CvPrepareEndState -Done 1 -Manual 1 -Skipped 1 -Failed 1 -Cancelled -AutoClose).Reason)" -match (Get-CvText -Key 'prep.motivo.cancelado'))
 
 
 # ================================================================================================
@@ -2193,6 +2202,9 @@ if ($null -eq $jobInfo) {
                     $lst = $f.Controls.Find('cvPrepList', $true)[0]
                     $script:wizRows = (@($lst.Items | ForEach-Object { "{0}={1}" -f $_.Text, $_.SubItems[1].Text }) -join ',')
                     $script:wizCols = (@($lst.Columns | ForEach-Object { "$($_.Text)" }) -join '|')
+                # Sin barra horizontal de entrada: las columnas caben en lo que mide la lista.
+                $script:wizColsW = 0; foreach ($cc in $lst.Columns) { $script:wizColsW += [int]$cc.Width }
+                $script:wizListW = [int]$lst.ClientSize.Width
                     $script:wizBord = (@($lst.Items | ForEach-Object { "$($_.SubItems[2].Text)" }) -join ',')
                     $tw.Stop()
                     $cl[0].PerformClick()
@@ -2216,7 +2228,8 @@ if ($null -eq $jobInfo) {
         Assert-Eq   'Recorrido: estado de la fila' 'Serie_3x01=preparado' $script:wizRows
         # Columna de bordes: se ve de un vistazo si ha entrado el recorte. El perfil del recorrido es
         # 'copy' (no se toca la imagen), asi que la celda queda vacia; el texto lo fija su test unitario.
-        Assert-Eq   'Recorrido: columna de bordes' (@('prep.col.archivo', 'prep.col.estado', 'prep.col.bordes', 'prep.col.detalle' | ForEach-Object { Get-CvText -Key $_ }) -join '|') $script:wizCols
+        Assert-True 'Recorrido: las columnas caben (sin barra horizontal)' ($script:wizColsW -le $script:wizListW)
+Assert-Eq   'Recorrido: columna de bordes' (@('prep.col.archivo', 'prep.col.estado', 'prep.col.bordes', 'prep.col.detalle' | ForEach-Object { Get-CvText -Key $_ }) -join '|') $script:wizCols
         Assert-Eq   'Recorrido: en copy no dice nada' '' $script:wizBord
         Assert-True 'Recorrido: existe el job'    (Test-CvJob -Context $ctxJob -Name 'Serie_3x01')
         $jw = Read-CvJobDraft -Context $ctxJob -Name 'Serie_3x01'

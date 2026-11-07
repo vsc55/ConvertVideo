@@ -1500,6 +1500,17 @@ function Set-CvGuiThemeControl {
                 # la paleta al dibujar: hay que pedirles que se redibujen o se quedan del tema viejo.
                 try { $Control.Invalidate() } catch { }
             }
+            'LinkLabel'      {
+                # El ENLACE no usa el ForeColor: tiene sus propios colores, y de serie son el azul puro
+                # del sistema (0,0,255), que sobre el fondo oscuro no se lee. El azul de 'lo editado'
+                # de la paleta: claro en oscuro, oscuro en claro.
+                $Control.BackColor = $Palette.Back
+                $Control.ForeColor = $Palette.Fore
+                $Control.LinkColor         = $Palette.Edited
+                $Control.ActiveLinkColor   = $Palette.Edited
+                $Control.VisitedLinkColor  = $Palette.Edited
+                $Control.DisabledLinkColor = $Palette.Muted
+            }
             'Form'           { $Control.BackColor = $Palette.Back; $Control.ForeColor = $Palette.Fore }
             default          {
                 # Etiquetas, casillas, paneles de rejilla, pestanas...: fondo y texto y ya.

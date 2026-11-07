@@ -892,12 +892,13 @@ function Get-CvPrepareEndState {
         que se escribe abajo, con que rol de color se pinta y si la ventana se cierra sola.
 
         Que se cierre sola es la casilla 'Cerrar al terminar' (gui.prepareAutoClose), y solo vale
-        cuando ha ido todo bien: si algo ha FALLADO o se ha CANCELADO a medias, la ventana se queda,
-        porque ese resumen es el unico sitio donde se cuenta lo que ha pasado -cerrarla sola seria
-        tirar el aviso-. Omitir un archivo (cerrar su editor sin guardar) SI es un final normal: lo
-        ha decidido quien estaba mirando.
+        cuando TODO ha sido automatico y bien: cada archivo preparado sin preguntar nada. Si alguno
+        se ha REVISADO a mano, se ha OMITIDO, ha FALLADO o se ha CANCELADO el recorrido, la ventana se
+        queda: es lo que hay que mirar, y ese resumen es el unico sitio donde se cuenta. Y lo DICE:
+        con la casilla marcada, -Reason explica por que no se cierra (va detras del resumen, en
+        naranja); sin la casilla no hace falta explicar nada.
 
-        Devuelve @{ Text; Role; Close }.
+        Devuelve @{ Text; Role; Close; Reason }.
     #>
     param(
         [int]$Done = 0,
@@ -908,12 +909,22 @@ function Get-CvPrepareEndState {
         [switch]$AutoClose
     )
     $bien = ((-not $Cancelled) -and ($Failed -le 0))
+    $todoAuto = ($bien -and $Manual -le 0 -and $Skipped -le 0)
+    # Por que NO se cierra sola, con la casilla marcada (cada motivo, con su cuenta).
+    $motivos = @()
+    if ($AutoClose -and -not $todoAuto) {
+        if ($Manual -gt 0)  { $motivos += (Get-CvText -Key 'prep.motivo.revision' -Values @($Manual)) }
+        if ($Skipped -gt 0) { $motivos += (Get-CvText -Key 'prep.motivo.omitido' -Values @($Skipped)) }
+        if ($Failed -gt 0)  { $motivos += (Get-CvText -Key 'prep.motivo.error' -Values @($Failed)) }
+        if ($Cancelled)     { $motivos += (Get-CvText -Key 'prep.motivo.cancelado') }
+    }
     return [pscustomobject]@{
-        Text  = (Get-CvText -Key 'prep.hecho' -Values @(
+        Text   = (Get-CvText -Key 'prep.hecho' -Values @(
                     $Done, $Manual, $Skipped, $Failed,
                     $(if ($Cancelled) { (Get-CvText -Key 'prep.cancelado') } else { '' })))
-        Role  = $(if ($bien) { 'ok' } else { 'warn' })
-        Close = [bool]($AutoClose -and $bien)
+        Role   = $(if ($bien -and $motivos.Count -eq 0) { 'ok' } else { 'warn' })
+        Close  = [bool]($AutoClose -and $todoAuto)
+        Reason = $(if ($motivos.Count -gt 0) { (Get-CvText -Key 'prep.noautocierre' -Values @(($motivos -join ', '))) } else { '' })
     }
 }
 
