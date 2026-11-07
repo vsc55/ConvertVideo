@@ -45,10 +45,14 @@ function Format-CvQueueQualityCell {
         ('1080p -> 720p', con la flecha de cola.calidad.par). Recortar barras no cambia la calidad
         -un 1920x800 sigue siendo 1080p-, asi que lo normal es ver una sola.
     #>
-    param([string]$Source = '', [string]$Output = '')
+    param([string]$Source = '', [string]$Output = '', [bool]$Enlarges = $false)
     if ("$Source" -eq '') { return '' }
     if ("$Output" -eq '' -or "$Output" -eq "$Source") { return "$Source" }
-    return (Get-CvText -Key 'cola.calidad.par' -Values @($Source, $Output))
+    $par = (Get-CvText -Key 'cola.calidad.par' -Values @($Source, $Output))
+    # Un job viejo que AMPLIA aunque su perfil diga 'solo reducir' (Test-CvJobResizeEnlarges): se
+    # marca para que se vea sin buscarlo. Se arregla abriendo el job (el editor lo corrige solo).
+    if ($Enlarges) { return (Get-CvText -Key 'cola.calidad.amplia' -Values @($par)) }
+    return $par
 }
 
 function Format-CvQueueRow {
@@ -104,7 +108,7 @@ function Format-CvQueueRow {
     return @(
         "$($Row.Name)"
         (Format-CvSize -Kb $Row.SizeKb)
-        (Format-CvQueueQualityCell -Source "$($Row.Quality)" -Output "$($Row.QualityOut)")
+        (Format-CvQueueQualityCell -Source "$($Row.Quality)" -Output "$($Row.QualityOut)" -Enlarges ([bool]$Row.Enlarges))
         "$($Row.StateText)"
         # Salen del JOB; sin job (sin preparar, o ya hecho y borrado) no hay nada que decir -y 'sin
         # audio' ahi seria mentira: es que no se sabe-. En los ya CONVERTIDOS, los bordes se deducen

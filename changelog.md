@@ -2,6 +2,12 @@
 
 ## VERSION 4.7.6 - 16/10/2026
 ### UPDATE
+  - **Los jobs de antes con el escalado mal calculado se detectan y se corrigen.**
+    - **El fallo:** antes de la 7ª tanda, «solo reducir» se comparaba con el tamaño SIN recortar. Una serie 4:3 con bandas (1920x1080 recortado a 1440x1080) se guardaba con `1920:-2`, que la estira a 1920x1440: más lenta de codificar y más grande que el original.
+    - **La regla** está en `Test-CvJobResizeEnlarges` (`JobCore`): un escalado que amplía cuando el perfil no lo permite no puede salir del perfil bien calculado.
+    - **Editor de jobs:** al abrir uno así pone el escalado bueno y lo dice abajo. Antes lo respetaba como si estuviera escrito a mano, y el campo seguía con `1920:-2`.
+    - **Cola:** la celda Calidad lo marca («1080p → 1440p ¡amplía!»), para verlos sin buscarlos.
+    - Probado con un job simulado como el real (1440:1080:240:0 + 1920:-2): el editor lo deja sin reescalar y lo avisa.
   - **La pantalla de arranque en tema oscuro tiene borde.** No tiene marco y su fondo es casi el de las ventanas de detrás (el Explorador en modo oscuro), así que no se veía dónde acababa. Ahora lleva un borde de 1 px con el color de las líneas de la paleta oscura (`Edge` = `Border`, comprobado en la batería de la cola). En claro no hace falta: el azul ya la separa. Vale para la cola y para setup, que usan la misma pantalla.
   - **Las baterías de ventanas ya no molestan a quien está trabajando** (modo pruebas, solo en `test\gui-tests.ps1` y `test\gui-convert-tests.ps1`).
     - **Cómo funciona:**

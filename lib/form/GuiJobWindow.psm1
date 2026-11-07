@@ -77,6 +77,7 @@ function Show-CvJobWindow {
         Head     = ''         # la cabecera de cuando acabo el analisis ($restoreHead)
         Leido    = $null      # el job ya leido de disco al analizar (no se lee dos veces)
         CropAuto = ''         # el recorte que puso la deteccion de bordes (no el tecleado)
+        ResizeNote = ''       # se corrigio un escalado viejo que ampliaba (Test-CvJobResizeEnlarges)
         SyncNotes = @()       # retardos de audio detectados (se aplican y se cuentan, como en consola)
         EditA    = $null      # la fila de audio que estan editando los campos de su barra
         EditS    = $null      # idem en subtitulos (ver los manejadores de los campos de texto)
@@ -1156,6 +1157,18 @@ function Show-CvJobWindow {
             # Un job que ya existe (o el borrador de Preparar): su escalado cuenta como automatico si es
             # el que sale del perfil para su recorte; si no, se escribio a mano y se respeta.
             if ($null -eq $st.AutoResize) { $st.AutoResize = "$(& $calcResize)" }
+            # Un job de antes con el escalado MAL calculado (amplia la imagen aunque el perfil diga
+            # 'solo reducir', Test-CvJobResizeEnlarges): no lo pudo escribir nadie a mano a proposito
+            # y no se respeta como tal. Se pone el bueno y se dice (hay que guardar para que valga).
+            $voE = @(@($st.VidOpts) | Where-Object { [int]$_.Index -eq [int]$st.Draft.VideoIndex })
+            if ($voE.Count -gt 0 -and (Test-CvJobResizeEnlarges -Prof $st.Draft.Prof -Width ([int]$voE[0].Width) -Height ([int]$voE[0].Height) `
+                    -Sar "$($voE[0].Sar)" -Crop "$($st.Draft.Crop)" -Resize "$($st.Draft.Resize)" -Anamorphic "$($Context.Anamorphic)")) {
+                $viejo = "$($st.Draft.Resize)"
+                $bueno = "$(& $calcResize)"
+                $st.Draft.Resize = $bueno
+                $st.AutoResize   = $bueno
+                $st.ResizeNote   = (Get-CvText -Key 'job.escalado.corregido' -Values @($viejo, $(if ($bueno -ne '') { $bueno } else { (Get-CvText -Key 'job.escalado.ninguno') })))
+            }
             $st.Audio = @(Get-CvJobAudioRows -Options $audOpts -Tracks $st.Draft.Audio)
             $st.Subs  = @(Get-CvJobSubRows  -Options $subOpts -Selected $st.Draft.Subtitles)
 
@@ -1214,6 +1227,7 @@ function Show-CvJobWindow {
             # $validate: es informacion nueva que el usuario no ha pedido y tiene que ver.
             $avisos = @()
             if ("$($st.CropNote)" -ne '') { $avisos += "$($st.CropNote)" }
+            if ("$($st.ResizeNote)" -ne '') { $avisos += "$($st.ResizeNote)" }
             foreach ($n in @($st.SyncNotes)) { if ("$n" -ne '') { $avisos += "$n" } }
             if ($avisos.Count -gt 0) {
                 $lblMsg.ForeColor = (Get-CvGuiCurrentPalette).Fore

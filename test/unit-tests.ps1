@@ -3508,6 +3508,15 @@ Assert-True 'Listas: pinceles del tema oscuro'          ([bool]$rlT1.Dark)
 Assert-True 'Listas: la misma paleta, los mismos'       ([object]::ReferenceEquals($rlT1, (Get-CvGuiListPaintTools)))
 Set-CvGuiThemeDefault -Theme 'light' | Out-Null
 Assert-Eq   'Listas: otra paleta, se rehacen'            $false ([bool](Get-CvGuiListPaintTools).Dark)
+# Jobs de antes de la 4.7.6 con el escalado mal calculado: amplian aunque el perfil diga 'solo
+# reducir' (una serie 4:3 con bandas, 1920x1080 recortado a 1440x1080, guardada con '1920:-2').
+$rlSolo = [pscustomobject]@{ ChangeSize = '1920:-2'; NoUpscale = $true; MaxWidth = $null }
+Assert-Eq   'Amplia: el job viejo, si'                   $true  (Test-CvJobResizeEnlarges -Prof $rlSolo -Width 1920 -Height 1080 -Sar '1:1' -Crop '1440:1080:240:0' -Resize '1920:-2')
+Assert-Eq   'Amplia: el mismo, ya corregido, no'         $false (Test-CvJobResizeEnlarges -Prof $rlSolo -Width 1920 -Height 1080 -Sar '1:1' -Crop '1440:1080:240:0' -Resize '')
+Assert-Eq   'Amplia: reducir un 4K, no'                  $false (Test-CvJobResizeEnlarges -Prof $rlSolo -Width 3840 -Height 1600 -Sar '1:1' -Resize '1920:-2')
+Assert-Eq   'Amplia: un perfil que SI deja ampliar, no'  $false (Test-CvJobResizeEnlarges -Prof ([pscustomobject]@{ ChangeSize = '1920:-2'; NoUpscale = $false }) -Width 1920 -Height 1080 -Sar '1:1' -Crop '1440:1080:240:0' -Resize '1920:-2')
+Assert-Eq   'Amplia: squareheight con SAR, no se juzga'  $false (Test-CvJobResizeEnlarges -Prof ([pscustomobject]@{ ChangeSize = '' }) -Width 720 -Height 576 -Sar '64:45' -Resize '1024:576,setsar=1' -Anamorphic 'squareheight')
+Assert-Eq   'Amplia: sin el tamano del original, no se sabe' $false (Test-CvJobResizeEnlarges -Prof $rlSolo -Width 0 -Height 0 -Crop '1440:1080:240:0' -Resize '1920:-2')
 # MODO PRUEBAS de las baterias de ventanas: a que monitor van (pantallas simuladas, sin Windows).
 $rlPant = {
     param([string]$Nombre, [int]$X)

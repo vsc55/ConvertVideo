@@ -489,6 +489,9 @@ Write-Host "`nGuiConvert - columna Calidad" -ForegroundColor Cyan
 Assert-Eq   'Calidad: la columna existe'          9 (Get-CvQueueColumns).Count
 Assert-Eq   'Calidad: va detras del tamano'       ((Get-QCol 'size') + 1) (Get-QCol 'quality')
 Assert-Eq   'Calidad: misma calidad, una sola'    '1080p' (Format-CvQueueQualityCell -Source '1080p' -Output '1080p')
+# Un job viejo que AMPLIA aunque su perfil diga 'solo reducir' se marca en la celda.
+Assert-Eq   'Cola: la celda lo marca'                    (Get-CvText -Key 'cola.calidad.amplia' -Values @((Get-CvText -Key 'cola.calidad.par' -Values @('1080p', '1440p')))) (Format-CvQueueQualityCell -Source '1080p' -Output '1440p' -Enlarges $true)
+Assert-Eq   'Cola: sin ampliar, como siempre'            (Get-CvText -Key 'cola.calidad.par' -Values @('4K', '1080p')) (Format-CvQueueQualityCell -Source '4K' -Output '1080p')
 Assert-Eq   'Calidad: sin la de salida, una sola' '1080p' (Format-CvQueueQualityCell -Source '1080p')
 Assert-Eq   'Calidad: si se reescala, las dos'    ('1080p {0} 720p' -f [char]0x2192) (Format-CvQueueQualityCell -Source '1080p' -Output '720p')
 Assert-Eq   'Calidad: sin saberla, en blanco'     '' (Format-CvQueueQualityCell -Source '' -Output '720p')

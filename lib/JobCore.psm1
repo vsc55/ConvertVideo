@@ -367,6 +367,37 @@ function Get-CvJobResize {
     return "$(Get-CvResize -Width $t.Width -Height $t.Height -Sar "$($Video.Sar)" -MaxWidth $mw -Anamorphic "$($Context.Anamorphic)")"
 }
 
+function Test-CvJobResizeEnlarges {
+    <#
+        PURO. Si el escalado GUARDADO en un job amplia la imagen cuando su perfil no lo permite. Pasa
+        con jobs preparados antes de la 4.7.6 (7a tanda): 'solo reducir' se comparaba con el tamano SIN
+        recortar, y una serie 4:3 con bandas (1920x1080 recortado a 1440x1080) se guardaba con
+        '1920:-2', que la estira a 1920x1440. Ese valor no puede haber salido del perfil bien calculado.
+
+        El perfil no deja ampliar cuando lleva changeSize con 'solo reducir' (noUpscale), o cuando no
+        lleva changeSize y el pixel es cuadrado o se conserva el anamorfico (maxWidth solo reduce). Los
+        modos 'square'/'squareheight' con SAR distinto de 1 si pueden cambiar un lado a proposito.
+        -Width/-Height: el tamano del original (los del job); sin ellos no se puede saber -> $false.
+    #>
+    param(
+        $Prof,
+        [int]$Width = 0,
+        [int]$Height = 0,
+        [string]$Sar = '',
+        [string]$Crop = '',
+        [string]$Resize = '',
+        [string]$Anamorphic = 'keep'
+    )
+    if ($null -eq $Prof -or "$Resize".Trim() -eq '' -or $Width -le 0 -or $Height -le 0) { return $false }
+    $cuadrado = ("$Sar" -eq '' -or "$Sar" -eq '1:1' -or "$Sar" -eq '0:1')
+    $soloReduce = if ("$($Prof.ChangeSize)".Trim() -ne '') { [bool]$Prof.NoUpscale } else { $cuadrado -or ("$Anamorphic".ToLower() -eq 'keep') }
+    if (-not $soloReduce) { return $false }
+    $t = Get-CvCroppedSize -Width $Width -Height $Height -Crop $Crop
+    $geo = Get-CvOutputSize -Width $Width -Height $Height -Crop $Crop -Resize $Resize
+    if ([int]$geo.Width -le 0) { return $false }
+    return ([int]$geo.Width -gt [int]$t.Width -or [int]$geo.Height -gt [int]$t.Height)
+}
+
 function New-CvJobDraft {
     <#
         BORRADOR del job con lo que se elegiria SOLO, sin preguntar ni escanear nada (la deteccion de

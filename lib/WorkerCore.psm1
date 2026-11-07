@@ -406,6 +406,9 @@ function Get-CvJobPeek {
         Width     = $(if ($null -ne $job.video.width) { [int]$job.video.width } else { 0 })
         Height    = $(if ($null -ne $job.video.height) { [int]$job.video.height } else { 0 })
         Sar       = "$($job.video.sar)"
+        # Un escalado viejo que amplia aunque el perfil diga 'solo reducir' (ver la celda Calidad).
+        Enlarges  = [bool](Test-CvJobResizeEnlarges -Prof $job.profile -Width ([int]$job.video.width) -Height ([int]$job.video.height) `
+            -Sar "$($job.video.sar)" -Crop "$($job.video.crop)" -Resize "$($job.video.resize)" -Anamorphic "$($Context.Anamorphic)")
     }
     $script:CvJobPeek[$p] = @{ Stamp = $stamp; Data = $data }
     return $data
@@ -1003,6 +1006,7 @@ function Get-CvQueueStatus {
             # Calidad del original y de la salida ('1080p', '4K'...; '' si no se sabe).
             Quality     = $calidad
             QualityOut  = $calidadOut
+            Enlarges    = $(if ($null -ne $peek) { [bool]$peek.Enlarges } else { $false })
             # Falta una sonda (bordes o calidad) que no ha cabido en este refresco.
             Probing     = $sondeando
             Locked    = $locked
