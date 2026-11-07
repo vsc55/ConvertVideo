@@ -188,7 +188,42 @@ function Get-CvSetupCleanTargets {
     )
     $proc = $Context.Proceso
     if (-not (Test-Path -LiteralPath $proc)) { return @() }
-    return @(Get-CvFiles -Dir $proc -Filters (Get-CvProcesoPatterns -What $What) -Exact)
+    $files = @(Get-CvFiles -Dir $proc -Filters (Get-CvProcesoPatterns -What $What) -Exact)
+    # Nada de lo que esta usando un worker VIVO: su lock, su estado y los temporales de su archivo.
+    # Antes se borraba todo: quitar el lock de un archivo en curso dejaba que otro worker lo cogiera
+    # y se codificaba dos veces. Lo de workers muertos si se limpia, que es para lo que esta.
+    $vivos = @()
+    foreach ($l in @(Get-ChildItem -LiteralPath $proc -Filter '*.lock' -File -ErrorAction SilentlyContinue)) {
+        # Vivo = con un dueno que se puede leer y que no esta caducado. Un lock vacio o ilegible no es
+        # de nadie: es basura y se limpia.
+        $txt = ''
+        try { $txt = Read-CvTextFileShared -Path $l.FullName } catch { }
+        if ("$txt" -notmatch 'PID=\d+;HOST=') { continue }
+        if (-not (Test-CvLockStale $l.FullName)) { $vivos += [System.IO.Path]::GetFileNameWithoutExtension($l.Name) }
+    }
+    return @($files | Where-Object { -not (Test-CvSetupFileInUse -File $_ -LiveNames $vivos) })
+}
+
+function Test-CvSetupFileInUse {
+    <#
+        PURO salvo por mirar si un PID vive. Si un fichero de Proceso\ es de un trabajo EN CURSO, y
+        por tanto no se limpia: el lock o los temporales de un archivo que tiene un worker vivo
+        (-LiveNames, los nombres con lock no caducado) y el estado <pid>.worker.json de un proceso vivo.
+        Un lock de OTRO equipo (Proceso\ en red) cuenta como vivo: desde aqui no se puede saber si su
+        worker sigue, y borrarlo dejaria que dos equipos codificaran el mismo archivo.
+    #>
+    param([Parameter(Mandatory)]$File, [string[]]$LiveNames = @())
+    $n = "$($File.Name)"
+    # El job no: el worker ya lo leyo al empezar, y borrarlo es justo lo que se pide al limpiar jobs.
+    if ($n.EndsWith('.job.json', [System.StringComparison]::OrdinalIgnoreCase)) { return $false }
+    if ($n -match '^(\d+)\.worker\.json$') { return (Test-CvProcessAlive -ProcessId ([int]$Matches[1])) }
+    foreach ($v in @($LiveNames)) {
+        if ("$v" -eq '') { continue }
+        if ($n -eq ("{0}.lock" -f $v)) { return $true }
+        if ($n.StartsWith(("{0}." -f $v), [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
+        if ($n.StartsWith(("{0}_a" -f $v), [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
+    }
+    return $false
 }
 
 function Get-CvSetupMaintenanceItems {
@@ -334,12 +369,21 @@ function Get-CvSetupCacheText {
 }
 
 function Remove-CvSetupFiles {
-    <# Borra los ficheros dados (best-effort) y devuelve cuantos habia. Comun a consola y ventana. #>
+    <#
+        Borra los ficheros dados (best-effort) y devuelve cuantos se han BORRADO de verdad (antes,
+        cuantos habia: uno abierto por ffmpeg no se borraba y contaba igual). Comun a consola y ventana.
+    #>
     param($Files)
-    $f = @($Files)
-    if ($f.Count -eq 0) { return 0 }
-    $f | Remove-Item -Force -ErrorAction SilentlyContinue
-    return $f.Count
+    $n = 0
+    foreach ($f in @($Files)) {
+        if ($null -eq $f) { continue }
+        $p = $(if ($f -is [System.IO.FileSystemInfo]) { $f.FullName } else { "$f" })
+        try {
+            Remove-Item -LiteralPath $p -Force -ErrorAction Stop
+            $n++
+        } catch { }
+    }
+    return $n
 }
 
 function Set-CvSetupAppSelected {
@@ -400,6 +444,60 @@ function Set-CvSetupVersionInUse {
         Ok     = $true
         Reason = ("{0} pasa a usar la version {1}" -f $Name, $Version)
     }
+}
+
+function Backup-CvSetupAppVersion {
+    <#
+        APARTA la carpeta de una version (la renombra a '<carpeta>.bak-<pid>') antes de reinstalarla,
+        en vez de borrarla: si la descarga o la comprobacion SHA256 fallan, se devuelve con
+        Restore-CvSetupAppVersion y el programa sigue teniendo la que funcionaba. Antes se borraba
+        primero: sin red, reinstalar dejaba el equipo SIN ffmpeg.
+
+        Devuelve @{ Ok; Backup; Reason }: Ok sin Backup = no habia nada que apartar; Ok = $false =
+        no se pudo (sus .exe en uso: hay workers codificando con esa version), y entonces NO se debe
+        reinstalar.
+    #>
+    param([Parameter(Mandatory)]$Context, [Parameter(Mandatory)][string]$Name, [string]$Version)
+    $res = @{
+        Ok     = $true
+        Backup = ''
+        Reason = ''
+    }
+    if ([string]::IsNullOrWhiteSpace($Version)) { return $res }
+    $dir = Get-CvToolDir -Context $Context -Name $Name -Version $Version
+    if (-not (Test-Path -LiteralPath $dir)) { return $res }
+    $bak = "{0}.bak-{1}" -f $dir.TrimEnd('\'), $PID
+    try {
+        if (Test-Path -LiteralPath $bak) { Remove-Item -Recurse -Force -LiteralPath $bak -ErrorAction Stop }
+        [System.IO.Directory]::Move($dir.TrimEnd('\'), $bak)
+        $res.Backup = $bak
+    } catch {
+        $res.Ok = $false
+        $res.Reason = "$($_.Exception.Message)"
+    }
+    return $res
+}
+
+function Restore-CvSetupAppVersion {
+    <#
+        Remata una reinstalacion con la copia apartada por Backup-CvSetupAppVersion: si fue bien, la
+        tira; si no, quita lo que quedara a medias y DEVUELVE la de antes a su sitio.
+    #>
+    param(
+        [Parameter(Mandatory)]$Context,
+        [Parameter(Mandatory)][string]$Name,
+        [string]$Version,
+        [string]$Backup = '',
+        [bool]$Success = $false
+    )
+    if ("$Backup" -eq '' -or -not (Test-Path -LiteralPath $Backup)) { return }
+    if ($Success) {
+        Remove-Item -Recurse -Force -LiteralPath $Backup -ErrorAction SilentlyContinue
+        return
+    }
+    $dir = (Get-CvToolDir -Context $Context -Name $Name -Version $Version).TrimEnd('\')
+    if (Test-Path -LiteralPath $dir) { Remove-Item -Recurse -Force -LiteralPath $dir -ErrorAction SilentlyContinue }
+    try { [System.IO.Directory]::Move($Backup, $dir) } catch { }
 }
 
 function Remove-CvSetupAppVersion {

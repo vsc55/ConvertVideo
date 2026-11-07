@@ -607,7 +607,7 @@ Assert-True 'temp pos1 wav'   ((Get-CvAudioTempPath -Context $ctxTmp -Name 'Peli
 Write-Host "`nUtilidades (numeros / args / marcas)" -ForegroundColor Cyan
 Assert-Eq 'InvDouble 3.14'          3.14  (ConvertTo-InvDouble '3.14')
 Assert-Eq 'InvDouble -2.5'          -2.5  (ConvertTo-InvDouble '-2.5')
-Assert-Eq 'InvDouble coma -> null'  $null (ConvertTo-InvDouble '1,5')   # locale-invariante (ffmpeg usa punto)
+Assert-Eq 'InvDouble coma decimal'   1.5   (ConvertTo-InvDouble '1,5')   # lo que escribe cualquiera en castellano (sale con punto)
 Assert-Eq 'InvDouble texto -> null' $null (ConvertTo-InvDouble 'abc')
 Assert-Eq 'Format-CvNumber 0.5'  '0.5' (Format-CvNumber 0.5)
 Assert-Eq 'Format-CvNumber 64'   '64'  (Format-CvNumber 64)
@@ -1461,9 +1461,14 @@ Assert-True 'VideoArgs tuning refs'         (($vaTx -join ' ') -match '-refs 6')
 Assert-True 'VideoArgs preset fallback slow' (($vaN -join ' ') -match '-preset slow')
 Assert-True 'VideoArgs tier fallback high'   (($vaN -join ' ') -match '-tier high')
 # Control de calidad (SSIM/VMAF): filtro -lavfi y parseo de la puntuacion.
-Assert-True 'QualityLavfi ssim'    ((Get-CvQualityLavfi -Metric 'ssim') -match 'scale2ref.*\bssim$')
-Assert-True 'QualityLavfi vmaf'    ((Get-CvQualityLavfi -Metric 'vmaf') -match 'libvmaf$')
+Assert-True 'QualityLavfi ssim'    ((Get-CvQualityLavfi -Metric 'ssim') -match 'scale2ref.*\bssim=shortest=1$')
+Assert-True 'QualityLavfi vmaf'    ((Get-CvQualityLavfi -Metric 'vmaf') -match 'libvmaf=shortest=1$')
 Assert-True 'QualityLavfi sin fps' ((Get-CvQualityLavfi -Metric 'ssim') -notmatch '\bfps=')
+# La referencia, con el MISMO recorte que la salida y de la pista que se codifico: sin eso, la
+# nota de una pelicula con barras quitadas salia mala sin serlo.
+Assert-Eq   'QualityLavfi: recorte y pista del job' '[0:v]format=yuv420p[d0];[1:2]crop=1920:800:0:140,format=yuv420p[r0];[r0][d0]scale2ref[ref][dist];[dist][ref]ssim=shortest=1' (Get-CvQualityLavfi -Metric 'ssim' -Crop '1920:800:0:140' -VideoIndex 2)
+Assert-Eq   'QualityLavfi: sin datos, la primera pista' '[0:v]format=yuv420p[d0];[1:v]format=yuv420p[r0];[r0][d0]scale2ref[ref][dist];[dist][ref]ssim=shortest=1' (Get-CvQualityLavfi -Metric 'ssim')
+Assert-True 'QualityLavfi: un recorte raro se ignora' ((Get-CvQualityLavfi -Metric 'ssim' -Crop 'auto') -notmatch 'crop=')
 Assert-Eq 'QualityScore ssim' 0.987654 (Get-CvQualityScore -Metric 'ssim' -Text '[Parsed_ssim_0 @ 0x1] SSIM Y:0.99 U:0.98 V:0.98 All:0.987654 (18.4dB)')
 Assert-Eq 'QualityScore vmaf' 95.12    (Get-CvQualityScore -Metric 'vmaf' -Text '[libvmaf @ 0x1] VMAF score: 95.12')
 Assert-True 'QualityScore invalido -> null' ($null -eq (Get-CvQualityScore -Metric 'ssim' -Text 'sin datos'))
@@ -1828,6 +1833,7 @@ Assert-Eq   'cruce: no cabe, ninguno'          0 @(Get-CvAudioCrossPoints -Audio
 $rndCx = New-Object System.Random 7
 $baseCx = [double[]](1..400 | ForEach-Object { $rndCx.NextDouble() })
 $refCx  = [double[]]$baseCx[100..199]
+Initialize-CvAudioEnvelope   # se compila al primer uso, no al cargar el modulo
 $lagCx  = [CvAudioEnvelope]::BestLag($refCx, [double[]]$baseCx[70..399])
 Assert-Eq   'cruce: encuentra el desplazamiento' 30 ([int]$lagCx[0])
 Assert-True 'cruce: con encaje perfecto'         ($lagCx[1] -gt 0.999)
@@ -2744,7 +2750,7 @@ foreach ($k in ($usadas.Keys | Sort-Object)) {
 Assert-True 'Textos: el codigo ya pide claves'   ($usadas.Count -gt 0)
 Assert-Eq   'Textos: ninguna clave sin traducir' '' ($huerfanas -join ', ')
 
-# NINGUNA ventana puede llevar su texto escrito dentro. Se barren liborm\ y Gui.psm1 buscando
+# NINGUNA ventana puede llevar su texto escrito dentro. Se barren lib\form\ y Gui.psm1 buscando
 # literales en lo que se ENSENA (.Text, .ToolTipText, -Title, -Message, -Tooltip, -EmptyText) que no
 # pasen por Get-CvText. Sin esto, la siguiente ventana que alguien toque vuelve a traer su texto
 # pegado y no se nota hasta que se mira en otro idioma.
@@ -2968,6 +2974,339 @@ foreach ($cod in (Get-CvLangAvailable)) {
 }
 Assert-Eq   'Idiomas: todos dicen su nombre' '' ($sinNombre -join ', ')
 
+
+# ================================================================================================
+# ROBUSTEZ: escribir sin perder, leer la config en UTF-8, el lock y que ffmpeg muera con su worker.
+Write-Host "`nRobustez - ficheros, config, locks y procesos hijos" -ForegroundColor Cyan
+$rbDir = Join-Path ([System.IO.Path]::GetTempPath()) ('cv_rb_' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+New-Item -ItemType Directory -Path $rbDir -Force | Out-Null
+try {
+    # Sustituir un fichero sin borrarlo antes (Move-CvFileOver), y sin destino: un Move normal.
+    $rbA = Join-Path $rbDir 'a.txt'; $rbB = Join-Path $rbDir 'b.txt'
+    Set-Content -LiteralPath $rbA -Value 'nuevo' -NoNewline
+    Set-Content -LiteralPath $rbB -Value 'viejo' -NoNewline
+    [void](Move-CvFileOver -Source $rbA -Target $rbB)
+    Assert-Eq   'Sustituir: el destino tiene lo nuevo'  'nuevo' (Get-Content -LiteralPath $rbB -Raw)
+    Assert-Eq   'Sustituir: el origen ya no esta'       $false (Test-Path -LiteralPath $rbA)
+    Set-Content -LiteralPath $rbA -Value 'otro' -NoNewline
+    [void](Move-CvFileOver -Source $rbA -Target (Join-Path $rbDir 'c.txt'))
+    Assert-Eq   'Sustituir: sin destino, se mueve'      'otro' (Get-Content -LiteralPath (Join-Path $rbDir 'c.txt') -Raw)
+    # Si no se puede sustituir (destino abierto sin permiso de borrado), el destino sigue entero.
+    Set-Content -LiteralPath $rbA -Value 'tercero' -NoNewline
+    $rbH = [System.IO.File]::Open($rbB, 'Open', 'Read', 'Read')
+    $rbFallo = $false
+    try { [void](Move-CvFileOver -Source $rbA -Target $rbB) } catch { $rbFallo = $true } finally { $rbH.Dispose() }
+    Assert-True 'Sustituir: si falla, lanza'            $rbFallo
+    Assert-Eq   'Sustituir: y el destino sigue entero'  'nuevo' (Get-Content -LiteralPath $rbB -Raw)
+    Assert-Eq   'Sustituir: y el nuevo no se pierde'    'tercero' (Get-Content -LiteralPath $rbA -Raw)
+    # Guardado atomico sobre un fichero que ya existe.
+    [void](Save-CvTextFile -Path $rbB -Text 'guardado' -Atomic)
+    Assert-Eq   'Guardado atomico: sustituye'          'guardado' (Get-Content -LiteralPath $rbB -Raw)
+    Assert-Eq   'Guardado atomico: sin .tmp suelto'    $false (Test-Path -LiteralPath "$rbB.tmp")
+
+    # La config se lee en UTF-8 (como se escribe): una ruta con tilde llega entera.
+    $rbCfg = Join-Path $rbDir 'config.json'
+    $rbVid = 'D:\V' + [char]0x00ED + 'deos'
+    Save-CvConfigFile -Path $rbCfg -Config ([pscustomobject]@{ paths = [pscustomobject]@{ base = $rbVid } })
+    Assert-Eq   'Config: una ruta con tilde se lee bien' $rbVid "$((Get-CvConfig -Root $rbDir -Path $rbCfg).paths.base)"
+    Assert-Eq   'Config: guardado sin .tmp suelto'       $false (Test-Path -LiteralPath "$rbCfg.tmp")
+
+    # NVENC: probar versiones anteriores solo con una NVIDIA (o sin saber que GPU hay).
+    Assert-Eq   'NVENC: con NVIDIA, se prueban otras'   $true  (Test-CvNvencFallbackUseful -GpuName 'NVIDIA GeForce RTX 3060')
+    Assert-Eq   'NVENC: sin NVIDIA, no'                 $false (Test-CvNvencFallbackUseful -GpuName 'Intel(R) UHD Graphics 630 | AMD Radeon')
+    Assert-Eq   'NVENC: sin saber la GPU, como antes'   $true  (Test-CvNvencFallbackUseful -GpuName '')
+
+    # EL LOCK. Uno cogido por este proceso: nadie lo puede borrar, ni coger otra vez.
+    $rbCtx = [pscustomobject]@{ Proceso = $rbDir }
+    Assert-True 'Lock: se coge'                         (Enter-Lock -Context $rbCtx -Name 'peli [1]')
+    $rbLock = Join-Path $rbDir 'peli [1].lock'
+    Assert-Eq   'Lock: no se coge dos veces'            $false (Enter-Lock -Context $rbCtx -Name 'peli [1]')
+    $rbBorra = $true
+    try { [System.IO.File]::Delete($rbLock) } catch { $rbBorra = $false }
+    Assert-Eq   'Lock: con dueno vivo no se puede borrar' $false $rbBorra
+    Assert-True 'Lock: pero si se puede leer'           ((Read-CvTextFileShared -Path $rbLock) -match ("PID={0};" -f $PID))
+    Assert-Eq   'Lock: Liberar no quita uno vivo'       $false (Remove-CvStaleLock -Context $rbCtx -Name 'peli [1]')
+    Exit-Lock -Context $rbCtx -Name 'peli [1]'
+    Assert-Eq   'Lock: al soltarlo, se va'              $false (Test-Path -LiteralPath $rbLock)
+    # Exit-Lock solo suelta el SUYO: uno de otro (aqui, escrito a mano) se queda.
+    Set-Content -LiteralPath $rbLock -Value ("PID={0};HOST={1}" -f $PID, $env:COMPUTERNAME) -NoNewline
+    Exit-Lock -Context $rbCtx -Name 'peli [1]'
+    Assert-Eq   'Lock: no suelta uno que no es suyo'    $true (Test-Path -LiteralPath $rbLock)
+    Remove-Item -LiteralPath $rbLock -Force
+    # Caducado (su PID ya no existe): se roba.
+    $rbMuerto = 0
+    for ($i = 999991; $i -gt 100000; $i -= 7777) { if ($null -eq (Get-Process -Id $i -ErrorAction SilentlyContinue)) { $rbMuerto = $i; break } }
+    Set-Content -LiteralPath $rbLock -Value ("PID={0};HOST={1}" -f $rbMuerto, $env:COMPUTERNAME) -NoNewline
+    Assert-True 'Lock: el de un worker muerto se roba'  (Enter-Lock -Context $rbCtx -Name 'peli [1]')
+    Exit-Lock -Context $rbCtx -Name 'peli [1]'
+    # PID reutilizado por otro programa (no un PowerShell): tambien cuenta como caducado.
+    $rbPing = Start-Process -FilePath ping.exe -ArgumentList '-n', '30', '127.0.0.1' -WindowStyle Hidden -PassThru
+    try {
+        Set-Content -LiteralPath $rbLock -Value ("PID={0};HOST={1}" -f $rbPing.Id, $env:COMPUTERNAME) -NoNewline
+        Assert-Eq 'Lock: PID reutilizado por otro programa = caducado' $true (Test-CvLockStale $rbLock)
+    } finally { try { $rbPing.Kill() } catch { } }
+    Remove-Item -LiteralPath $rbLock -Force -ErrorAction SilentlyContinue
+
+    # De verdad, con OTRO proceso con el lock cogido: no se le puede quitar; al morir, si.
+    $rbScript = Join-Path $rbDir 'dueno.ps1'
+    Set-Content -LiteralPath $rbScript -Encoding UTF8 -Value (@(
+        ('Import-Module "{0}" -Force' -f (Join-Path $Lib 'Io.psm1'))
+        ('Import-Module "{0}" -Force' -f (Join-Path $Lib 'Exec.psm1'))
+        ('Import-Module "{0}" -Force' -f (Join-Path $Lib 'Job.psm1'))
+        ('if (Enter-Lock -Context ([pscustomobject]@{{ Proceso = "{0}" }}) -Name "otro") {{ Set-Content -LiteralPath "{1}" -Value ok }}' -f $rbDir, (Join-Path $rbDir 'cogido.txt'))
+        'Start-Sleep -Seconds 60'
+    ) -join "`r`n")
+    $rbDueno = Start-Process -FilePath powershell.exe -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"{0}"' -f $rbScript)) -WindowStyle Hidden -PassThru
+    try {
+        $rbSw = [Diagnostics.Stopwatch]::StartNew()
+        while (-not (Test-Path -LiteralPath (Join-Path $rbDir 'cogido.txt')) -and $rbSw.Elapsed.TotalSeconds -lt 20) { Start-Sleep -Milliseconds 100 }
+        Assert-True 'Lock otro proceso: lo coge'           (Test-Path -LiteralPath (Join-Path $rbDir 'cogido.txt'))
+        Assert-Eq   'Lock otro proceso: aqui no se coge'   $false (Enter-Lock -Context $rbCtx -Name 'otro')
+        Assert-Eq   'Lock otro proceso: ni se libera'      $false (Remove-CvStaleLock -Context $rbCtx -Name 'otro')
+        $rbDueno.Kill()
+        [void]$rbDueno.WaitForExit(5000)
+        Assert-True 'Lock otro proceso: muerto, se roba'   (Enter-Lock -Context $rbCtx -Name 'otro')
+        Exit-Lock -Context $rbCtx -Name 'otro'
+    } finally { try { if (-not $rbDueno.HasExited) { $rbDueno.Kill() } } catch { } }
+
+    # Los hijos del worker mueren con el (Enable-CvKillChildrenOnExit): un ffmpeg no sigue
+    # escribiendo despues de que su worker suelte el lock.
+    $rbHijo = Join-Path $rbDir 'hijo.ps1'
+    Set-Content -LiteralPath $rbHijo -Encoding UTF8 -Value (@(
+        ('Import-Module "{0}" -Force' -f (Join-Path $Lib 'Exec.psm1'))
+        '[void](Enable-CvKillChildrenOnExit)'
+        '$p = Start-Process -FilePath ping.exe -ArgumentList "-n","60","127.0.0.1" -WindowStyle Hidden -PassThru'
+        ('Set-Content -LiteralPath "{0}" -Value $p.Id' -f (Join-Path $rbDir 'hijo.txt'))
+        'Start-Sleep -Seconds 60'
+    ) -join "`r`n")
+    $rbPadre = Start-Process -FilePath powershell.exe -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"{0}"' -f $rbHijo)) -WindowStyle Hidden -PassThru
+    $rbHijoPid = 0
+    try {
+        $rbSw = [Diagnostics.Stopwatch]::StartNew()
+        while (-not (Test-Path -LiteralPath (Join-Path $rbDir 'hijo.txt')) -and $rbSw.Elapsed.TotalSeconds -lt 20) { Start-Sleep -Milliseconds 100 }
+        $rbHijoPid = [int]"$(Get-Content -LiteralPath (Join-Path $rbDir 'hijo.txt') -ErrorAction SilentlyContinue)".Trim()
+        Assert-True 'Hijos: el hijo arranca'               ($rbHijoPid -gt 0 -and $null -ne (Get-Process -Id $rbHijoPid -ErrorAction SilentlyContinue))
+        $rbPadre.Kill()
+        [void]$rbPadre.WaitForExit(5000)
+        Start-Sleep -Milliseconds 500
+        Assert-Eq   'Hijos: muere con su worker'           $false ($null -ne (Get-Process -Id $rbHijoPid -ErrorAction SilentlyContinue))
+    } finally {
+        try { if (-not $rbPadre.HasExited) { $rbPadre.Kill() } } catch { }
+        if ($rbHijoPid -gt 0) { Get-Process -Id $rbHijoPid -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue }
+    }
+} finally {
+    Remove-Item -Recurse -Force -LiteralPath $rbDir -ErrorAction SilentlyContinue
+}
+
+# ================================================================================================
+# RENDIMIENTO: lo que antes se rehacia en cada llamada se hace una vez (y sin que se pisen).
+Write-Host "`nRendimiento - caches" -ForegroundColor Cyan
+Assert-True 'Fabrica: el compartido es siempre el mismo' ([object]::ReferenceEquals((Get-CvConfigDefaultsShared), (Get-CvConfigDefaultsShared)))
+Assert-Eq   'Fabrica: y vale lo mismo que el nuevo'      "$((Get-CvConfigDefaults).encode.audio.codec)" "$((Get-CvConfigDefaultsShared).encode.audio.codec)"
+# Una lista de fabrica se devuelve COPIADA: tocarla no cambia la de todos.
+$pfLista = Get-CvConfigDefaultValue 'languages/subtitle'
+$pfAntes = (@($pfLista) -join '|')
+$pfLista[0] = 'zzz'
+$pfOtra = Get-CvConfigDefaultValue 'languages/subtitle'   # asignada: '@(...)' sobre ',$x' la envolveria
+Assert-Eq   'Fabrica: tocar una lista devuelta no cambia el default' $pfAntes ($pfOtra -join '|')
+$pfSec = Get-CvConfigDefaultValue 'encode/video/auto'
+$pfSec['crf'] = 999
+Assert-True 'Fabrica: tocar una seccion devuelta tampoco' ([int](Get-CvConfigDefaultValue 'encode/video/auto/crf') -ne 999)
+$pfVer = Get-CvConfigDefaultValue 'downloads/ffmpeg/versionArgs'
+Assert-Eq   'Fabrica: una lista de un elemento sigue siendo lista' '-version|1' ("{0}|{1}" -f $pfVer[0], @($pfVer).Count)
+Assert-True 'Copia: profunda'  (-not [object]::ReferenceEquals((Copy-CvConfigNode -Node (Get-CvConfigDefaultsShared).encode), (Get-CvConfigDefaultsShared).encode))
+# Los idiomas se leen UNA vez (mientras el fichero no cambie).
+Assert-True 'Idiomas: el fichero se lee una vez' ([object]::ReferenceEquals((Get-CvLangResources -Lang 'es'), (Get-CvLangResources -Lang 'es')))
+# Lineas de subtitulo: lo ya contado no se vuelve a contar (aqui ni hay ffprobe: saldria -1).
+$pfDir = Join-Path ([System.IO.Path]::GetTempPath()) ('cv_pf_' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+New-Item -ItemType Directory -Path $pfDir -Force | Out-Null
+try {
+    $pfFile = Join-Path $pfDir 'peli.mkv'
+    Set-Content -LiteralPath $pfFile -Value 'x' -NoNewline
+    $pfCtx = [pscustomobject]@{ FFprobe = (Join-Path $pfDir 'no-hay-ffprobe.exe') }
+    Assert-Eq   'Cues: siembra lo sabido (los negativos no)' 2 (Set-CvSubtitleCueCache -File $pfFile -Counts @{ '3' = 750; '4' = 12; '5' = -1 })
+    Assert-Eq   'Cues: sale de la cache, sin ffprobe'        750 (Get-CvSubtitleCueCount -Context $pfCtx -File $pfFile -Index 3 -Stream ([pscustomobject]@{ index = 3; tags = [pscustomobject]@{} }))
+    Assert-Eq   'Cues: tambien de un job (objeto)'           1 (Set-CvSubtitleCueCache -File $pfFile -Counts ([pscustomobject]@{ '6' = 40 }))
+    Assert-Eq   'Cues: el del job'                           40 (Get-CvSubtitleCueCount -Context $pfCtx -File $pfFile -Index 6 -Stream ([pscustomobject]@{ index = 6; tags = [pscustomobject]@{} }))
+    # Si el fichero cambia, lo guardado ya no vale (la huella es tamano + fecha).
+    $pfClave = Get-CvCueCacheKey -File $pfFile -Index 3
+    Set-Content -LiteralPath $pfFile -Value 'otro contenido' -NoNewline
+    Assert-True 'Cues: fichero cambiado, otra clave (no se fia)' ((Get-CvCueCacheKey -File $pfFile -Index 3) -ne $pfClave)
+    # Locks: con la tabla de procesos (una consulta para todos) da lo mismo que preguntando uno a uno.
+    $pfLock = Join-Path $pfDir 'x.lock'
+    Set-Content -LiteralPath $pfLock -Value ("PID={0};HOST={1}" -f $PID, $env:COMPUTERNAME) -NoNewline
+    $pfProcs = Get-CvProcessNames
+    Assert-True 'Procesos: estoy en la tabla'                  $pfProcs.ContainsKey($PID)
+    Assert-Eq   'Lock con tabla: el mio esta vivo'             $false (Test-CvLockStale $pfLock -Processes $pfProcs)
+    Assert-Eq   'Lock con tabla: un PID que no esta, caducado' $true  (Test-CvLockStale $pfLock -Processes @{})
+} finally {
+    Remove-Item -Recurse -Force -LiteralPath $pfDir -ErrorAction SilentlyContinue
+}
+
+# ================================================================================================
+# 4a tanda: no matar a quien no es, y no escribir de mas.
+Write-Host "`nRobustez - identidad de los workers y config minima" -ForegroundColor Cyan
+$wkDir = Join-Path ([System.IO.Path]::GetTempPath()) ('cv_wk_' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+New-Item -ItemType Directory -Path $wkDir -Force | Out-Null
+$wkPing = Start-Process -FilePath ping.exe -ArgumentList '-n', '30', '127.0.0.1' -WindowStyle Hidden -PassThru
+try {
+    # Este proceso es un PowerShell que arranco ANTES de ahora: es "un worker" valido.
+    Assert-True 'Worker: un PowerShell que arranco antes, si'   (Test-CvWorkerProcess -ProcessId $PID -Started ([datetime]::UtcNow))
+    # Si su estado dice que arranco hace una hora y el proceso es de ahora... no es el (PID reutilizado).
+    Assert-Eq   'Worker: arranco despues que su estado, no'      $false (Test-CvWorkerProcess -ProcessId $PID -Started ((Get-Process -Id $PID).StartTime.ToUniversalTime().AddHours(-1)))
+    Assert-Eq   'Worker: otro programa con ese PID, no'          $false (Test-CvWorkerProcess -ProcessId $wkPing.Id)
+    # 'Cancelar' sobre un PID que ahora es de otro programa: no lo mata y quita el estado huerfano.
+    $wkEstado = Join-Path $wkDir ('{0}.worker.json' -f $wkPing.Id)
+    Set-Content -LiteralPath $wkEstado -Value '{}' -Encoding UTF8
+    Assert-True 'Cancelar: el worker ya no esta'                 (Stop-CvConvertWorker -ProcessId $wkPing.Id -StatePath $wkEstado)
+    Assert-True 'Cancelar: el otro programa sigue vivo'          ($null -ne (Get-Process -Id $wkPing.Id -ErrorAction SilentlyContinue))
+    Assert-Eq   'Cancelar: el estado huerfano se va'             $false (Test-Path -LiteralPath $wkEstado)
+    # Y la cola no lo cuenta como worker vivo.
+    $wkCtx = [pscustomobject]@{ Proceso = $wkDir }
+    Set-Content -LiteralPath $wkEstado -Encoding UTF8 -Value (('{{ "pid": {0}, "host": "{1}", "status": "working", "file": "x", "started": "{2}" }}' -f $wkPing.Id, $env:COMPUTERNAME, (Get-Date).ToString('o')))
+    Set-Content -LiteralPath (Join-Path $wkDir ('{0}.worker.json' -f $PID)) -Encoding UTF8 -Value (('{{ "pid": {0}, "host": "{1}", "status": "working", "file": "y", "started": "{2}" }}' -f $PID, $env:COMPUTERNAME, (Get-Date).ToString('o')))
+    $wkEst = @(Get-CvWorkerStates -Context $wkCtx)
+    Assert-Eq   'Estados: un PID de otro programa no cuenta'     $false ([bool](@($wkEst | Where-Object { $_.Pid -eq $wkPing.Id })[0]).Alive)
+    Assert-Eq   'Estados: un PowerShell si'                      $true  ([bool](@($wkEst | Where-Object { $_.Pid -eq $PID })[0]).Alive)
+    Assert-True 'Estados: traen cuando arrancaron'               ((@($wkEst | Where-Object { $_.Pid -eq $PID })[0]).Started -gt [datetime]::MinValue)
+
+    # Guardar UNA preferencia sin config.json escribe solo esa, no todos los valores de fabrica.
+    $wkCfg = Join-Path $wkDir 'config.json'
+    [void](Set-CvConfigValue -Path $wkCfg -Key 'gui/theme' -Value 'dark')
+    $wkRaw = Read-CvConfigFile -Path $wkCfg
+    Assert-Eq   'Config minima: lo guardado'                     'dark' "$($wkRaw.gui.theme)"
+    Assert-Eq   'Config minima: sin valores de fabrica'          'gui' ((@($wkRaw.PSObject.Properties | ForEach-Object { $_.Name })) -join ',')
+
+    # INSTALAR desde el worker (Confirm-CvTool -> Install-CvTool sin -NvencOk): en PowerShell 5.1 un
+    # '[ref]$x = $null' que no se pasa REVENTABA, y esa instalacion automatica fallaba siempre. Con una
+    # descarga imposible tiene que decir que no, no lanzar.
+    $wkTools = Join-Path $wkDir 'raiz'
+    New-Item -ItemType Directory -Path $wkTools -Force | Out-Null
+    $wkTcfg = Join-Path $wkTools 'config.json'
+    Set-Content -LiteralPath $wkTcfg -Encoding UTF8 -Value '{ "behavior": { "installLockWaitSec": 2 }, "downloads": { "ffmpeg": { "versions": { "0.0.9": { "url": "http://127.0.0.1:9/no-existe.zip" } } } } }'
+    $wkTctx = New-CvContext -Root $wkTools -ConfigPath $wkTcfg
+    $wkLanza = ''
+    try { $wkInst = Install-CvTool -Context $wkTctx -Name 'ffmpeg' -Version '0.0.9' } catch { $wkLanza = "$($_.Exception.Message)" }
+    Assert-Eq   'Instalar sin -NvencOk: no revienta'             '' $wkLanza
+    Assert-Eq   'Instalar sin -NvencOk: dice que no'             $false ([bool]$wkInst)
+    # El TURNO: con otro proceso instalando esa misma version, se espera el plazo y se desiste (sin
+    # descargar nada encima de lo suyo).
+    $wkDueno = Join-Path $wkDir 'dueno-turno.ps1'
+    Set-Content -LiteralPath $wkDueno -Encoding UTF8 -Value (@(
+        '$m = New-Object System.Threading.Mutex($true, ''Local\ConvertVideo.Instalar.ffmpeg.0.0.9'')'
+        ('Set-Content -LiteralPath "{0}" -Value ok' -f (Join-Path $wkDir 'turno.txt'))
+        'Start-Sleep -Seconds 30'
+    ) -join "`r`n")
+    $wkOtro = Start-Process -FilePath powershell.exe -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"{0}"' -f $wkDueno)) -WindowStyle Hidden -PassThru
+    try {
+        $wkSw = [Diagnostics.Stopwatch]::StartNew()
+        while (-not (Test-Path -LiteralPath (Join-Path $wkDir 'turno.txt')) -and $wkSw.Elapsed.TotalSeconds -lt 20) { Start-Sleep -Milliseconds 100 }
+        $wkSw.Restart()
+        $wkTurno = Confirm-CvTool -Context $wkTctx -Name 'ffmpeg' -Version '0.0.9' -Quiet
+        Assert-Eq   'Turno: con otro instalando, desiste'        $false ([bool]$wkTurno)
+        Assert-True 'Turno: tras esperar el plazo'               ($wkSw.Elapsed.TotalSeconds -ge 1.8 -and $wkSw.Elapsed.TotalSeconds -lt 15)
+    } finally { try { if (-not $wkOtro.HasExited) { $wkOtro.Kill() } } catch { } }
+} finally {
+    try { if (-not $wkPing.HasExited) { $wkPing.Kill() } } catch { }
+    Remove-Item -Recurse -Force -LiteralPath $wkDir -ErrorAction SilentlyContinue
+}
+
+# ================================================================================================
+# 5a tanda: los pendientes menores.
+Write-Host "`nPendientes menores" -ForegroundColor Cyan
+# Los subtitulos sacados para VERLOS se limpian pasado un tiempo (los tiene abiertos el visor).
+$mnDir = Join-Path ([System.IO.Path]::GetTempPath()) ('cv_mn_' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+New-Item -ItemType Directory -Path $mnDir -Force | Out-Null
+try {
+    $mnViejo = Join-Path $mnDir 'cv_sub_peli_3.srt'
+    $mnNuevo = Join-Path $mnDir 'cv_sub_peli_4.srt'
+    $mnOtro  = Join-Path $mnDir 'otro.srt'
+    foreach ($p in $mnViejo, $mnNuevo, $mnOtro) { Set-Content -LiteralPath $p -Value 'x' }
+    (Get-Item -LiteralPath $mnViejo).LastWriteTime = (Get-Date).AddDays(-3)
+    (Get-Item -LiteralPath $mnOtro).LastWriteTime  = (Get-Date).AddDays(-3)
+    Assert-Eq   'Subtitulos vistos: se borra el viejo'      1 (Clear-CvSubtitleViewTemps -Hours 24 -Dir $mnDir)
+    Assert-True 'Subtitulos vistos: el reciente se queda'   ((Test-Path -LiteralPath $mnNuevo) -and -not (Test-Path -LiteralPath $mnViejo))
+    Assert-True 'Subtitulos vistos: lo que no es suyo, no'  (Test-Path -LiteralPath $mnOtro)
+    Assert-Eq   'Subtitulos vistos: con 0, nunca'           0 (Clear-CvSubtitleViewTemps -Hours 0 -Dir $mnDir)
+} finally { Remove-Item -Recurse -Force -LiteralPath $mnDir -ErrorAction SilentlyContinue }
+# La sincronia mira el final de la pista de video ELEGIDA, no la primera (que puede ser una caratula).
+$mnInfo = [pscustomobject]@{ streams = @(
+    [pscustomobject]@{ index = 0; codec_type = 'video'; codec_name = 'mjpeg'; disposition = [pscustomobject]@{ attached_pic = 1 } }
+    [pscustomobject]@{ index = 1; codec_type = 'video'; codec_name = 'h264' }
+    [pscustomobject]@{ index = 2; codec_type = 'audio'; codec_name = 'aac' }
+) }
+Assert-Eq   'Sincronia: la pista elegida'                 '5'   (Get-CvSyncVideoSpec -Info $mnInfo -VideoIndex 5)
+Assert-Eq   'Sincronia: sin elegir, la primera de verdad'  '1'   (Get-CvSyncVideoSpec -Info $mnInfo)
+Assert-Eq   'Sincronia: sin nada, la de siempre'           'v:0' (Get-CvSyncVideoSpec)
+# La coma decimal vale (lo que escribe cualquiera en castellano); lo demas, como antes.
+Assert-Eq   'Decimal: con coma'                           1.5 (ConvertTo-InvDouble '1,5')
+Assert-Eq   'Decimal: con punto'                          1.5 (ConvertTo-InvDouble '1.5')
+Assert-Eq   'Decimal: entero'                             3.0 (ConvertTo-InvDouble ' 3 ')
+Assert-Eq   'Decimal: dos comas no es un numero'          $null (ConvertTo-InvDouble '1,2,3')
+Assert-Eq   'Decimal: letras no es un numero'             $null (ConvertTo-InvDouble 'uno')
+# Un caracter de control en un valor ya no rompe el JSON (y se lee igual).
+$mnJson = ConvertTo-CvJsonString ('a' + [char]12 + 'b' + [char]1 + 'c' + [char]9 + 'd')
+Assert-Eq   'JSON: control escapado'                      '"a\u000cb\u0001c\td"' $mnJson
+Assert-Eq   'JSON: y se vuelve a leer igual'              ('a' + [char]12 + 'b' + [char]1 + 'c' + [char]9 + 'd') ($mnJson | ConvertFrom-Json)
+# El pico de VARIAS pistas en una sola pasada: los argumentos y la lectura de la salida.
+Assert-Eq   'Pico: una pasada para todas' '-hide_banner -i x.mkv -filter_complex [0:1]volumedetect[v0];[0:3]volumedetect[v1] -map [v0] -map [v1] -f null -' ((Get-CvPeakMultiArgs -File 'x.mkv' -Indexes @(1, 3)) -join ' ')
+Assert-True 'Pico: con limite de pruebas' ((Get-CvPeakMultiArgs -File 'x.mkv' -Indexes @(1) -Limit 20) -join ' ' -match '-t 20 ')
+$mnSalida = "[Parsed_volumedetect_1 @ 000] max_volume: -29.6 dB`n[Parsed_volumedetect_0 @ 000] max_volume: -20.7 dB"
+$mnPicos = ConvertTo-CvPeakList -Text $mnSalida -Count 3
+Assert-Eq   'Pico: cada uno en su pista (en orden)'       '-20.7|-29.6|' (($mnPicos | ForEach-Object { "$_" }) -join '|')
+# Fuentes compartidas: la misma, no una nueva cada vez.
+[void](Initialize-CvGui)
+Assert-True 'Fuentes: la misma instancia'                 ([object]::ReferenceEquals((New-CvGuiFont 9), (New-CvGuiFont 9)))
+Assert-True 'Fuentes: otro tamano, otra'                  (-not [object]::ReferenceEquals((New-CvGuiFont 9), (New-CvGuiFont 10)))
+$mnCtl = New-Object System.Windows.Forms.Panel
+$mnTip = New-Object System.Windows.Forms.ToolTip
+[void](Register-CvGuiDisposeWith -Control $mnCtl -Object $mnTip)
+$mnTipVivo = $true
+$mnTip.Add_Disposed({ $script:mnTipVivo = $false })
+$script:mnTipVivo = $true
+$mnCtl.Dispose()
+Assert-Eq   'Ayudas: se liberan con su control'           $false $script:mnTipVivo
+
+# ================================================================================================
+# 6a tanda: lo que quedaba.
+Write-Host "`nUltimos retoques" -ForegroundColor Cyan
+$ulDir = Join-Path ([System.IO.Path]::GetTempPath()) ('cv_ul_' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+New-Item -ItemType Directory -Path $ulDir -Force | Out-Null
+try {
+    # Listar con VARIOS patrones: una sola pasada por la carpeta, y comparacion exacta (sin la trampa 8.3).
+    foreach ($n in 'a.mkv', 'b.mp4', 'c.mp4v', 'd.srt', 'e.MKV') { Set-Content -LiteralPath (Join-Path $ulDir $n) -Value 'x' }
+    $ulVarios = @(Get-CvFiles -Dir $ulDir -Filters @('*.mkv', '*.mp4') | ForEach-Object { $_.Name })
+    Assert-Eq   'Listar: varios patrones, una pasada'     'a.mkv|b.mp4|e.MKV' ($ulVarios -join '|')
+    Assert-Eq   'Listar: un patron, como siempre'         'd.srt' ((@(Get-CvFiles -Dir $ulDir -Filters @('*.srt') | ForEach-Object { $_.Name })) -join '|')
+    # Un zip con rutas que se salen de su carpeta (zip slip) no se extrae; uno normal, si.
+    Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
+    $ulZip = {
+        param([string]$Nombre, [string[]]$Entradas)
+        $p = Join-Path $ulDir $Nombre
+        $fs = [System.IO.File]::Open($p, 'Create')
+        $z = New-Object System.IO.Compression.ZipArchive($fs, [System.IO.Compression.ZipArchiveMode]::Create)
+        foreach ($e in $Entradas) { $w = New-Object System.IO.StreamWriter($z.CreateEntry($e).Open()); $w.Write('x'); $w.Dispose() }
+        $z.Dispose(); $fs.Dispose()
+        return $p
+    }
+    Assert-True 'Zip: uno normal se puede extraer'        (Test-CvZipSafe -ZipPath (& $ulZip 'bueno.zip' @('bin/ffmpeg.exe', 'doc/leeme.txt')) -Dest (Join-Path $ulDir 'x'))
+    Assert-Eq   'Zip: uno con ../ no'                     $false (Test-CvZipSafe -ZipPath (& $ulZip 'malo.zip' @('bin/ffmpeg.exe', '../../fuera.txt')) -Dest (Join-Path $ulDir 'x'))
+    Assert-Eq   'Zip: uno que no se puede leer, tampoco'  $false (Test-CvZipSafe -ZipPath (Join-Path $ulDir 'no-hay.zip') -Dest (Join-Path $ulDir 'x'))
+} finally { Remove-Item -Recurse -Force -LiteralPath $ulDir -ErrorAction SilentlyContinue }
+# Las marcas del tema van APARTE del rol de color: un boton con rol no lo pierde al ponerle el pintor.
+[void](Initialize-CvGui)
+$ulBtn = New-Object System.Windows.Forms.Button
+[void](Set-CvGuiRole -Control $ulBtn -Role 'error')
+Set-CvGuiMark -Control $ulBtn -Mark 'btn-off'
+Assert-True 'Marcas: la del tema se ve'                   (Test-CvGuiMark -Control $ulBtn -Mark 'btn-off')
+Assert-Eq   'Marcas: y el rol sigue donde estaba'         'cv-role:error' "$($ulBtn.AccessibleDescription)"
+Assert-Eq   'Marcas: otra que no se puso, no'             $false (Test-CvGuiMark -Control $ulBtn -Mark 'list-dark')
+Set-CvGuiMark -Control $ulBtn -Mark 'btn-off' -On $false
+Assert-Eq   'Marcas: se puede quitar'                     $false (Test-CvGuiMark -Control $ulBtn -Mark 'btn-off')
+# Los iconos de la animacion de la bandeja se liberan al cerrar la cola.
+[void](Get-CvGuiTrayFrameIcon -Frame @{ Key = 's|45'; Progress = -1; Spin = 45; Dot = $false; Pulse = $false })
+Assert-True 'Bandeja: libera sus iconos'                  ((Clear-CvGuiTrayFrameIcons) -ge 1)
+Assert-Eq   'Bandeja: y no queda ninguno'                 0 (Clear-CvGuiTrayFrameIcons)
 
 # ================================================================================================
 $total = $script:pass + $script:fail

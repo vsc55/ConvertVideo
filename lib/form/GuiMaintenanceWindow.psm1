@@ -23,7 +23,10 @@ function Show-CvMaintenanceWindow {
         [string]$CurrentLog = ''
     )
     if (-not (Initialize-CvGui)) { return 0 }
-    $borrados = 0
+    # En un hashtable: el manejador del boton es un GetNewClosure() y ahi '$script:' NO es este modulo
+    # (es el modulo dinamico de la closure, ver ref-gotchas.md): con '$script:borrados' la ventana
+    # devolvia siempre vacio y setup decia que no se habia borrado nada.
+    $cuenta = @{ Borrados = 0 }
 
     $form = New-Object System.Windows.Forms.Form
     $form.Text          = (Get-CvText -Key 'mant.tit')
@@ -147,7 +150,7 @@ function Show-CvMaintenanceWindow {
         $msg = Get-CvText -Key 'mant.confirm' -Values @(($detalle -join "`n"))
         if (-not (Show-CvGuiConfirm -Title (Get-CvText -Key 'mant.tit') -Message $msg)) { return }
         $r = @(Invoke-CvSetupMaintenance -Context $Context -Keys $ks -CurrentLog $CurrentLog)
-        foreach ($x in $r) { $script:borrados += [int]$x.Removed }
+        foreach ($x in $r) { $cuenta.Borrados = [int]$cuenta.Borrados + [int]$x.Removed }
         $malos = @($r | Where-Object { -not $_.Ok })
         if ($malos.Count -gt 0) {
             Show-CvGuiInfo -Title (Get-CvText -Key 'mant.tit') -Message (Get-CvText -Key 'mant.error' -Values @(((@($malos | ForEach-Object { "{0}: {1}" -f $_.Text, $_.Error })) -join "`n")))
@@ -162,7 +165,7 @@ function Show-CvMaintenanceWindow {
     [void](Set-CvGuiTheme -Form $form)   # tema de la sesion
     [void]$form.ShowDialog()
     $form.Dispose()
-    return $script:borrados
+    return [int]$cuenta.Borrados
 }
 
 Export-ModuleMember -Function *

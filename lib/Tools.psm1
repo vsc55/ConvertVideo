@@ -88,7 +88,27 @@ function Confirm-CvTool {
     }
     if (Test-CvToolInstalled -Context $Context -Name $Name -Version $Version) { return $true }
     if (-not $Quiet) { Write-CvLog 'GLOBAL' (Get-CvText -Key 'tl.falta' -Values @($Name.ToUpper(), $Version)) }
-    return (Install-CvTool -Context $Context -Name $Name -Version $Version)
+    # UNA instalacion de cada herramienta y version a la vez: varios workers que arrancan juntos
+    # necesitan la misma (la congelada en sus jobs) y se pisaban, y uno podia dar por instalada una que
+    # el otro aun estaba copiando. Con el turno, el que llega despues espera y, al entrar, ya la tiene.
+    $turno = $null
+    $tengo = $false
+    try {
+        $nombre = "Local\ConvertVideo.Instalar.{0}.{1}" -f ($Name -replace '[^A-Za-z0-9_.-]', '_'), ($Version -replace '[^A-Za-z0-9_.-]', '_')
+        $turno = New-Object System.Threading.Mutex($false, $nombre)
+        $espera = [Math]::Max(1, [int]$Context.InstallLockWaitSec)
+        try { $tengo = $turno.WaitOne([TimeSpan]::FromSeconds($espera)) }
+        catch [System.Threading.AbandonedMutexException] { $tengo = $true }   # quien lo tenia murio: es nuestro
+        if (-not $tengo) {
+            Write-CvLog 'GLOBAL' (Get-CvText -Key 'tl.turno.no' -Values @($Name.ToUpper(), $Version, $espera))
+            return $false
+        }
+        if (Test-CvToolInstalled -Context $Context -Name $Name -Version $Version) { return $true }
+        return (Install-CvTool -Context $Context -Name $Name -Version $Version)
+    } finally {
+        if ($tengo) { try { $turno.ReleaseMutex() } catch { } }
+        if ($null -ne $turno) { $turno.Dispose() }
+    }
 }
 
 function New-CvToolContext {
@@ -219,6 +239,31 @@ function Select-CvToolVersion {
     return (Select-FromList -Title (Get-CvText -Key 'tl.version.q' -Values @($Name)) -Options $versions -NoneLabel 'cancelar' -DefaultIndex $defIdx)
 }
 
+function Test-CvZipSafe {
+    <#
+        $true si TODAS las entradas de un .zip caen DENTRO de -Dest al extraerlo. Un zip con una entrada
+        '..\..\algo' o con ruta absoluta escribiria fuera de la carpeta de extraccion ('zip slip'), y
+        Expand-Archive de PowerShell 5.1 no lo comprueba. Con la descarga verificada por SHA256 no puede
+        pasar, pero una version del catalogo sin SHA no tiene esa red. Fail-safe: si no se puede leer el
+        zip, $false.
+    #>
+    param([Parameter(Mandatory)][string]$ZipPath, [Parameter(Mandatory)][string]$Dest)
+    try {
+        Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction Stop
+        $raiz = [System.IO.Path]::GetFullPath($Dest).TrimEnd('\') + '\'
+        $z = [System.IO.Compression.ZipFile]::OpenRead($ZipPath)
+        try {
+            foreach ($e in $z.Entries) {
+                $destino = [System.IO.Path]::GetFullPath((Join-Path $raiz $e.FullName))
+                if (-not $destino.StartsWith($raiz, [System.StringComparison]::OrdinalIgnoreCase)) { return $false }
+            }
+        } finally { $z.Dispose() }
+        return $true
+    } catch {
+        return $false
+    }
+}
+
 function Install-CvTool {
     <#
         Descarga e instala una app del catalogo 'downloads' del config: descarga el zip de
@@ -228,7 +273,11 @@ function Install-CvTool {
         [ref], recibe el resultado de la comprobacion NVENC de ffmpeg ($true si compatible o si no
         aplica); lo usa setup para volver a la version anterior si la nueva no soporta NVENC.
     #>
-    param([Parameter(Mandatory)]$Context, [Parameter(Mandatory)][string]$Name, [string]$Version = '', [ref]$NvencOk = $null)
+    # -NvencOk SIN tipo [ref] a proposito: en PowerShell 5.1 un parametro '[ref]$x = $null' REVIENTA
+    # si no se pasa ('se espera el tipo de referencia'), y Confirm-CvTool -lo que usa el worker para
+    # instalar la version de ffmpeg congelada en un job- no lo pasa: esa instalacion automatica
+    # fallaba SIEMPRE (medido). Se acepta un [ref] si viene y se ignora si no.
+    param([Parameter(Mandatory)]$Context, [Parameter(Mandatory)][string]$Name, [string]$Version = '', $NvencOk = $null)
     $tag  = "[{0}]" -f $Name.ToUpper()
     $app  = Get-CvAppDescriptor -Context $Context -Name $Name
     if ($null -eq $app) { Write-CvLog 'GLOBAL' ("{0} - [ERR] - No hay descriptor de descarga para '{1}'" -f $tag, $Name); return $false }
@@ -265,7 +314,9 @@ function Install-CvTool {
     elseif ($versions -and $versions.PSObject.Properties[$ver]) { $sha = "$($versions.$ver)" }
 
     if (-not (Test-Path $destDir)) { New-Item -ItemType Directory -Path $destDir -Force | Out-Null }
-    $tmp = Join-Path $env:TEMP ("cv_dl_{0}_{1}" -f $Name, $ver)
+    # Una carpeta POR PROCESO: con un nombre fijo, dos workers instalando lo mismo a la vez se
+    # borraban la descarga el uno al otro a mitad (cada instalacion empieza vaciandola).
+    $tmp = Join-Path $env:TEMP ("cv_dl_{0}_{1}_{2}" -f $Name, $ver, $PID)
     if (Test-Path $tmp) { Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue }
     New-Item -ItemType Directory -Path $tmp -Force | Out-Null
     # Tipo de descarga: 'zip'/'7z' (extraen) o 'file' (ejecutable directo). Por defecto 'zip'.
@@ -334,8 +385,13 @@ function Install-CvTool {
             $extracted = ($r.ExitCode -eq 0)
             if (-not $extracted) { Write-CvLog 'GLOBAL' (Get-CvText -Key 'tl.7z.mal' -Values @($tag, $r.ExitCode)) }
         } else {
-            try { Expand-Archive -Path $dl -DestinationPath $tmp -Force; $extracted = $true }
-            catch { Write-CvLog 'GLOBAL' (Get-CvText -Key 'tl.extra.no' -Values @($tag, $_.Exception.Message)) }
+            if (-not (Test-CvZipSafe -ZipPath $dl -Dest $tmp)) {
+                # Una entrada que se sale de la carpeta (zip slip) o un zip ilegible: no se extrae nada.
+                Write-CvLog 'GLOBAL' (Get-CvText -Key 'tl.zip.inseguro' -Values @($tag))
+            } else {
+                try { Expand-Archive -Path $dl -DestinationPath $tmp -Force; $extracted = $true }
+                catch { Write-CvLog 'GLOBAL' (Get-CvText -Key 'tl.extra.no' -Values @($tag, $_.Exception.Message)) }
+            }
         }
         if (-not $extracted) {
             Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
@@ -364,8 +420,8 @@ function Install-CvTool {
         # expone por -NvencOk (si se paso) para que setup pueda volver a la version anterior.
         if ($Name -eq 'ffmpeg') {
             $nvOk = Write-CvNvencReport -Context $Context -Version $ver -Tag $tag
-            if ($null -ne $NvencOk) { $NvencOk.Value = [bool]$nvOk }
-        } elseif ($null -ne $NvencOk) { $NvencOk.Value = $true }
+            if ($NvencOk -is [ref]) { $NvencOk.Value = [bool]$nvOk }
+        } elseif ($NvencOk -is [ref]) { $NvencOk.Value = $true }
     }
     return $ok
 }
@@ -524,6 +580,19 @@ function Get-CvGpuName {
     } catch {
         return ''
     }
+}
+
+function Test-CvNvencFallbackUseful {
+    <#
+        PURO. Tiene sentido probar versiones ANTERIORES de ffmpeg buscando una compatible con NVENC?
+        Solo si el equipo tiene una GPU NVIDIA (-GpuName, de Get-CvGpuName). Sin ella NVENC falla con
+        TODAS ('Cannot load nvcuda.dll'), y setup descargaba e instalaba cada version del catalogo
+        -cientos de MB- para acabar diciendo que ninguna valia. Sin saber que GPU hay (''), se prueba,
+        como antes: mejor una descarga de mas que dejar sin GPU a quien si la tiene.
+    #>
+    param([string]$GpuName = '')
+    if ("$GpuName".Trim() -eq '') { return $true }
+    return ("$GpuName" -match 'nvidia')
 }
 
 function Write-CvGpuCapsSummary {

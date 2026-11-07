@@ -141,6 +141,7 @@ function Show-CvPrepareWindow {
     $chkAuto.Name     = 'cvPrepAutoClose'
     $foot.Controls.Add($chkAuto, 1, 0)
     $tip = New-Object System.Windows.Forms.ToolTip
+    [void](Register-CvGuiDisposeWith -Control $form -Object $tip)
     $tip.SetToolTip($chkAuto, (Get-CvText -Key 'prep.autocerrar.tip'))
 
     $btnClose = New-Object System.Windows.Forms.Button

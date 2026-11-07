@@ -151,7 +151,7 @@ function Show-CvConfigWindow {
 
     $lblKey = New-Object System.Windows.Forms.Label
     $lblKey.Text      = (Get-CvText -Key 'cfg.elige')
-    $lblKey.Font      = New-Object System.Drawing.Font('Segoe UI', 10, [System.Drawing.FontStyle]::Bold)
+    $lblKey.Font      = Get-CvGuiFont -Size 10 -Style Bold
     $lblKey.Dock      = 'Fill'
     $lblKey.AutoSize  = $false
     $lblKey.AutoEllipsis = $true      # una ruta larga se recorta con '...' en vez de desbordar

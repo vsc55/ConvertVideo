@@ -49,16 +49,19 @@ Se usan operaciones literales porque los nombres suelen llevar **corchetes** (`[
 
 ## El lock (`Proceso\<nombre>.lock`)
 
-Reclamo atómico entre workers. Se crea un fichero con `FileMode.CreateNew`, que **falla si ya existe** (mutex de una sola operación):
+Reclamo atómico entre workers. Se crea un fichero con `FileMode.CreateNew`, que **falla si ya existe** (mutex de una sola operación), y se deja **abierto** mientras dura el trabajo:
 
 ```powershell
-$fs = [System.IO.File]::Open($lock, [FileMode]::CreateNew, [FileAccess]::Write, [FileShare]::None)
-# se escribe "PID=<pid>;HOST=<equipo>" y se cierra; si Open lanza, otro worker lo tiene
+$fs = [System.IO.File]::Open($lock, [FileMode]::CreateNew, [FileAccess]::ReadWrite, [FileShare]::Read)
+# se escribe "PID=<pid>;HOST=<equipo>" y NO se cierra hasta Exit-Lock (o hasta que el proceso muere)
 ```
 
 - Solo un worker gana el archivo; los demás siguen al siguiente.
-- Se libera siempre en el `finally` (`Exit-Lock` → `[IO.File]::Delete`), incluso si la codificación falla.
-- **Locks huérfanos**: en el lock se guarda `PID`+equipo. Si otro worker encuentra un lock cuyo proceso dueño **ya no existe** (mismo equipo), lo considera caducado (`Test-CvLockStale`) y lo roba. En otra máquina no se puede verificar, así que no se roba.
+- **Abierto sin permiso de borrado para nadie más**: mientras su dueño vive, Windows no deja borrarlo, lo intente quien lo intente. Por eso robar un lock caducado es seguro: antes, *¿caducado? → borrar → crear* dejaba que un segundo worker borrase el lock **recién creado** por el primero, y los dos codificaban el mismo archivo. Al morir el proceso, Windows cierra el fichero y ya se puede robar.
+- Se libera en el `finally` con `Exit-Lock`, que solo suelta el lock **de este proceso** (antes borraba sin mirar de quién era). Para quitar el de un worker muerto está `Remove-CvStaleLock` (*Liberar bloqueo* en la cola).
+- Tras coger el lock, el worker **vuelve a mirar** si el archivo sigue por hacer: otro worker puede haberlo terminado justo entre la comprobación y el reclamo, y leer su job (ya borrado) lo daba como error.
+- **Locks huérfanos**: en el lock se guarda `PID`+equipo. Si otro worker encuentra un lock cuyo proceso dueño **ya no existe** (mismo equipo), o cuyo PID lo tiene ahora **otro programa** que no es PowerShell (Windows reutiliza los PID), lo considera caducado (`Test-CvLockStale`) y lo roba. En otra máquina no se puede verificar, así que no se roba. Se lee compartido (`Read-CvTextFileShared`), para no impedir a su dueño borrarlo.
+- Los procesos que abre un worker (`ffmpeg`…) **mueren con él** (`Enable-CvKillChildrenOnExit`, un *Job Object* de Windows con `KILL_ON_JOB_CLOSE`): un Ctrl+C en la consola del worker no le llega a ffmpeg, que seguía escribiendo el `.part` cuando el siguiente worker ya había cogido el archivo.
 - Es literal-safe (compatible con nombres con corchetes).
 
 ## Ficheros de control de los workers

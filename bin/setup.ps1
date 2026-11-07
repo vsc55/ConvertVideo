@@ -195,15 +195,33 @@ function Invoke-InstallApp {
         return $false
     }
     Write-CvLog 'SETUP' (Get-CvText -Key 'cli.inst.reinst' -Values @($Name, $Version))
-    Remove-AppVersion -Name $Name -Version $Version
+    # La version que hubiera se APARTA, no se borra: si la descarga falla, vuelve a su sitio
+    # (Backup/Restore-CvSetupAppVersion). Si no se puede apartar -sus .exe en uso, hay workers
+    # codificando con ella-, no se toca nada.
+    $bak = Backup-CvSetupAppVersion -Context $ctx -Name $Name -Version $Version
+    if (-not [bool]$bak.Ok) {
+        Write-CvLog 'SETUP' (Get-CvText -Key 'cli.inst.enuso' -Values @($Name, $Version, $bak.Reason))
+        return $false
+    }
     $nvOk = $true
     $ok = Install-CvTool -Context $ctx -Name $Name -Version $Version -NvencOk ([ref]$nvOk)
-    if (-not $ok) { Write-CvLog 'SETUP' (Get-CvText -Key 'cli.inst.fallo' -Values @($Name, $Version)); return $false }
+    Restore-CvSetupAppVersion -Context $ctx -Name $Name -Version $Version -Backup "$($bak.Backup)" -Success ([bool]$ok)
+    if (-not $ok) {
+        Write-CvLog 'SETUP' (Get-CvText -Key 'cli.inst.fallo' -Values @($Name, $Version))
+        if ("$($bak.Backup)" -ne '') { Write-CvLog 'SETUP' (Get-CvText -Key 'cli.inst.devuelta' -Values @($Name, $Version)) }
+        return $false
+    }
 
     # FALLBACK NVENC (solo ffmpeg): si la version instalada NO es compatible con NVENC en este equipo,
     # se PRUEBAN las versiones ANTERIORES del catalogo (mas nueva -> mas antigua), instalando (descarga
     # + verifica) y comprobando NVENC cada una, hasta dar con la primera compatible; esa se fija como
     # predeterminada. Si ninguna es compatible, se avisa (perfil CPU o actualizar driver).
+    # ...pero solo con una NVIDIA en el equipo: sin ella NVENC falla con TODAS, y se descargaban
+    # todas las versiones del catalogo para nada (Test-CvNvencFallbackUseful).
+    if ($Name -eq 'ffmpeg' -and -not $nvOk -and -not (Test-CvNvencFallbackUseful -GpuName (Get-CvGpuName))) {
+        Write-CvLog 'SETUP' (Get-CvText -Key 'cli.inst.sinnvidia' -Values @($Name, $Version))
+        return $true
+    }
     if ($Name -eq 'ffmpeg' -and -not $nvOk) {
         $catalog = @(Get-CvSetupAppVersions -Context $ctx -Name $Name)
         $cands = @(Get-CvNvencFallbackCandidates -Failed $Version -Available $catalog)

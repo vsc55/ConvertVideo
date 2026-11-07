@@ -15,6 +15,30 @@
     ventana (una excepcion en un manejador tumba la aplicacion) o quien solo esta mirando el estado.
 #>
 
+function Move-CvFileOver {
+    <#
+        Pone -Source en el sitio de -Target, que puede existir ya, SIN que haya un momento en que no
+        este ninguno de los dos: si el destino existe se usa File.Replace (el ReplaceFile de Windows,
+        que cambia uno por otro de golpe) y si no, un Move normal. Lo usan el guardado atomico y el
+        nombre final de las salidas.
+
+        Antes se hacia 'borrar el destino y mover': si el Move fallaba (el antivirus, un lector), el
+        destino ya no estaba y, al limpiar, tampoco el nuevo -medio job, o la salida buena, perdidos-.
+        Ahora, si falla, el destino sigue intacto y -Source sigue donde estaba. Lanza si falla.
+        Los dos en el MISMO volumen (es un renombrado, no una copia).
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Source,
+        [Parameter(Mandatory)][string]$Target
+    )
+    if ([System.IO.File]::Exists($Target)) {
+        [System.IO.File]::Replace($Source, $Target, [NullString]::Value)
+    } else {
+        [System.IO.File]::Move($Source, $Target)
+    }
+    return $Target
+}
+
 function Save-CvTextFile {
     <#
         Escribe texto en UTF-8 SIN BOM. Con -Atomic pasa por un '.tmp' y renombra, para que otro
@@ -40,12 +64,13 @@ function Save-CvTextFile {
     $intentos = 4
     for ($i = 1; $i -le $intentos; $i++) {
         try {
-            if ([System.IO.File]::Exists($Path)) { [System.IO.File]::Delete($Path) }
-            [System.IO.File]::Move($tmp, $Path)
+            # Sin borrar antes el destino (Move-CvFileOver): si falla, el fichero de antes sigue entero.
+            [void](Move-CvFileOver -Source $tmp -Target $Path)
             return $Path
         } catch {
             if ($i -eq $intentos) {
-                try { [System.IO.File]::Delete($tmp) } catch { }   # no dejar el .tmp tirado
+                # El destino sigue como estaba: el .tmp sobra.
+                try { [System.IO.File]::Delete($tmp) } catch { }
                 throw
             }
             Start-Sleep -Milliseconds (15 * $i)

@@ -171,7 +171,10 @@ function Get-CvWorkerStates {
     param([Parameter(Mandatory)]$Context)
     $dir = $Context.Proceso
     if (-not (Test-Path -LiteralPath $dir)) { return @() }
-    $vivos = Get-CvLiveProcessIds
+    # PID -> nombre, en UNA consulta: vivo = su PID existe Y es un PowerShell. Solo con el PID, uno
+    # muerto cuyo numero le tocaba a otro programa volvia a contar como worker: ocupaba hueco en el
+    # maximo, dejaba 'Cancelar' encendido... y 'Cancelar' habria matado a ese otro programa.
+    $procesos = Get-CvProcessNames
     $out = @()
     foreach ($f in @(Get-ChildItem -LiteralPath $dir -Filter '*.worker.json' -File -ErrorAction SilentlyContinue)) {
         $stamp = "{0}|{1}" -f $f.LastWriteTimeUtc.Ticks, $f.Length
@@ -185,7 +188,11 @@ function Get-CvWorkerStates {
         }
         $wpid  = [int]$s.pid
         $mine  = ("$($s.host)" -eq $env:COMPUTERNAME)
-        $alive = if ($mine) { ($vivos.Count -eq 0) -or $vivos.Contains($wpid) } else { $true }
+        $alive = if ($mine) {
+            ($procesos.Count -eq 0) -or ($procesos.ContainsKey($wpid) -and (@('powershell', 'pwsh') -contains "$($procesos[$wpid])".ToLower()))
+        } else { $true }
+        $empezo = [datetime]::MinValue
+        [void][datetime]::TryParse("$($s.started)", [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::RoundtripKind, [ref]$empezo)
         $out += [pscustomobject]@{
             Pid     = $wpid
             Host    = "$($s.host)"
@@ -201,6 +208,9 @@ function Get-CvWorkerStates {
             Updated = $f.LastWriteTime
             Alive   = $alive
             Path    = $f.FullName
+            # Cuando arranco ese worker (lo escribe el, Start-CvWorkerState): para comprobar, antes de
+            # matarlo, que el proceso con ese PID es EL (Test-CvWorkerProcess).
+            Started = $empezo
         }
     }
     return @($out | Sort-Object Pid)
@@ -394,25 +404,63 @@ function Get-CvLogSection {
 
         Si el archivo aparece varias veces (reintentos), se coge la ULTIMA: es la que cuenta como
         quedo la cosa. Devuelve '' si no aparece.
+
+        El nombre se compara EXACTO y como texto, no como patron: con '-like', un archivo con
+        corchetes ('Peli [1080p]') no se encontraba nunca (los corchetes son un comodin), y 'Peli'
+        casaba con 'CODIFICANDO: Peli 2' y ensenaba el log del otro. -Markers son las marcas de
+        inicio en cada idioma (Get-CvLogSectionMarkers): un log escrito en ingles dice 'ENCODING:'.
     #>
     param(
         $Lines,
-        [Parameter(Mandatory)][string]$Name
+        [Parameter(Mandatory)][string]$Name,
+        [string[]]$Markers = @()
     )
     $ls = @($Lines)
     if ($ls.Count -eq 0 -or "$Name" -eq '') { return '' }
-    $marca = 'CODIFICANDO:'
+    $marcas = @(@($Markers) | Where-Object { "$_" -ne '' })
+    if ($marcas.Count -eq 0) { $marcas = @(Get-CvLogSectionMarkers) }
+    $esMarca = {
+        param([string]$Linea)
+        foreach ($m in $marcas) {
+            $k = $Linea.IndexOf($m, [System.StringComparison]::Ordinal)
+            if ($k -ge 0) { return $Linea.Substring($k + $m.Length).Trim() }
+        }
+        return $null
+    }
     $ini = -1
     for ($i = 0; $i -lt $ls.Count; $i++) {
-        $l = "$($ls[$i])"
-        if ($l -like ("*{0}*{1}*" -f $marca, $Name)) { $ini = $i }
+        $resto = & $esMarca "$($ls[$i])"
+        if ($null -ne $resto -and [string]::Equals($resto, "$Name".Trim(), [System.StringComparison]::Ordinal)) { $ini = $i }
     }
     if ($ini -lt 0) { return '' }
     $fin = $ls.Count - 1
     for ($i = $ini + 1; $i -lt $ls.Count; $i++) {
-        if ("$($ls[$i])" -like ("*{0}*" -f $marca)) { $fin = $i - 1; break }
+        if ($null -ne (& $esMarca "$($ls[$i])")) { $fin = $i - 1; break }
     }
     return (($ls[$ini..$fin]) -join [Environment]::NewLine)
+}
+
+function Get-CvLogSectionMarkers {
+    <#
+        Las marcas con las que empieza el tramo de cada archivo en el log ('CODIFICANDO:',
+        'ENCODING:'...): el texto de cv.codificando en CADA idioma, hasta el '{0}'. En todos, porque un
+        log lo escribio el idioma que hubiera entonces. Se calcula una vez por sesion (son los
+        ficheros de idioma enteros).
+    #>
+    if ($null -ne $script:CvLogMarks) { return $script:CvLogMarks }
+    $out = @()
+    try {
+        foreach ($lang in (Get-CvLangAvailable)) {
+            $t = "$((Get-CvLangResources -Lang $lang)['cv.codificando'])"
+            $k = $t.IndexOf('{0}')
+            if ($k -gt 0) { $t = $t.Substring(0, $k) }
+            $t = $t.Trim()
+            if ($t -ne '' -and $out -notcontains $t) { $out += $t }
+        }
+    } catch { }
+    if ($out.Count -eq 0) { $out = @('CODIFICANDO:') }
+    $script:CvLogMarks = $out
+    return $out
 }
 
 function Find-CvFileLog {
@@ -435,13 +483,16 @@ function Find-CvFileLog {
         $logs = @(Get-ChildItem -LiteralPath $Context.Logs -Filter 'Convert_*.log' -File -ErrorAction SilentlyContinue |
                   Sort-Object LastWriteTime -Descending | Select-Object -First $MaxLogs)
         foreach ($l in $logs) {
-            $txt = Get-CvSetupLogText -Path $l.FullName -MaxKb $MaxKb
-            if ("$txt" -eq '') { continue }
+            # EN BRUTO y descartando de un vistazo los logs que ni nombran el archivo: antes cada log
+            # se formateaba entero (Format-CvLogText, linea a linea) y luego se buscaba, y con veinte
+            # logs de 1 MB la ventana se quedaba segundos sin responder. Se formatea solo el tramo.
+            $txt = Get-CvSetupLogText -Path $l.FullName -MaxKb $MaxKb -Raw
+            if ("$txt" -eq '' -or "$txt".IndexOf("$Name", [System.StringComparison]::Ordinal) -lt 0) { continue }
             $sec = Get-CvLogSection -Lines ($txt -split "`r?`n") -Name $Name
             if ("$sec" -ne '') {
                 $r.Found = $true
                 $r.Path  = $l.FullName
-                $r.Text  = $sec
+                $r.Text  = Format-CvLogText -Text $sec
                 break
             }
         }
@@ -798,13 +849,22 @@ function Get-CvQueueStatus {
         [int]$DoneProbe = 0,
         [double]$DoneTolerance = 0.01,
         [int]$QualityProbe = 0,
-        [double]$QualityTolerance = 0.1
+        [double]$QualityTolerance = 0.1,
+        # Los workers (Get-CvWorkerStates) si quien llama ya los tiene: la ventana los lista igual en
+        # cada refresco, y listarlos dos veces son dos 'Get-Process' y dos listados de Proceso\.
+        $Workers = $null
     )
     $quedan = [Math]::Max(0, $DoneProbe)
     $quedanQ = [Math]::Max(0, $QualityProbe)
     $mirarBordes  = ([int]$Context.GuiQueueDoneProbe -gt 0)
     $mirarCalidad = ([int]$Context.GuiQueueQualityProbe -gt 0)
-    $workers = @(Get-CvWorkerStates -Context $Context | Where-Object { $_.Alive })
+    $todos   = $(if ($null -ne $Workers) { @($Workers) } else { @(Get-CvWorkerStates -Context $Context) })
+    $workers = @($todos | Where-Object { $_.Alive })
+    # Una sola consulta de procesos para todos los locks, y el texto de cada estado una vez (antes,
+    # un Get-Process por lock -~40 ms- y el catalogo de estados rehecho por cada fila).
+    $procesos = $null
+    $textoEstado = @{}
+    foreach ($e in @(Get-CvQueueStates)) { $textoEstado["$($e.Value)"] = "$($e.Text)" }
     # Las carpetas se listan UNA vez y se decide en memoria. Preguntando fichero a fichero
     # (Test-Path de la salida, del lock, del job...) eran ~90 consultas al disco por refresco y ~0,5 s;
     # los tres listados juntos cuestan menos de 60 ms. Con la ventana refrescando cada segundo -y el
@@ -831,7 +891,8 @@ function Get-CvQueueStatus {
         $lock   = Join-Path $Context.Proceso ("{0}.lock" -f $name)
         $lInfo  = $proceso[("{0}.lock" -f $name)]
         $locked = ($null -ne $lInfo)
-        $stale  = $locked -and (Test-CvLockStale $lock)
+        if ($locked -and $null -eq $procesos) { $procesos = Get-CvProcessNames }
+        $stale  = $locked -and (Test-CvLockStale $lock -Processes $procesos)
         $jInfo  = $proceso[("{0}.job.json" -f $name)]
         $hasJob = ($null -ne $jInfo)
         $w      = $workers | Where-Object { $_.File -eq $name -and $_.Status -eq 'working' } | Select-Object -First 1
@@ -917,7 +978,7 @@ function Get-CvQueueStatus {
             Stale     = $stale
             Done      = $done
             State     = $state
-            StateText = (Get-CvQueueStateText -State $state)
+            StateText = $(if ($textoEstado.ContainsKey("$state")) { $textoEstado["$state"] } else { "$state" })
             WorkerPid = $(if ($w) { [int]$w.Pid } else { 0 })
             Step      = $(if ($w) { "$($w.Step)" } else { '' })
             Percent   = $(if ($w) { [int]$w.Percent } elseif ($done) { 100 } else { -1 })
@@ -980,16 +1041,16 @@ function Test-CvConvertReady {
     if (-not (Test-CvToolSupported -Context $Context -Name 'ffmpeg')) {
         return [pscustomobject]@{
             Ok       = $false
-            Reason   = ("ffmpeg no tiene build para la plataforma de este equipo ({0})." -f $Context.Platform)
+            Reason   = (Get-CvText -Key 'ready.nobuild' -Values @($Context.Platform))
             Warnings = @()
         }
     }
     if (-not (Test-CvToolInstalled -Context $Context -Name 'ffmpeg' -Version $ver)) {
         $inst = @(Get-CvInstalledVersions -Context $Context -Name 'ffmpeg')
-        $hay  = if ($inst.Count -gt 0) { "instalada(s): {0}" -f ($inst -join ', ') } else { 'no hay ninguna instalada' }
+        $hay  = if ($inst.Count -gt 0) { (Get-CvText -Key 'ready.instaladas' -Values @(($inst -join ', '))) } else { (Get-CvText -Key 'ready.ninguna') }
         return [pscustomobject]@{
             Ok       = $false
-            Reason   = ("falta la version {0} de ffmpeg, que es la fijada en la configuracion ({1}).`n`nInstalala desde setup (setup-gui.cmd), o cambia downloads.ffmpeg.selected a una de las que ya tienes." -f $ver, $hay)
+            Reason   = (Get-CvText -Key 'ready.falta' -Values @($ver, $hay))
             Warnings = @()
         }
     }
@@ -998,14 +1059,14 @@ function Test-CvConvertReady {
     $warn = @()
     if ("$($Context.VolumeMethod)".ToLower() -eq 'aacgain' -and
         -not (Test-CvToolInstalled -Context $Context -Name 'aacgain' -Version "$($Context.AacGainVersion)")) {
-        $warn += ("falta aacgain {0} y el metodo de volumen configurado es 'aacgain': el ajuste de volumen se omitira." -f $Context.AacGainVersion)
+        $warn += (Get-CvText -Key 'ready.aacgain' -Values @($Context.AacGainVersion))
     }
     if ($Context.StripTags -and [string]::IsNullOrWhiteSpace("$($Context.MkvPropEditOverride)")) {
         $mk = Get-CvAppDescriptor -Context $Context -Name 'mkvtoolnix'
         $mkv = if ($mk) { "$($mk.selected)" } else { '' }
         if ($mkv -and (Test-CvToolSupported -Context $Context -Name 'mkvtoolnix') -and
             -not (Test-CvToolInstalled -Context $Context -Name 'mkvtoolnix' -Version $mkv)) {
-            $warn += ("falta mkvtoolnix {0} y la limpieza de etiquetas esta activada: el MKV final conservara las etiquetas DURATION (se descargara al codificar)." -f $mkv)
+            $warn += (Get-CvText -Key 'ready.mkv' -Values @($mkv))
         }
     }
     return [pscustomobject]@{
@@ -1113,15 +1174,54 @@ function Stop-CvConvertWorker {
         CPU. Lo que deje a medias -el bloqueo y los temporales- no se toca aqui: el bloqueo queda
         CADUCADO (su PID ya no existe) y el siguiente worker lo roba solo; los temporales se limpian
         desde setup. Devuelve $true si el proceso ya no esta.
+
+        -Started (cuando arranco el worker, de su estado) asegura que se mata AL WORKER y no a otro
+        proceso al que Windows le haya dado el mismo PID: si el de ahora no es un PowerShell, o arranco
+        DESPUES que el worker, no se toca (el worker ya no existe). -StatePath es su fichero de estado:
+        se borra si el worker ya no esta, para que la cola no lo siga contando.
     #>
-    param([Parameter(Mandatory)][int]$ProcessId)
+    param(
+        [Parameter(Mandatory)][int]$ProcessId,
+        [datetime]$Started = [datetime]::MinValue,
+        [string]$StatePath = ''
+    )
+    $quitarEstado = {
+        if ("$StatePath" -ne '') { try { [System.IO.File]::Delete($StatePath) } catch { } }
+    }
+    if (-not (Test-CvWorkerProcess -ProcessId $ProcessId -Started $Started)) {
+        & $quitarEstado
+        return $true
+    }
     try {
         foreach ($c in @(Get-CimInstance Win32_Process -Filter ("ParentProcessId={0}" -f $ProcessId) -ErrorAction SilentlyContinue)) {
             try { Stop-Process -Id ([int]$c.ProcessId) -Force -ErrorAction SilentlyContinue } catch {}
         }
         Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue
     } catch {}
-    return (-not (Test-CvProcessAlive -ProcessId $ProcessId))
+    $muerto = (-not (Test-CvProcessAlive -ProcessId $ProcessId))
+    if ($muerto) { & $quitarEstado }
+    return $muerto
+}
+
+function Test-CvWorkerProcess {
+    <#
+        $true si el proceso con ese PID es de verdad un worker: un PowerShell que arranco ANTES de que
+        el worker escribiera su estado (-Started; con un margen por el redondeo de las fechas). Sin
+        -Started, basta con que sea un PowerShell.
+    #>
+    param([int]$ProcessId, [datetime]$Started = [datetime]::MinValue)
+    if ($ProcessId -le 0) { return $false }
+    try {
+        $p = Get-Process -Id $ProcessId -ErrorAction Stop
+        if (@('powershell', 'pwsh') -notcontains "$($p.ProcessName)".ToLower()) { return $false }
+        if ($Started -ne [datetime]::MinValue) {
+            $arranque = $p.StartTime.ToUniversalTime()
+            if ($arranque -gt $Started.ToUniversalTime().AddSeconds(5)) { return $false }
+        }
+        return $true
+    } catch {
+        return $false
+    }
 }
 
 Export-ModuleMember -Function *

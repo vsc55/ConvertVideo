@@ -58,11 +58,14 @@ function Get-CvOnePassArgs {
         [string[]]$VolumeFilters = $null,
         # Subtitulos ya resueltos por el worker (con los rescatados extraidos a temporales, .File). Si no
         # se pasan, se usan los del spec (sin rescate). Permite que el worker haga la extraccion (I/O).
-        $Subtitles = $null
+        $Subtitles = $null,
+        # El spec de render YA resuelto por quien llama (el worker lo calcula igualmente). Sin el, se
+        # calcula aqui: calcularlo dos y tres veces por archivo repetia tambien sus lineas del log.
+        $Spec = $null
     )
     # Todas las DECISIONES (video/audio/subs/adjuntos/codecs) salen del spec de render (fuente unica,
     # Resolve-CvRenderSpec); aqui solo se EMITE el comando de una pasada a partir de el.
-    $spec = Resolve-CvRenderSpec -Context $Context -Prof $Prof -Job $Job -Info $Info
+    $spec = $(if ($null -ne $Spec) { $Spec } else { Resolve-CvRenderSpec -Context $Context -Prof $Prof -Job $Job -Info $Info })
 
     # ----- rama de VIDEO (crop -> scale; sin tonemap: la elegibilidad excluye HDR) -----
     $fc = @()
@@ -147,8 +150,11 @@ function Invoke-CvOnePass {
         [Parameter(Mandatory)][string]$File, [Parameter(Mandatory)]$Info, [Parameter(Mandatory)]$Job,
         [double]$Duration = 0,
         # Fps de SALIDA (Get-CvOutputFps): red de seguridad del progreso si ffmpeg no da out_time.
-        [double]$Fps = 0
+        [double]$Fps = 0,
+        # El spec de render ya resuelto por el worker (ver Get-CvOnePassArgs -Spec).
+        $Spec = $null
     )
+    if ($null -eq $Spec) { $Spec = Resolve-CvRenderSpec -Context $Context -Prof $Prof -Job $Job -Info $Info }
     $name = [System.IO.Path]::GetFileNameWithoutExtension($File)
     $out  = Get-OutputPath $Context $name
     $part = Get-CvPartialPath -Path $out
@@ -156,47 +162,49 @@ function Invoke-CvOnePass {
     # Subtitulos: rescatar los ilegibles (WEBVTT) a temporales con mkvextract ANTES del comando; se pasan
     # al emisor como inputs extra y ffmpeg los convierte a srt en la misma pasada. Fail-soft por pista.
     $sx   = Invoke-CvSubtitleExtract -Context $Context -File $File -Subtitles $Job.subtitles
-    $subs = @($sx.Subs)
+    # Los rescatados se borran PASE LO QUE PASE (finally): borrados solo tras ffmpeg, un fallo
+    # antes -al montar los argumentos- los dejaba para siempre en %TEMP%.
+    try {
+        $subs = @($sx.Subs)
 
-    # Volumen 'peak': una pasada de ANALISIS previa por pista (volumedetect) para calcular la ganancia
-    # ('volume=XdB'); el resto (video+audio+mux) sigue siendo UN solo comando. 'loudnorm' no mide (es
-    # dinamico en el propio filtergraph). Los VolumeFilters resueltos se pasan al emisor.
-    $codec  = "$($Prof.AudioCodec)".ToLower(); if (-not $codec) { $codec = 'aac' }
-    $method = (Resolve-CvVolumeMethod -Method $Context.VolumeMethod -Codec $codec).Method
-    $volFilters = $null
-    if ($method -eq 'peak') {
-        $spec   = Resolve-CvRenderSpec -Context $Context -Prof $Prof -Job $Job -Info $Info
-        $target = [double]$Context.PeakTarget
-        $volFilters = @()
-        foreach ($tr in $spec.Audio) {
-            $measure = @('-i',$File,'-map',("0:{0}" -f $tr.Index),'-vn','-sn','-map_chapters','-1')
-            if ($Context.TestLimit -gt 0) { $measure += @('-t',"$($Context.TestLimit)") }
-            # '' si no hay que subir nada: el emisor espera un filtro POR PISTA, en su orden.
-            $volFilters += (Measure-CvPeakGain -Context $Context -Tag 'UNA-PASADA' -InputArgs $measure -Target $target).Filter
+        # Volumen 'peak': una pasada de ANALISIS previa por pista (volumedetect) para calcular la ganancia
+        # ('volume=XdB'); el resto (video+audio+mux) sigue siendo UN solo comando. 'loudnorm' no mide (es
+        # dinamico en el propio filtergraph). Los VolumeFilters resueltos se pasan al emisor.
+        $codec  = "$($Prof.AudioCodec)".ToLower(); if (-not $codec) { $codec = 'aac' }
+        $method = (Resolve-CvVolumeMethod -Method $Context.VolumeMethod -Codec $codec).Method
+        $volFilters = $null
+        if ($method -eq 'peak') {
+            $spec   = $Spec
+            $target = [double]$Context.PeakTarget
+            # Todas las pistas en UNA lectura del archivo (Measure-CvPeakGains): antes, una pasada de
+            # ffmpeg -el audio entero- por pista. '' si no hay que subir nada: el emisor espera un
+            # filtro POR PISTA, en su orden.
+            $volFilters = @(Measure-CvPeakGains -Context $Context -Tag 'UNA-PASADA' -File $File `
+                -Indexes @($spec.Audio | ForEach-Object { [int]$_.Index }) -Target $target | ForEach-Object { "$($_.Filter)" })
         }
-    }
-    $ff = if ($null -ne $volFilters) {
-        Get-CvOnePassArgs -Context $Context -Prof $Prof -File $File -Info $Info -Job $Job -Out $part -VolumeFilters $volFilters -Subtitles $subs
-    } else {
-        Get-CvOnePassArgs -Context $Context -Prof $Prof -File $File -Info $Info -Job $Job -Out $part -Subtitles $subs
-    }
+        $ff = if ($null -ne $volFilters) {
+            Get-CvOnePassArgs -Context $Context -Prof $Prof -File $File -Info $Info -Job $Job -Out $part -VolumeFilters $volFilters -Subtitles $subs -Spec $Spec
+        } else {
+            Get-CvOnePassArgs -Context $Context -Prof $Prof -File $File -Info $Info -Job $Job -Out $part -Subtitles $subs -Spec $Spec
+        }
 
-    # Total del progreso: duracion (+ el mayor silencio de sincronia, que alarga la pista), acotado a -t.
-    $aTracks = @(Get-CvJobAudioTracks -Audio $Job.audio)
-    $maxSync = 0.0
-    foreach ($t in $aTracks) { if ([double]$t.Sync -gt $maxSync) { $maxSync = [double]$t.Sync } }
-    $total = [double]$Duration + $maxSync
-    if ($Context.TestLimit -gt 0) { $total = [math]::Min($total, [double]$Context.TestLimit) }
+        # Total del progreso: duracion (+ el mayor silencio de sincronia, que alarga la pista), acotado a -t.
+        $aTracks = @(Get-CvJobAudioTracks -Audio $Job.audio)
+        $maxSync = 0.0
+        foreach ($t in $aTracks) { if ([double]$t.Sync -gt $maxSync) { $maxSync = [double]$t.Sync } }
+        $total = [double]$Duration + $maxSync
+        if ($Context.TestLimit -gt 0) { $total = [math]::Min($total, [double]$Context.TestLimit) }
 
-    $global:CvLastToolError = $null   # el modo progreso lo rellena; se vuelca al log si ffmpeg falla
-    if ($Context.Progress -and -not $Context.Debug -and $total -gt 0) {
-        $code = Invoke-ToolProgress -Exe $Context.FFmpeg -Arguments $ff -Context $Context -Label (Get-CvText -Key 'op.pasada') -TotalSeconds $total -Fps $Fps -ShowQ
-    } else {
-        Start-CvStep $Context 'UNA-PASADA' (Get-CvText -Key 'op.codificando')
-        $code = Invoke-ToolShow -Exe $Context.FFmpeg -Arguments $ff -Context $Context
+        $global:CvLastToolError = $null   # el modo progreso lo rellena; se vuelca al log si ffmpeg falla
+        if ($Context.Progress -and -not $Context.Debug -and $total -gt 0) {
+            $code = Invoke-ToolProgress -Exe $Context.FFmpeg -Arguments $ff -Context $Context -Label (Get-CvText -Key 'op.pasada') -TotalSeconds $total -Fps $Fps -ShowQ
+        } else {
+            Start-CvStep $Context 'UNA-PASADA' (Get-CvText -Key 'op.codificando')
+            $code = Invoke-ToolShow -Exe $Context.FFmpeg -Arguments $ff -Context $Context
+        }
+    } finally {
+        foreach ($t in @($sx.Temps)) { if (Test-Path -LiteralPath $t) { Remove-Item -Force -LiteralPath $t -ErrorAction SilentlyContinue } }
     }
-    # Borrar los temporales de subtitulos rescatados (se hayan usado o no).
-    foreach ($t in @($sx.Temps)) { if (Test-Path -LiteralPath $t) { Remove-Item -Force -LiteralPath $t -ErrorAction SilentlyContinue } }
     $ok = (($code -eq 0) -and (Test-Path -LiteralPath $part) -and ((Get-Item -LiteralPath $part).Length -gt 0))
     if (-not $ok) {
         Stop-CvStep $Context 'UNA-PASADA' $false -FailMsg (Get-CvText -Key 'vd.run.codigo' -Values @($code))

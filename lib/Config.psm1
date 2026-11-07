@@ -271,6 +271,35 @@ function Get-CvDefaultDownmixCoeffs {
     }
 }
 
+function Get-CvConfigDefaultsShared {
+    <#
+        Los valores de FABRICA (Get-CvConfigDefaults) montados UNA vez por sesion y compartidos: para
+        quien solo los LEE. Get-CvConfigDefaults devuelve un arbol nuevo en cada llamada -y hay quien lo
+        modifica: la fusion de la config, el editor- y varios sitios la llamaban en bucle solo para
+        leer un valor: una vez por opcion del editor de config, cuatro veces por cada perfil de serie
+        (los parametros de New-CvProfile), en cada linea de separacion de la consola...
+
+        NO SE MODIFICA lo que devuelve: es el de todos. Quien lo vaya a tocar, Get-CvConfigDefaults.
+    #>
+    if ($null -eq $script:CvDefaultsShared) { $script:CvDefaultsShared = Get-CvConfigDefaults }
+    return $script:CvDefaultsShared
+}
+
+function Copy-CvConfigNode {
+    <# PURO. Copia PROFUNDA de un nodo del arbol de fabrica (secciones [ordered] y listas). #>
+    param($Node)
+    if ($Node -is [System.Collections.IDictionary]) {
+        $c = [ordered]@{}
+        foreach ($k in @($Node.Keys)) { $c[$k] = Copy-CvConfigNode -Node $Node[$k] }
+        return $c
+    }
+    if ($Node -is [array]) {
+        $out = @(foreach ($x in $Node) { , (Copy-CvConfigNode -Node $x) })
+        return ,$out
+    }
+    return $Node
+}
+
 function Get-CvConfigDefaults {
     <# Valores por defecto de config.json (fuente unica: los usa Get-CvConfig y el reset). #>
     $langs = @(
@@ -696,6 +725,10 @@ function Get-CvConfigDefaults {
             syncSeconds       = 0
             subtitleEditor    = 'start'
             subtitleEditorExe = ''
+            # Los subtitulos sacados a %TEMP% para VERLOS (cv_sub_*) los tiene abiertos el programa
+            # con el que se ven, asi que no se pueden borrar al momento: se borran los de mas de estas
+            # horas cada vez que se saca otro. 0 = no borrarlos nunca.
+            subtitleTempHours = 24
             player            = 'start'
             playerExe         = ''
         }
@@ -740,6 +773,10 @@ function Get-CvConfigDefaults {
             log             = $true
             workers         = 2
             retries         = 2
+            # Si un worker necesita instalar una herramienta que OTRO esta instalando ya, espera su
+            # turno como mucho estos segundos (descargar ffmpeg puede tardar). Pasado, ese archivo falla
+            # y se reintenta mas tarde, en vez de pisar la instalacion del otro.
+            installLockWaitSec = 1800
             progress        = $true
             promptTimeout   = [ordered]@{
                 default    = 0
@@ -907,6 +944,9 @@ function Get-CvConfigDefaults {
             # El BUSCADOR del editor de config filtra el arbol al dejar de escribir este rato (ms):
             # rehacer el arbol en cada tecla, con 200 claves, se notaria al teclear.
             configSearchDelayMs = 250
+            # Cada cuanto mira la ventana de HERRAMIENTAS si la instalacion que lanzo (en su consola)
+            # ha terminado, para recargar la lista sin quedarse bloqueada esperando (ms).
+            setupTaskPollMs    = 500
             # Cuando el editor del job se para a CONFIRMAR UN RECORTE (perfil con detectBorder 'true', o
             # un archivo que empieza por '_'), reproducir antes el ORIGINAL y luego CON EL RECORTE, como
             # hace la consola en ese mismo punto. Con $false, solo pregunta: los botones 'Ver original'
@@ -1132,6 +1172,7 @@ function Get-CvConfigHelp {
         'preview/playerExe' = (Get-CvText -Key 'cfg.help.preview.playerExe')
         'preview/subtitleEditor' = (Get-CvText -Key 'cfg.help.preview.subtitleEditor')
         'preview/subtitleEditorExe' = (Get-CvText -Key 'cfg.help.preview.subtitleEditorExe')
+        'preview/subtitleTempHours' = ((Get-CvConfigAdvancedMark) + (Get-CvText -Key 'cfg.help.preview.subtitleTempHours'))
 
         'encode/audio/volume' = (Get-CvText -Key 'cfg.help.encode.audio.volume')
         'encode/audio/volume/method' = (Get-CvText -Key 'cfg.help.encode.audio.volume.method' -Values @(((Get-CvVolumeMethodValues) -join ' | ')))
@@ -1156,6 +1197,7 @@ function Get-CvConfigHelp {
         'behavior/lockCloseButton' = (Get-CvText -Key 'cfg.help.behavior.lockCloseButton')
         'behavior/log' = (Get-CvText -Key 'cfg.help.behavior.log')
         'behavior/workers' = (Get-CvText -Key 'cfg.help.behavior.workers')
+        'behavior/installLockWaitSec' = ((Get-CvConfigAdvancedMark) + (Get-CvText -Key 'cfg.help.behavior.installLockWaitSec'))
         'behavior/retries' = (Get-CvText -Key 'cfg.help.behavior.retries')
         'console/asciiMarks' = (Get-CvText -Key 'cfg.help.console.asciiMarks')
         'behavior/progress' = (Get-CvText -Key 'cfg.help.behavior.progress')
@@ -1222,6 +1264,7 @@ function Get-CvConfigHelp {
         'gui/splashTimeoutSec' = ((Get-CvConfigAdvancedMark) + (Get-CvText -Key 'cfg.help.gui.splashTimeoutSec'))
         'gui/askConfigKey' = (Get-CvText -Key 'cfg.help.gui.askConfigKey')
         'gui/configSearchDelayMs' = ((Get-CvConfigAdvancedMark) + (Get-CvText -Key 'cfg.help.gui.configSearchDelayMs'))
+        'gui/setupTaskPollMs' = ((Get-CvConfigAdvancedMark) + (Get-CvText -Key 'cfg.help.gui.setupTaskPollMs'))
         'gui/previewCropOnAsk' = (Get-CvText -Key 'cfg.help.gui.previewCropOnAsk')
         'gui/focusSaveCropPct' = (Get-CvText -Key 'cfg.help.gui.focusSaveCropPct')
         'gui/prepareAutoClose' = (Get-CvText -Key 'cfg.help.gui.prepareAutoClose')
@@ -1275,6 +1318,18 @@ function Get-CvConfigPathKind {
     return ''
 }
 
+function Get-CvConfigHelpShared {
+    <#
+        El catalogo de ayuda (Get-CvConfigHelp) SIN copiarlo, para quien solo LEE una entrada: el
+        editor pregunta 'es avanzada' y 'que dice la ayuda' una vez por opcion, y copiar ~200 entradas
+        en cada pregunta era la mitad de lo que costaba. No se modifica lo que devuelve.
+    #>
+    # Solo se monta si no esta o es de otro idioma (Get-CvConfigHelp devuelve una COPIA: llamarla
+    # siempre 'por si acaso' era volver a copiar en cada pregunta).
+    if ($null -eq $script:CvConfigHelpCache -or "$($script:CvConfigHelpCache.Lang)" -ne "$(Get-CvLanguage)") { [void](Get-CvConfigHelp) }
+    return $script:CvConfigHelpCache.Map
+}
+
 function Get-CvHelpFor {
     <#
         Ayuda de una opcion por su ruta ('seccion/clave'); '' si no hay entrada. Quita el marcador de
@@ -1282,7 +1337,7 @@ function Get-CvHelpFor {
         editor, no parte del texto que se enseña.
     #>
     param([string]$Path)
-    $h = Get-CvConfigHelp
+    $h = Get-CvConfigHelpShared
     if (-not $h.ContainsKey($Path)) { return '' }
     $t = "$($h[$Path])"
     $m = Get-CvConfigAdvancedMark
@@ -1298,7 +1353,8 @@ function Get-CvConfigDefaultValue {
         clave nivel a nivel.
     #>
     param([string]$Path)
-    $node = Get-CvConfigDefaults
+    # El arbol compartido (solo se lee): esta se llama una vez por OPCION al montar el editor.
+    $node = Get-CvConfigDefaultsShared
     foreach ($seg in ($Path -split '/')) {
         if ($node -isnot [System.Collections.IDictionary] -or -not $node.Contains($seg)) { return $null }
         $node = $node[$seg]
@@ -1307,6 +1363,15 @@ function Get-CvConfigDefaultValue {
     # ejemplo, downloads/ffmpeg/versionArgs (['-version']) salia como la cadena '-version'. Eso hacia
     # que toda lista de 1 elemento pareciera distinta del default (Test-CvCfgIsDefault compara la
     # serializacion JSON). Para un escalar el comportamiento no cambia (la tuberia lo desenvuelve).
+    # Una lista o una seccion, COPIADAS: el arbol es el compartido (Get-CvConfigDefaultsShared), y
+    # quien la tocara -el editor la mete en la config al 'Volver al valor por defecto'- lo cambiaria
+    # para todos.
+    if ($node -is [System.Collections.IDictionary] -or $node -is [array]) {
+        # Asignada primero: Copy-CvConfigNode ya devuelve la lista con su coma, y ',(...)' encima la
+        # envolvia DOS veces (quien la leia recibia una lista dentro de otra).
+        $copia = Copy-CvConfigNode -Node $node
+        return ,$copia
+    }
     return ,$node
 }
 
@@ -1381,9 +1446,13 @@ function Get-CvConfig {
     )
     $cfg = Get-CvConfigDefaults
     $path = if ([string]::IsNullOrWhiteSpace($Path)) { Get-CvDefaultConfigPath -Root $Root } else { $Path }
-    if (Test-Path $path) {
+    # Leido en UTF-8 y con ruta LITERAL (Read-CvJsonFile), como lo escribe Save-CvConfigFile. Con
+    # 'Get-Content -Raw' PowerShell 5.1 lo leia en ANSI (el fichero no lleva BOM): 'D:\Videos' con
+    # tilde llegaba roto y el programa trabajaba en OTRA carpeta (medido); y una ruta con corchetes
+    # se tomaba por un comodin.
+    if (Test-Path -LiteralPath $path) {
         try {
-            $json = Get-Content -Raw -Path $path | ConvertFrom-Json
+            $json = Read-CvJsonFile -Path $path
             Merge-CvConfig -Default $cfg -Override $json
         } catch {
             Write-Host (Get-CvText -Key 'cf.malo' -Values @($_.Exception.Message)) -ForegroundColor Yellow
@@ -1425,6 +1494,16 @@ function Set-CvNodeVal($node, $key, $value) {
 
 function ConvertTo-CvJsonString([string]$s) {
     $e = $s.Replace('\','\\').Replace('"','\"').Replace("`r",'\r').Replace("`n",'\n').Replace("`t",'\t')
+    # Cualquier OTRO caracter de control (U+0000-U+001F: un salto de pagina o un caracter raro pegado
+    # al copiar una ruta) se escribe como \uXXXX. Tal cual, dejaba un JSON INVALIDO, y al leerlo el
+    # programa volvia en silencio a los valores de fabrica.
+    if ($e -match '[\x00-\x1F]') {
+        $sb = New-Object System.Text.StringBuilder
+        foreach ($ch in $e.ToCharArray()) {
+            if ([int]$ch -lt 32) { [void]$sb.AppendFormat('\u{0:x4}', [int]$ch) } else { [void]$sb.Append($ch) }
+        }
+        $e = $sb.ToString()
+    }
     return '"' + $e + '"'
 }
 function Format-CvNumber($n) {
@@ -1515,7 +1594,7 @@ function Test-CvConfigAdvanced {
         con una rama avanzada no baja por ella.
     #>
     param([string]$Path)
-    $h = Get-CvConfigHelp
+    $h = Get-CvConfigHelpShared
     if (-not $h.ContainsKey("$Path")) { return $false }
     return ("$($h["$Path"])").StartsWith((Get-CvConfigAdvancedMark))
 }
@@ -1535,6 +1614,14 @@ function Test-CvCfgIsDefault {
         Un valor presente cuyo default es $null (clave que no existe de fabrica) cuenta como NO default.
     #>
     param($Value, $Default)
+    # Atajo para lo mas comun -texto, si/no o entero, del MISMO tipo-: ahi comparar directamente da
+    # lo mismo que comparar su JSON (que es inyectivo para esos tipos) y cuesta casi nada. El editor
+    # lo pregunta una vez por opcion y serializar cada valor era ~1,6 ms por pregunta. Lo demas
+    # (decimales, listas, secciones, tipos distintos), por JSON como siempre.
+    if ($null -ne $Value -and $null -ne $Default -and $Value.GetType() -eq $Default.GetType()) {
+        if ($Value -is [string]) { return [string]::Equals($Value, $Default, [System.StringComparison]::Ordinal) }
+        if ($Value -is [bool] -or $Value -is [int] -or $Value -is [long]) { return ($Value -eq $Default) }
+    }
     return ((ConvertTo-CvJson $Value 0) -eq (ConvertTo-CvJson $Default 0))
 }
 
@@ -1604,10 +1691,12 @@ function Read-CvConfigFile {
 function Save-CvConfigFile {
     param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)]$Config)
     # El JSON lo monta el formateador propio (ConvertTo-CvJson, que respeta el orden y la sangria
-    # del fichero de configuracion); aqui solo se escribe. NO atomico: config.json no lo lee nadie
-    # mientras se guarda, y un .tmp suelto en la raiz del programa se veria raro.
+    # del fichero de configuracion); aqui solo se escribe. ATOMICO: si lo hay quien lo lee mientras
+    # se guarda -los workers que abre la cola lo cargan al arrancar, y la cola y setup lo reescriben
+    # (cache de la GPU, preferencias)-, y un worker que leia medio fichero se quedaba con los valores
+    # de fabrica sin decir nada.
     $json = (ConvertTo-CvJson -Node $Config -Indent 0) -replace "`n", "`r`n"
-    [void](Save-CvTextFile -Path $Path -Text ($json + "`r`n"))
+    [void](Save-CvTextFile -Path $Path -Text ($json + "`r`n") -Atomic)
 }
 
 function Set-CvConfigValue {
@@ -1627,7 +1716,10 @@ function Set-CvConfigValue {
         $Value
     )
     try {
-        $cfg = $(if (Test-Path -LiteralPath $Path) { Read-CvConfigFile -Path $Path } else { Get-CvConfigDefaults })
+        # Sin fichero se empieza de VACIO, no de los valores de fabrica: escribirlos todos para guardar
+        # una sola preferencia congelaba en el config cosas como la version de ffmpeg, y los cambios de
+        # fabrica de las versiones siguientes ya no llegaban.
+        $cfg = $(if (Test-Path -LiteralPath $Path) { Read-CvConfigFile -Path $Path } else { [pscustomobject]@{} })
         $partes = @("$Key" -split '/' | Where-Object { "$_" -ne '' })
         if ($partes.Count -eq 0) { return @{ Ok = $false; Error = 'clave vacia' } }
         # Get-CvChildNode CREA la seccion si falta, que es lo que hace falta aqui: un config minimo

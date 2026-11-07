@@ -111,14 +111,38 @@ function ConvertTo-CvLangMap {
     return $map
 }
 
+# Ficheros de idioma ya leidos, por ruta, con la huella del fichero (ver Get-CvLangResources).
+$script:CvLangFiles = @{}
+
 function Get-CvLangResources {
-    <# Los textos de un idioma, como tabla. Si no hay fichero, tabla vacia (no se revienta). #>
+    <#
+        Los textos de un idioma, como tabla. Si no hay fichero, tabla vacia (no se revienta).
+
+        Se lee y se parsea UNA vez por sesion (mientras el fichero no cambie): son ~100 KB y ~1.500
+        claves, y antes cada arranque los parseaba 4-6 veces -las preferencias, el lanzador, el
+        contexto (que mira el nombre de TODOS los idiomas) y la sesion-, tambien en cada worker. La
+        tabla es la de todos: se lee, no se modifica.
+    #>
     param(
         [Parameter(Mandatory)][string]$Lang,
         [string]$Dir = ''
     )
     $p = Join-Path (Get-CvLangDir -Dir $Dir) ("{0}.json" -f $Lang)
-    return (ConvertTo-CvLangMap -Json (Read-CvJsonFile -Path $p -Quiet))
+    $huella = ''
+    try {
+        $fi = New-Object System.IO.FileInfo($p)
+        if ($fi.Exists) { $huella = "{0}|{1}" -f $fi.Length, $fi.LastWriteTimeUtc.Ticks }
+    } catch { }
+    $hit = $script:CvLangFiles[$p]
+    if ($huella -ne '' -and $null -ne $hit -and "$($hit.Stamp)" -eq $huella) { return $hit.Map }
+    $map = ConvertTo-CvLangMap -Json (Read-CvJsonFile -Path $p -Quiet)
+    if ($huella -ne '') {
+        $script:CvLangFiles[$p] = @{
+            Stamp = $huella
+            Map   = $map
+        }
+    }
+    return $map
 }
 
 function Set-CvLanguage {

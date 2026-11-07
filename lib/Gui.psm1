@@ -32,9 +32,41 @@ function Initialize-CvGui {
 }
 
 function New-CvGuiFont {
-    <# Fuente monoespaciada para los paneles de salida (texto alineado en columnas). #>
+    <#
+        Fuente monoespaciada para los paneles de salida (texto alineado en columnas). UNA por tamano
+        para toda la sesion (Get-CvGuiFont): antes cada control estrenaba la suya y ninguna se liberaba.
+    #>
     param([int]$Size = 9)
-    New-Object System.Drawing.Font('Consolas', $Size)
+    return (Get-CvGuiFont -Family 'Consolas' -Size $Size)
+}
+
+function Get-CvGuiFont {
+    <#
+        Una fuente COMPARTIDA por familia, tamano y estilo: se crea la primera vez y se reutiliza. Las
+        fuentes no cambian (son inmutables) y WinForms no las libera al cerrar una ventana, asi que
+        crear una por control -una negrita por cada titulo de seccion de setup, una Consolas por panel-
+        las iba acumulando. No se hace Dispose de lo que devuelve: es de todos.
+    #>
+    param(
+        [string]$Family = 'Segoe UI',
+        [single]$Size = 9,
+        [System.Drawing.FontStyle]$Style = [System.Drawing.FontStyle]::Regular
+    )
+    if ($null -eq $script:CvGuiFonts) { $script:CvGuiFonts = @{} }
+    $k = "{0}|{1}|{2}" -f $Family, $Size, [int]$Style
+    if (-not $script:CvGuiFonts.ContainsKey($k)) { $script:CvGuiFonts[$k] = New-Object System.Drawing.Font($Family, $Size, $Style) }
+    return $script:CvGuiFonts[$k]
+}
+
+function Register-CvGuiDisposeWith {
+    <#
+        Libera -Object (una ayuda emergente, un temporizador...) cuando se destruye -Control (su
+        ventana o el control al que acompana). Una ToolTip suelta tiene su propia ventana nativa y se
+        quedaba viva hasta que pasara el recolector; cada dialogo abierto dejaba las suyas.
+    #>
+    param([Parameter(Mandatory)]$Control, [Parameter(Mandatory)]$Object)
+    try { $Control.Add_Disposed({ try { $Object.Dispose() } catch { } }.GetNewClosure()) } catch { }
+    return $Object
 }
 
 function Get-CvGuiLayoutSuffix {
@@ -546,8 +578,22 @@ function Get-CvGuiAppIconBytes {
 }
 
 function Get-CvGuiAppIcon {
-    <# El icono de la aplicacion listo para una ventana. Se monta UNA vez y se reparte. #>
+    <#
+        El icono de la aplicacion listo para una ventana. Se monta UNA vez y se reparte.
+
+        Se lee de icon.ico (la raiz) si esta: es el MISMO dibujo, ya hecho (lo genera
+        manual\generar-logo.ps1 con Get-CvGuiAppIconBytes, y un test comprueba que son identicos byte
+        a byte). Dibujarlo con GDI+ costaba ~0,7 s al abrir la primera ventana de cada proceso -casi
+        todo arrancar GDI+-; leer el fichero, nada. Sin el fichero, se dibuja como antes.
+    #>
     if ($null -ne $script:CvGuiAppIcon) { return $script:CvGuiAppIcon }
+    try {
+        $fich = Join-Path (Split-Path -Parent $PSScriptRoot) 'icon.ico'
+        if (Test-Path -LiteralPath $fich) {
+            $script:CvGuiAppIcon = New-Object System.Drawing.Icon $fich
+            return $script:CvGuiAppIcon
+        }
+    } catch { $script:CvGuiAppIcon = $null }
     try {
         $ms = New-Object System.IO.MemoryStream (, (Get-CvGuiAppIconBytes))
         $script:CvGuiAppIcon = New-Object System.Drawing.Icon $ms
@@ -581,6 +627,21 @@ function Get-CvGuiTrayFrameIcon {
     if ($null -eq $ico) { return (Get-CvGuiAppIcon) }
     $script:CvGuiTrayIcons[$k] = $ico
     return $ico
+}
+
+function Clear-CvGuiTrayFrameIcons {
+    <#
+        Libera los iconos de la animacion del area de notificacion (Get-CvGuiTrayFrameIcon). Se guardan
+        mientras la ventana vive -la animacion pasa por los mismos una y otra vez-; al cerrarla ya no
+        hacen falta, y cada uno es un icono de Windows. Devuelve cuantos libero.
+    #>
+    $n = 0
+    if ($null -eq $script:CvGuiTrayIcons) { return 0 }
+    foreach ($ico in @($script:CvGuiTrayIcons.Values)) {
+        try { $ico.Dispose(); $n++ } catch { }
+    }
+    $script:CvGuiTrayIcons = @{}
+    return $n
 }
 
 function Get-CvGuiTaskbarStates {
@@ -993,6 +1054,7 @@ function Show-CvGuiChoice {
         if ($o.PSObject.Properties['Hint'] -or ($o -is [System.Collections.IDictionary] -and $o.Contains('Hint'))) {
             $tt = New-Object System.Windows.Forms.ToolTip
             $tt.SetToolTip($b, "$($o.Hint)")
+            [void](Register-CvGuiDisposeWith -Control $b -Object $tt)
         }
         $val = "$($o.Value)"
         $b.Add_Click({ $pick.Value = $val; $f.Close() }.GetNewClosure())
@@ -1254,10 +1316,10 @@ function Set-CvGuiThemeControl {
                 # cosas, que es como lo hacen las aplicaciones oscuras de Windows) y se recuerda lo
                 # que habia para poder volver a claro.
                 if ($oscuro) {
-                    if ("$($Control.Tag)" -ne 'cv-grid-off' -and [bool]$Control.GridLines) { $Control.Tag = 'cv-grid-off' }
+                    if (-not (Test-CvGuiMark -Control $Control -Mark 'grid-off') -and [bool]$Control.GridLines) { Set-CvGuiMark -Control $Control -Mark 'grid-off' }
                     $Control.GridLines = $false
                 } else {
-                    if ("$($Control.Tag)" -eq 'cv-grid-off') { $Control.GridLines = $true }
+                    if (Test-CvGuiMark -Control $Control -Mark 'grid-off') { $Control.GridLines = $true }
                 }
                 # OJO: aqui NO se toca BorderStyle. Cambiarlo RECREA el control, y al recrearse se
                 # pierde el tema oscuro del explorador: la cabecera de columnas volvia a salir
@@ -1404,6 +1466,7 @@ function Set-CvGuiSplitGrip {
     if ("$Tooltip" -ne '') {
         $tip = New-Object System.Windows.Forms.ToolTip
         $tip.SetToolTip($Split, $Tooltip)
+        [void](Register-CvGuiDisposeWith -Control $Split -Object $tip)
     }
     return $Split
 }
@@ -1438,8 +1501,8 @@ function Set-CvGuiButtonDisabledPaint {
         'apagado' de la paleta, respetando la alineacion que tenga el boton.
     #>
     param([Parameter(Mandatory)]$Button)
-    if ("$($Button.AccessibleDescription)" -eq 'cv-btn-off') { return $Button }   # ya tiene el pintor
-    $Button.AccessibleDescription = 'cv-btn-off'
+    if (Test-CvGuiMark -Control $Button -Mark 'btn-off') { return $Button }   # ya tiene el pintor
+    Set-CvGuiMark -Control $Button -Mark 'btn-off'
     $Button.Add_Paint({
         param($s, $e)
         try {
@@ -1546,8 +1609,8 @@ function Set-CvGuiListDarkPaint {
         que se PINTA, no donde se puede pulsar.
     #>
     param([Parameter(Mandatory)]$List)
-    if ("$($List.AccessibleDescription)" -eq 'cv-list-dark') { $List.OwnerDraw = $true; return $List }
-    $List.AccessibleDescription = 'cv-list-dark'
+    if (Test-CvGuiMark -Control $List -Mark 'list-dark') { $List.OwnerDraw = $true; return $List }
+    Set-CvGuiMark -Control $List -Mark 'list-dark'
     $List.OwnerDraw = $true
 
     $List.Add_DrawColumnHeader({
@@ -1624,8 +1687,8 @@ function Set-CvGuiGroupBoxPaint {
         texto de la paleta.
     #>
     param([Parameter(Mandatory)]$Box)
-    if ("$($Box.AccessibleDescription)" -eq 'cv-box-dark') { return $Box }
-    $Box.AccessibleDescription = 'cv-box-dark'
+    if (Test-CvGuiMark -Control $Box -Mark 'box-dark') { return $Box }
+    Set-CvGuiMark -Control $Box -Mark 'box-dark'
     $Box.Add_Paint({
         param($s, $e)
         try {
@@ -1948,6 +2011,40 @@ function Set-CvGuiStartScreen {
     return $Form
 }
 
+# Marcas PROPIAS del tema por control (ver Test-CvGuiMark). Tabla debil: cuando el control se va,
+# su entrada tambien, sin tener que limpiar nada.
+$script:CvGuiMarks = New-Object 'System.Runtime.CompilerServices.ConditionalWeakTable[object,System.Collections.Hashtable]'
+
+function Get-CvGuiMarks {
+    <# Las marcas del tema de un control (se crean vacias la primera vez). #>
+    param([Parameter(Mandatory)]$Control)
+    $h = $null
+    if (-not $script:CvGuiMarks.TryGetValue($Control, [ref]$h)) {
+        $h = @{}
+        $script:CvGuiMarks.Add($Control, $h)
+    }
+    return $h
+}
+
+function Test-CvGuiMark {
+    <#
+        Si el tema ya le hizo algo a un control ('btn-off': ya tiene su pintor de apagado; 'list-dark',
+        'box-dark'; 'grid-off': se le quito la rejilla). Van en una tabla APARTE: antes iban en su
+        AccessibleDescription -donde tambien va el ROL de color ('cv-role:...')- y en su Tag -que las
+        ventanas usan para lo suyo-, asi que un boton o una lista con rol perdia su color, y ponerle
+        rol a uno ya pintado le enganchaba un segundo pintor.
+    #>
+    param([Parameter(Mandatory)]$Control, [Parameter(Mandatory)][string]$Mark)
+    return (Get-CvGuiMarks -Control $Control).ContainsKey($Mark)
+}
+
+function Set-CvGuiMark {
+    <# Pone (o quita, con -On $false) una marca del tema en un control (ver Test-CvGuiMark). #>
+    param([Parameter(Mandatory)]$Control, [Parameter(Mandatory)][string]$Mark, [bool]$On = $true)
+    $h = Get-CvGuiMarks -Control $Control
+    if ($On) { $h[$Mark] = $true } else { [void]$h.Remove($Mark) }
+}
+
 function Set-CvGuiTheme {
     <#
         Aplica el tema a una ventana ENTERA, justo antes de ensenarla: colores por control, barra de
@@ -2244,7 +2341,10 @@ function New-CvGuiProgressPanel {
         vale para los dos.
 
         Se maneja con Set-CvGuiProgressValue (0-100) o, con -Marquee, se mueve sola mientras se
-        analiza algo (es un temporizador propio: acuerdate de Stop-CvGuiProgress al cerrar).
+        analiza algo. Ese temporizador se para SOLO cuando la barra se esconde y se tira cuando la
+        barra se destruye (con su ventana): antes habia que acordarse de Stop-CvGuiProgress, nadie lo
+        hacia, y cada editor de jobs abierto dejaba uno vivo para siempre repintando 16 veces por
+        segundo una barra que ya no existia.
     #>
     param(
         [switch]$Marquee,
@@ -2290,6 +2390,22 @@ function New-CvGuiProgressPanel {
         }.GetNewClosure())
         $est = $pb.Tag
         $est.Timer = $t
+        # Escondida no se anima (se para el temporizador) y al volver a verse, sigue.
+        $pb.Add_VisibleChanged({
+            try {
+                $e2 = $pb.Tag
+                if ($null -eq $e2.Timer) { return }
+                if ($pb.Visible -and [bool]$e2.Marquee) { $e2.Timer.Start() } else { $e2.Timer.Stop() }
+            } catch { }
+        }.GetNewClosure())
+        # Con la ventana se va el temporizador: un Timer en marcha no lo recoge nadie (se queda
+        # enganchado a si mismo) y seguiria saltando para siempre.
+        $pb.Add_Disposed({
+            try {
+                $e2 = $pb.Tag
+                if ($null -ne $e2.Timer) { $e2.Timer.Stop(); $e2.Timer.Dispose(); $e2.Timer = $null }
+            } catch { }
+        }.GetNewClosure())
         $t.Start()
     }
     return $pb
@@ -2680,7 +2796,7 @@ function Show-CvTextWindow {
         $rtb.Dock       = 'Fill'
         $rtb.ReadOnly   = $true
         $rtb.WordWrap   = $false
-        $rtb.Font       = New-Object System.Drawing.Font('Consolas', 10)
+        $rtb.Font       = Get-CvGuiFont -Family 'Consolas' -Size 10
         $rtb.DetectUrls = $false
         $rtb.Text       = $Text
         $form.Controls.Add($rtb)

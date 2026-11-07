@@ -383,7 +383,7 @@ if ($needPrepare) {
             $copyWarn = Get-CvVideoCopyRemuxWarning -Path $f.FullName
             if ($copyWarn) { Write-CvLog 'VIDEO' (Get-CvText -Key 'cv.aviso' -Values @($copyWarn)) -Indent 3 }
         }
-        $aAsk   = Invoke-AudioAsk -Context $ctx -Prof $cfgProfile -Info $info
+        $aAsk   = Invoke-AudioAsk -Context $ctx -Prof $cfgProfile -Info $info -VideoIndex $(if ($null -ne $vAsk.Index) { [int]$vAsk.Index } else { -1 })
         $subManual = $false
         $subSel = Select-Subtitles -Context $ctx -Info $info -Manual ([ref]$subManual)
 
@@ -478,6 +478,11 @@ $results = [ordered]@{}
 $workerSw = [System.Diagnostics.Stopwatch]::StartNew()   # tiempo total del worker (para el resumen)
 $maxRetries = [int]$ctx.Retries; if ($maxRetries -lt 1) { $maxRetries = 1 }
 
+# Que ffmpeg muera con este worker (Ctrl+C, cerrar la consola, matarlo desde la cola): si no, seguia
+# escribiendo despues de que el worker soltara el lock, y el siguiente se ponia encima. Ver
+# Enable-CvKillChildrenOnExit.
+[void](Enable-CvKillChildrenOnExit)
+
 $didAny  = $true
 $stopped = $false   # parada ordenada pedida desde la ventana de la cola
 while ($didAny) {
@@ -498,6 +503,13 @@ while ($didAny) {
 
         # Reclamo atomico
         if (-not (Enter-Lock -Context $ctx -Name $name)) { continue }  # lo tiene otro worker
+        # Y se vuelve a mirar CON el lock en la mano: entre la comprobacion de arriba y el reclamo,
+        # otro worker puede haberlo TERMINADO (borra el job y suelta el lock), y entonces leer el job
+        # fallaba y un archivo hecho salia como error.
+        if ((Test-Path -LiteralPath $out) -or -not (Test-CvJob -Context $ctx -Name $name)) {
+            Exit-Lock -Context $ctx -Name $name
+            continue
+        }
         Set-CvWorkerFile -Context $ctx -File $name                     # estado para la ventana de la cola
         $sw = [System.Diagnostics.Stopwatch]::StartNew()
         try {
@@ -509,6 +521,11 @@ while ($didAny) {
 
             $job  = Read-CvJob -Context $ctx -Name $name
             $prof = $job.profile
+            # Los temporales que quedaran de un intento ANTERIOR de este archivo no valen: el pipeline
+            # los rehace siempre, y uno viejo se podia colar -el multiplex usa el video de Proceso\ si
+            # existe-, p. ej. tras volver a prepararlo con un perfil que copia el video: salia el video
+            # recodificado de antes en vez del original. Se borran ANTES de empezar.
+            Remove-CvTemps -Context $ctx -Name $name
 
             # Versiones de herramientas fijadas en el job (fallback a la del contexto).
             $ffVer = "$($job.ffmpegVersion)";  if ([string]::IsNullOrWhiteSpace($ffVer)) { $ffVer = $ctx.FFmpegVersion }
@@ -594,7 +611,7 @@ while ($didAny) {
             $onePass = Test-CvOnePassEligible -Context $jctx -Job $job -Prof $prof
             if ($onePass.Ok) {
                 Write-CvInfoStep $jctx 'WORKER' (Get-CvText -Key 'cv.1pass')
-                $ok = Invoke-CvOnePass -Context $jctx -Prof $prof -File $f.FullName -Info $info -Job $job -Duration (Get-MediaDuration $info) -Fps (Get-CvOutputFps -Context $jctx -Info $info)
+                $ok = Invoke-CvOnePass -Context $jctx -Prof $prof -File $f.FullName -Info $info -Job $job -Duration (Get-MediaDuration $info) -Fps (Get-CvOutputFps -Context $jctx -Info $info) -Spec $spec
                 if (-not $ok) { $failReason = (Get-CvText -Key 'cv.1pass.mal') }
             }
             else {
@@ -621,11 +638,19 @@ while ($didAny) {
             else {
                 # Recodificar CADA pista a su temporal (<name>_aN.*). pos 0 = predeterminada (va 1a).
                 $adur = Get-MediaDuration $info
+                # Volumen 'peak' con VARIAS pistas: el pico de todas en UNA lectura del archivo
+                # (Measure-CvPeakGains), en vez de una pasada entera por pista dentro de Invoke-AudioRun.
+                $picos = @()
+                $metodoVol = (Resolve-CvVolumeMethod -Method $jctx.VolumeMethod -Codec ("$($prof.AudioCodec)".ToLower())).Method
+                if ($metodoVol -eq 'peak' -and $spec.Audio.Count -gt 1) {
+                    $picos = @(Measure-CvPeakGains -Context $jctx -Tag 'AUDIO' -File $f.FullName -Indexes @($spec.Audio | ForEach-Object { [int]$_.Index }) -Target ([double]$jctx.PeakTarget))
+                }
                 for ($ti = 0; $ti -lt $spec.Audio.Count; $ti++) {
                     $t = $spec.Audio[$ti]
                     if ($spec.Audio.Count -gt 1) { Write-CvInfoStep $jctx 'AUDIO' (Get-CvText -Key 'cv.pista' -Values @(($ti + 1), $spec.Audio.Count, $t.Lang, $(if ($t.Default) { (Get-CvText -Key 'cv.pista.def') } else { '' }))) }
                     # Canales de origen (para que audioChannels no haga upmix: es un maximo) ya resueltos en el spec.
-                    $outA = Invoke-AudioRun -Context $jctx -Prof $prof -File $f.FullName -Sync ([double]$t.Sync) -Index ([int]$t.Index) -Is51 ([bool]$t.Is51) -Duration $adur -SourceChannels ([int]$t.SourceChannels) -Pos $ti
+                    $outA = Invoke-AudioRun -Context $jctx -Prof $prof -File $f.FullName -Sync ([double]$t.Sync) -Index ([int]$t.Index) -Is51 ([bool]$t.Is51) -Duration $adur -SourceChannels ([int]$t.SourceChannels) -Pos $ti `
+                        -PeakGain $(if ($ti -lt $picos.Count) { $picos[$ti] } else { $null })
                     if (-not $outA) { $audioOk = $false; break }
                     $audioTracks += [pscustomobject]@{
                         Source  = 'temp'
@@ -733,7 +758,8 @@ while ($didAny) {
                 # pasada extra de ffmpeg (fuera del tiempo de conversion de arriba); fail-soft.
                 if ($ctx.QualityCheck -ne 'off' -and -not $job.video.skip -and -not $vOriginal) {
                     # Measure-CvQuality muestra su propia linea de progreso en vivo (Invoke-ToolProgress).
-                    $qScore = Measure-CvQuality -Context $jctx -Source $f.FullName -Output $out -Metric $ctx.QualityCheck
+                    $qScore = Measure-CvQuality -Context $jctx -Source $f.FullName -Output $out -Metric $ctx.QualityCheck `
+                        -Crop "$($job.video.crop)" -VideoIndex $(if ($null -ne $job.video.index) { [int]$job.video.index } else { -1 })
                     if ($null -ne $qScore) {
                         $qTxt = if ($ctx.QualityCheck -eq 'vmaf') { "{0} / 100" -f (Format-CvNumber $qScore) } else { "{0}  (0-1, 1 = identico)" -f (Format-CvNumber $qScore) }
                         Write-CvLog 'WORKER' (Get-CvText -Key 'cv.qc' -Values @($ctx.QualityCheck.ToUpper(), $qTxt))
@@ -774,7 +800,7 @@ while ($didAny) {
             $emsg = "$($_.Exception.Message)"
             $results[$name] = @{
                 Status   = 'ERROR'
-                Reason   = ("error inesperado: {0}" -f $emsg)
+                Reason   = (Get-CvText -Key 'cv.inesp.motivo' -Values @($emsg))
                 Attempts = $n
                 Elapsed  = $null
             }
@@ -785,6 +811,13 @@ while ($didAny) {
             }
         }
         finally {
+            # Un intento que acaba MAL deja temporales (el video codificado, el audio... varios GB) que
+            # no sirven: el siguiente intento los rehace. Antes se quedaban, y si el archivo se
+            # abandonaba tras agotar los reintentos, para siempre. Con 'keep_temp' (depurar) se respetan.
+            $rFin = $results[$name]
+            if ($ctx.CleanTemps -and -not ($rFin -and $rFin.Status -eq 'OK')) {
+                try { Remove-CvTemps -Context $ctx -Name $name } catch { }
+            }
             Exit-Lock -Context $ctx -Name $name
             # Resultado de este archivo para la ventana de la cola: el MISMO que ira al resumen final.
             $r = $results[$name]

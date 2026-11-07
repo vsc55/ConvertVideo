@@ -591,6 +591,9 @@ foreach ($par in @(
 }
 # En la barra de tareas, solo con el icono del programa: sin el, se queda fuera (no con el de WinForms).
 Assert-True 'Arranque: el icono de la app existe' (Test-Path -LiteralPath (Join-Path $Root 'icon.ico'))
+# Las ventanas lo leen de ahi en vez de dibujarlo (mas rapido): tiene que ser EL MISMO dibujo. Si se
+# cambia el dibujo (New-CvGuiAppBitmap), hay que regenerarlo con manual\generar-logo.ps1.
+Assert-Eq   'Icono: icon.ico es el dibujo de New-CvGuiAppBitmap' ([Convert]::ToBase64String((Get-CvGuiAppIconBytes))) ([Convert]::ToBase64String([System.IO.File]::ReadAllBytes((Join-Path $Root 'icon.ico'))))
 $splOsc = Start-CvSplashWindow -Title 'x' -Text 'x' -TimeoutSec 30 -Dark $true -IconPath (Join-Path $Root 'icon.ico')
 if ($null -ne $splOsc) {
     $espera = [Diagnostics.Stopwatch]::StartNew()
@@ -749,6 +752,15 @@ Assert-Eq   'Tramo: sin lineas'           '' (Get-CvLogSection -Lines @() -Name 
 # Con reintentos manda la ULTIMA vez que se intento (es como quedo la cosa).
 $logRetry = @('[WORKER] CODIFICANDO: X', '   intento 1', '[WORKER] CODIFICANDO: X', '   intento 2')
 Assert-True 'Tramo: con reintentos, el ultimo' ((Get-CvLogSection -Lines $logRetry -Name 'X') -match 'intento 2')
+# El nombre, EXACTO y como texto: los corchetes no son un comodin, y 'Peli' no es 'Peli 2'.
+$logRaro = @('[WORKER] CODIFICANDO: Peli 2', '   de la dos', '[WORKER] CODIFICANDO: Peli [1080p]', '   de la de corchetes', '[WORKER] CODIFICANDO: Peli', '   de la uno')
+Assert-True 'Tramo: con corchetes se encuentra'   ((Get-CvLogSection -Lines $logRaro -Name 'Peli [1080p]') -match 'de la de corchetes')
+Assert-True 'Tramo: Peli no es Peli 2'            ((Get-CvLogSection -Lines $logRaro -Name 'Peli') -match 'de la uno')
+Assert-True 'Tramo: y Peli 2 es Peli 2'           ((Get-CvLogSection -Lines $logRaro -Name 'Peli 2') -match 'de la dos')
+# Un log escrito en INGLES (otra sesion) tambien se trocea: las marcas salen de cada idioma.
+Assert-True 'Tramo: marcas de los dos idiomas'    ((@(Get-CvLogSectionMarkers) -contains 'CODIFICANDO:') -and (@(Get-CvLogSectionMarkers) -contains 'ENCODING:'))
+$logEn = @('[WORKER] ENCODING: A', '   la a', '[WORKER] ENCODING: B', '   la b')
+Assert-True 'Tramo: log en ingles'                ((Get-CvLogSection -Lines $logEn -Name 'A') -match 'la a' -and -not ((Get-CvLogSection -Lines $logEn -Name 'A') -match 'la b'))
 
 # Aviso al cerrar con workers vivos: el catalogo de salidas y su texto (puros).
 $clo = @(Get-CvQueueCloseActions)
@@ -1096,10 +1108,17 @@ if (-not $sta) {
             # Esc con 'Parar' APAGADO: no hace nada y, sobre todo, NO pregunta -si preguntara,
             # esta bateria se quedaria colgada esperando un clic en el dialogo-. Se APAGA a mano
             # para que el caso no dependa de si en ese momento habia workers de mentira.
+            # SIN DoEvents entre apagarlo y mirarlo: con el, a veces saltaba el temporizador de la
+            # ventana, el refresco volvia a ENCENDER 'Parar' (hay un worker vivo de mentira) y la
+            # prueba fallaba sin que Esc hubiera hecho nada (era intermitente). Y lo que se mira es lo
+            # que importa: que Esc NO ha pedido la parada.
             $bStop = $f.Controls.Find('cvStop', $true)[0]
             $bStop.Enabled = $false
-            & $pulsa ([System.Windows.Forms.Keys]::Escape)
-            $script:ataStopOff = (-not $bStop.Enabled)
+            $kaEsc = New-Object object[] 1
+            $kaEsc[0] = (New-Object System.Windows.Forms.KeyEventArgs([System.Windows.Forms.Keys]::Escape)).psobject.BaseObject
+            [void]$onKeyForm.Invoke($f, $kaEsc)
+            $script:ataStopOff = (-not $bStop.Enabled) -and -not (Test-CvWorkerStop -Context $ctx)
+            [System.Windows.Forms.Application]::DoEvents()
             $script:ataVivo = (-not $f.IsDisposed)
             # Doble bufer: sin el, el refresco de cada segundo hace parpadear la lista. Se comprueba
             # la propiedad de verdad (es protegida, se lee por reflexion) y no solo que se llamara.

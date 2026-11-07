@@ -218,47 +218,51 @@ function Invoke-Multiplex {
     # marcados 'Rescue' (WEBVTT) se extraen con mkvextract a temporales ANTES del comando; se anaden como
     # inputs extra y ffmpeg los convierte a srt. Fail-soft por pista. Se borran al terminar ($sx.Temps).
     $sx      = Invoke-CvSubtitleExtract -Context $Context -File $File -Subtitles @($Subtitles | Where-Object { $_ })
-    $subs    = @($sx.Subs)
-    $hasSubs = $subs.Count -gt 0
-    # Adjuntos del original a conservar (fuentes/caratulas segun config; por defecto ninguno).
-    $keepAtt = @(Select-Attachments -Context $Context -Info $Info)
+    # Los rescatados se borran PASE LO QUE PASE (finally): borrados solo tras ffmpeg, un fallo
+    # antes -al montar los argumentos- los dejaba para siempre en %TEMP%.
+    try {
+        $subs    = @($sx.Subs)
+        $hasSubs = $subs.Count -gt 0
+        # Adjuntos del original a conservar (fuentes/caratulas segun config; por defecto ninguno).
+        $keepAtt = @(Select-Attachments -Context $Context -Info $Info)
 
-    # El original ($File) hace falta como input si aporta subtitulos/adjuntos, si el video se recodifico
-    # (el intermedio se creo con -map_chapters -1, asi que los CAPITULOS se toman del original), o si hay
-    # audio en modo COPIA (se toma del original) o el copy clasico 0:a:0. En copy el video ya es el
-    # original (input 0). Los audios recodificados van como inputs 1..M (uno por pista).
-    $isEncode = (Test-Path -LiteralPath $vTmp)
-    $needCopyAudio = ($copyAudio.Count -gt 0) -or $legacyCopy
-    $needOrig = $hasSubs -or ($keepAtt.Count -gt 0) -or $isEncode -or $needCopyAudio
-    # Indices de input (original / fuente de capitulos): Resolve-CvMuxInputIndex.
-    $mi = Resolve-CvMuxInputIndex -TempAudioCount $tempAudio.Count -IsEncode $isEncode
-    # mapeo video: encode -> '0:v:0'; copy -> pista elegida por indice absoluto (o '0:v:0' si desconocido).
-    $vmap = if ($isEncode -or ($VideoIndex -lt 0)) { '0:v:0' } else { "0:$VideoIndex" }
+        # El original ($File) hace falta como input si aporta subtitulos/adjuntos, si el video se recodifico
+        # (el intermedio se creo con -map_chapters -1, asi que los CAPITULOS se toman del original), o si hay
+        # audio en modo COPIA (se toma del original) o el copy clasico 0:a:0. En copy el video ya es el
+        # original (input 0). Los audios recodificados van como inputs 1..M (uno por pista).
+        $isEncode = (Test-Path -LiteralPath $vTmp)
+        $needCopyAudio = ($copyAudio.Count -gt 0) -or $legacyCopy
+        $needOrig = $hasSubs -or ($keepAtt.Count -gt 0) -or $isEncode -or $needCopyAudio
+        # Indices de input (original / fuente de capitulos): Resolve-CvMuxInputIndex.
+        $mi = Resolve-CvMuxInputIndex -TempAudioCount $tempAudio.Count -IsEncode $isEncode
+        # mapeo video: encode -> '0:v:0'; copy -> pista elegida por indice absoluto (o '0:v:0' si desconocido).
+        $vmap = if ($isEncode -or ($VideoIndex -lt 0)) { '0:v:0' } else { "0:$VideoIndex" }
 
-    $plan = [pscustomobject]@{
-        File       = $File
-        Out        = $part
-        VideoSrc   = $videoSrc
-        Vmap       = $vmap
-        TempAudio  = $tempAudio
-        CopyAudio  = $copyAudio
-        LegacyCopy = $legacyCopy
-        Subs       = $subs
-        KeepAtt    = $keepAtt
-        OrigInput  = $mi.Orig
-        ChapInput  = $mi.Chap
-        NeedOrig   = $needOrig
-        HasSubs    = $hasSubs
-        # ¿El original tiene audio? (para el copy clásico: una fuente MUDA da salida solo-vídeo).
-        HasOrigAudio = (@(Get-AudioStreams -Info $Info).Count -gt 0)
-        VideoFromSource = [bool]$VideoFromSource
+        $plan = [pscustomobject]@{
+            File       = $File
+            Out        = $part
+            VideoSrc   = $videoSrc
+            Vmap       = $vmap
+            TempAudio  = $tempAudio
+            CopyAudio  = $copyAudio
+            LegacyCopy = $legacyCopy
+            Subs       = $subs
+            KeepAtt    = $keepAtt
+            OrigInput  = $mi.Orig
+            ChapInput  = $mi.Chap
+            NeedOrig   = $needOrig
+            HasSubs    = $hasSubs
+            # ¿El original tiene audio? (para el copy clásico: una fuente MUDA da salida solo-vídeo).
+            HasOrigAudio = (@(Get-AudioStreams -Info $Info).Count -gt 0)
+            VideoFromSource = [bool]$VideoFromSource
+        }
+        $ffArgs = Get-CvMultiplexArgs -Context $Context -Info $Info -Plan $plan
+
+        Start-CvStep $Context 'MULTIPLEX' (Get-CvText -Key 'mx.uniendo')
+        $code = Invoke-ToolShow -Exe $Context.FFmpeg -Arguments $ffArgs -Context $Context
+    } finally {
+        foreach ($t in @($sx.Temps)) { if (Test-Path -LiteralPath $t) { Remove-Item -Force -LiteralPath $t -ErrorAction SilentlyContinue } }
     }
-    $ffArgs = Get-CvMultiplexArgs -Context $Context -Info $Info -Plan $plan
-
-    Start-CvStep $Context 'MULTIPLEX' (Get-CvText -Key 'mx.uniendo')
-    $code = Invoke-ToolShow -Exe $Context.FFmpeg -Arguments $ffArgs -Context $Context
-    # Borrar los temporales de subtitulos rescatados (se hayan usado o no).
-    foreach ($t in @($sx.Temps)) { if (Test-Path -LiteralPath $t) { Remove-Item -Force -LiteralPath $t -ErrorAction SilentlyContinue } }
     $ok = (($code -eq 0) -and (Test-Path -LiteralPath $part) -and ((Get-Item -LiteralPath $part).Length -gt 0))
     $mbTxt = if ($ok) { Get-CvText -Key 'mx.mb' -Values @((Format-CvMb -Bytes (Get-Item -LiteralPath $part).Length)) } else { '' }
     Stop-CvStep $Context 'MULTIPLEX' $ok -Extra $mbTxt -OkMsg (Get-CvText -Key 'mx.ok' -Values @((Split-Path $out -Leaf), $mbTxt)) -FailMsg (Get-CvText -Key 'vd.run.codigo' -Values @($code))
@@ -360,9 +364,11 @@ function Complete-CvOutput {
     )
     Remove-CvMkvTags -Context $Context -File $Part
     if ($VideoMark) { Set-CvMkvVideoMark -Context $Context -File $Part }
-    # Misma carpeta: es un renombrado, no una copia. -Force por si queda una salida vieja (TEST_,
-    # o rehacer a mano un archivo ya convertido).
-    Move-Item -LiteralPath $Part -Destination $Final -Force -ErrorAction Stop
+    # Misma carpeta: es un renombrado, no una copia. Si ya hay una salida (TEST_, rehacer a mano un
+    # archivo convertido, o el cambio de video por el original) se SUSTITUYE de golpe
+    # (Move-CvFileOver): con 'Move-Item -Force' se borraba primero la que habia, y si el renombrado
+    # fallaba -el antivirus mirando el .part- no quedaba ninguna de las dos.
+    [void](Move-CvFileOver -Source $Part -Target $Final)
 }
 
 function Set-CvMkvVideoMark {

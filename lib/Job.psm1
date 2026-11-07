@@ -165,20 +165,52 @@ function Remove-CvTemps {
 }
 
 
+# Bloqueos que tiene ESTE proceso, con su fichero ABIERTO (ver Enter-Lock).
+$script:CvLockHandles = @{}
+
 function Test-CvLockStale {
     <#
-        Un lock esta caducado si su worker dueño ya no existe. En el lock se guarda
+        Un lock esta caducado si su worker dueno ya no existe. En el lock se guarda
         "PID=<pid>;HOST=<equipo>". Solo se considera caducado si es de ESTE equipo y el
         proceso con ese PID ya no corre (en otra maquina no se puede verificar -> no se roba).
+
+        Tambien cuenta como caducado si ese PID existe pero NO es un PowerShell: Windows reutiliza
+        los PID, y un worker muerto cuyo numero le ha tocado a otro programa dejaba su archivo
+        bloqueado para siempre. Robarlo por error no es peligroso: el dueno de verdad tiene el
+        fichero ABIERTO y Windows no deja borrarlo (ver Enter-Lock).
+
+        Se lee compartido (Read-CvTextFileShared): leerlo con ReadAllText impedia al worker borrar su
+        lock en ese mismo instante.
+
+        -Processes (PID -> nombre, de Get-CvProcessNames) evita preguntar a Windows por cada lock: con
+        'Get-Process -Id' eran ~40 ms POR LOCK en cada refresco de la cola.
     #>
-    param([string]$LockPath)
+    param([string]$LockPath, $Processes = $null)
     if (-not (Test-Path -LiteralPath $LockPath)) { return $false }
-    try { $txt = [System.IO.File]::ReadAllText($LockPath) } catch { return $false }
+    try { $txt = Read-CvTextFileShared -Path $LockPath } catch { return $false }
     $m = [regex]::Match("$txt", 'PID=(\d+);HOST=(.+)')
     if (-not $m.Success) { return $false }
     if ($m.Groups[2].Value.Trim() -ne $env:COMPUTERNAME) { return $false }
     $lockPid = [int]$m.Groups[1].Value
-    return (-not (Test-CvProcessAlive -ProcessId $lockPid))
+    if ($null -ne $Processes) {
+        if (-not $Processes.ContainsKey($lockPid)) { return $true }
+        return (@('powershell', 'pwsh') -notcontains "$($Processes[$lockPid])".ToLower())
+    }
+    if (-not (Test-CvProcessAlive -ProcessId $lockPid)) { return $true }
+    try {
+        $p = Get-Process -Id $lockPid -ErrorAction Stop
+        return (@('powershell', 'pwsh') -notcontains "$($p.ProcessName)".ToLower())
+    } catch { return $true }
+}
+
+function Get-CvProcessNames {
+    <#
+        Los procesos de este equipo AHORA, como tabla PID -> nombre, en una sola consulta. Para mirar
+        muchos locks de golpe (Test-CvLockStale -Processes) sin un Get-Process por cada uno.
+    #>
+    $t = @{}
+    try { foreach ($p in @(Get-Process -ErrorAction SilentlyContinue)) { $t[[int]$p.Id] = "$($p.ProcessName)" } } catch { }
+    return $t
 }
 
 function Enter-Lock {
@@ -186,30 +218,66 @@ function Enter-Lock {
         Reclama el archivo creando un fichero-lock con modo CreateNew (atomico: falla si ya
         existe). Guarda PID+equipo para poder detectar y robar locks caducados (worker
         muerto). Ruta literal (los nombres pueden llevar corchetes). Devuelve $true si lo consigue.
+
+        El fichero se queda ABIERTO mientras dura el trabajo (hasta Exit-Lock, o hasta que el proceso
+        muere y Windows lo cierra), y abierto SIN permiso de borrado para los demas. Asi robar un lock
+        es seguro aunque dos workers lo intenten a la vez: antes, 'esta caducado -> borrar -> crear'
+        dejaba que el segundo borrase el lock RECIEN creado por el primero, y los dos codificaban el
+        mismo archivo. Ahora el borrado de un lock con dueno vivo FALLA, lo diga quien lo diga.
     #>
     param([Parameter(Mandatory)]$Context, [Parameter(Mandatory)][string]$Name)
     $lock = Join-Path $Context.Proceso ("{0}.lock" -f $Name)
-    # Si hay un lock de un worker que ya no existe, robarlo.
+    # Si hay un lock de un worker que ya no existe, robarlo (si su dueno vive, el borrado falla).
     if (Test-CvLockStale $lock) {
         try { [System.IO.File]::Delete($lock) } catch {}
     }
     try {
-        $fs = [System.IO.File]::Open($lock, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
-        try {
-            $bytes = [System.Text.Encoding]::UTF8.GetBytes(("PID={0};HOST={1}" -f $PID, $env:COMPUTERNAME))
-            $fs.Write($bytes, 0, $bytes.Length)
-        } finally { $fs.Close() }
-        return $true
+        # Lectura compartida (la cola lo lee para saber quien lo tiene); borrado, no.
+        $fs = [System.IO.File]::Open($lock, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::Read)
     } catch {
         return $false
     }
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes(("PID={0};HOST={1}" -f $PID, $env:COMPUTERNAME))
+        $fs.Write($bytes, 0, $bytes.Length)
+        $fs.Flush($true)
+    } catch {
+        try { $fs.Dispose() } catch {}
+        try { [System.IO.File]::Delete($lock) } catch {}
+        return $false
+    }
+    $script:CvLockHandles[$lock] = $fs
+    return $true
 }
 
-
 function Exit-Lock {
+    <#
+        Suelta el lock que tiene ESTE proceso (lo cierra y lo borra). Uno que no es suyo no se toca:
+        antes se borraba sin mirar, y un worker que acababa podia soltar el archivo que tenia OTRO.
+        Para quitar el de un worker muerto esta Remove-CvStaleLock.
+    #>
     param([Parameter(Mandatory)]$Context, [Parameter(Mandatory)][string]$Name)
     $lock = Join-Path $Context.Proceso ("{0}.lock" -f $Name)
-    try { [System.IO.File]::Delete($lock) } catch {}
+    $fs = $script:CvLockHandles[$lock]
+    if ($null -eq $fs) { return }
+    $script:CvLockHandles.Remove($lock)
+    try { $fs.Dispose() } catch {}
+    # Un lector (la cola) puede tenerlo abierto un instante: unos reintentos cortos.
+    for ($i = 1; $i -le 4; $i++) {
+        try { [System.IO.File]::Delete($lock); return } catch { Start-Sleep -Milliseconds (15 * $i) }
+    }
+}
+
+function Remove-CvStaleLock {
+    <#
+        Quita el lock de un archivo si esta CADUCADO (su worker ya no existe). Es lo que hace
+        'Liberar bloqueo' en la cola. Con el dueno vivo no hace nada (y aunque se intentara, Windows no
+        dejaria: lo tiene abierto). Devuelve $true si lo quito.
+    #>
+    param([Parameter(Mandatory)]$Context, [Parameter(Mandatory)][string]$Name)
+    $lock = Join-Path $Context.Proceso ("{0}.lock" -f $Name)
+    if (-not (Test-CvLockStale $lock)) { return $false }
+    try { [System.IO.File]::Delete($lock); return $true } catch { return $false }
 }
 
 

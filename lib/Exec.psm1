@@ -3,11 +3,18 @@
     salida, ventana aparte y modo debug.
 #>
 
-# Helper nativo: lanza un proceso en una CONSOLA NUEVA MINIMIZADA SIN ROBAR EL FOCO
-# (SW_SHOWMINNOACTIVE). El Start-Process con -WindowStyle Minimized usa SW_SHOWMINIMIZED,
-# que activa la ventana y roba el foco aunque quede minimizada.
-if (-not ('CvProc' -as [type])) {
-    Add-Type -Language CSharp -TypeDefinition @'
+function Initialize-CvExecNative {
+    <#
+        Compila (una vez por sesion) los dos ayudantes nativos de abajo, CvProc y CvWin. Antes se
+        compilaban AL CARGAR el modulo, en cada proceso -la cola, setup y cada worker-, ~0,4 s cada
+        vez, aunque casi nunca se usaran: solo al lanzar un ffmpeg en ventana aparte o al traer ffplay
+        al frente. Ahora, la primera vez que hacen falta.
+    #>
+    # Helper nativo: lanza un proceso en una CONSOLA NUEVA MINIMIZADA SIN ROBAR EL FOCO
+    # (SW_SHOWMINNOACTIVE). El Start-Process con -WindowStyle Minimized usa SW_SHOWMINIMIZED,
+    # que activa la ventana y roba el foco aunque quede minimizada.
+    if (-not ('CvProc' -as [type])) {
+        Add-Type -Language CSharp -TypeDefinition @'
 using System;
 using System.Text;
 using System.ComponentModel;
@@ -46,14 +53,14 @@ public static class CvProc {
     }
 }
 '@
-}
+    }
 
-# Helper nativo: traer una ventana al PRIMER PLANO y darle el foco. Se usa para la ventana de
-# previsualizacion (ffplay), que debe recibir el foco para poder cerrarla ('q'/ESC) y que las
-# teclas vayan a ella y no a la consola (al contrario que las ventanas de codificacion, que van
-# sin foco). Al reves que el no-foco de CvProc.
-if (-not ('CvWin' -as [type])) {
-    Add-Type -Language CSharp -TypeDefinition @'
+    # Helper nativo: traer una ventana al PRIMER PLANO y darle el foco. Se usa para la ventana de
+    # previsualizacion (ffplay), que debe recibir el foco para poder cerrarla ('q'/ESC) y que las
+    # teclas vayan a ella y no a la consola (al contrario que las ventanas de codificacion, que van
+    # sin foco). Al reves que el no-foco de CvProc.
+    if (-not ('CvWin' -as [type])) {
+        Add-Type -Language CSharp -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
 public static class CvWin {
@@ -86,6 +93,7 @@ public static class CvWin {
     }
 }
 '@
+    }
 }
 
 function Write-CvDebug {
@@ -178,6 +186,7 @@ function Invoke-ToolShow {
         # Ventana aparte MINIMIZADA sin robar el foco (SW_SHOWMINNOACTIVE via CreateProcess).
         $cwd = "$($Context.Root)"; if ([string]::IsNullOrWhiteSpace($cwd)) { $cwd = (Get-Location).Path }
         try {
+            Initialize-CvExecNative
             return [CvProc]::RunMinimizedNoActivate($Exe, (ConvertTo-ArgString $Arguments), $cwd)
         } catch {
             # Fallback: minimizada clasica (puede robar foco) si la API nativa fallara.
@@ -207,13 +216,68 @@ function Invoke-ToolShow {
             for ($i = 0; $i -lt 40 -and $p.MainWindowHandle -eq [IntPtr]::Zero -and -not $p.HasExited; $i++) {
                 Start-Sleep -Milliseconds 50; $p.Refresh()
             }
-            if ($p.MainWindowHandle -ne [IntPtr]::Zero) { [CvWin]::ToForeground($p.MainWindowHandle) }
+            if ($p.MainWindowHandle -ne [IntPtr]::Zero) { Initialize-CvExecNative; [CvWin]::ToForeground($p.MainWindowHandle) }
         } catch {
             Write-CvDebug -Context $Context -Message ("no se pudo dar foco a la preview: {0}" -f $_.Exception.Message)
         }
     }
     $p.WaitForExit()
     return $p.ExitCode
+}
+
+function Enable-CvKillChildrenOnExit {
+    <#
+        Que los procesos que abra ESTE (ffmpeg, ffprobe, mkvpropedit...) mueran con el. Se mete el
+        proceso actual en un 'Job Object' de Windows con KILL_ON_JOB_CLOSE: los hijos heredan el job y,
+        cuando el ultimo handle del job se cierra -al acabar este proceso, de la forma que sea: Ctrl+C,
+        cerrar la consola, matarlo desde la cola-, Windows mata a todos.
+
+        Por que en el worker: ffmpeg corre sin la consola del worker, asi que un Ctrl+C no le llega.
+        El worker soltaba su lock al salir y ffmpeg SEGUIA escribiendo el .part y los temporales; el
+        siguiente worker cogia el archivo y lanzaba un segundo ffmpeg sobre los mismos ficheros.
+
+        Una vez por proceso (el handle se guarda y no se cierra nunca: cerrarlo mataria a los hijos).
+        Fail-soft: si Windows no deja (un job que no admite anidar), se sigue como antes. Devuelve si
+        quedo activo.
+    #>
+    if ($null -ne $script:CvKillJob) { return $true }
+    try {
+        if (-not ('CvExec.KillJob' -as [type])) {
+            Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+namespace CvExec {
+    public static class KillJob {
+        [StructLayout(LayoutKind.Sequential)]
+        struct BASIC { public long PerProcessUserTimeLimit; public long PerJobUserTimeLimit; public uint LimitFlags; public UIntPtr MinimumWorkingSetSize; public UIntPtr MaximumWorkingSetSize; public uint ActiveProcessLimit; public UIntPtr Affinity; public uint PriorityClass; public uint SchedulingClass; }
+        [StructLayout(LayoutKind.Sequential)]
+        struct IOC { public ulong A; public ulong B; public ulong C; public ulong D; public ulong E; public ulong F; }
+        [StructLayout(LayoutKind.Sequential)]
+        struct EXTENDED { public BASIC Basic; public IOC Io; public UIntPtr ProcessMemoryLimit; public UIntPtr JobMemoryLimit; public UIntPtr PeakProcessMemoryUsed; public UIntPtr PeakJobMemoryUsed; }
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern IntPtr CreateJobObject(IntPtr a, string name);
+        [DllImport("kernel32.dll")] static extern bool SetInformationJobObject(IntPtr job, int cls, ref EXTENDED info, uint len);
+        [DllImport("kernel32.dll")] static extern bool AssignProcessToJobObject(IntPtr job, IntPtr proc);
+        [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
+        public static IntPtr Enable() {
+            IntPtr job = CreateJobObject(IntPtr.Zero, null);
+            if (job == IntPtr.Zero) { return IntPtr.Zero; }
+            EXTENDED info = new EXTENDED();
+            info.Basic.LimitFlags = 0x2000;   // JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+            if (!SetInformationJobObject(job, 9, ref info, (uint)Marshal.SizeOf(typeof(EXTENDED)))) { return IntPtr.Zero; }
+            if (!AssignProcessToJobObject(job, GetCurrentProcess())) { return IntPtr.Zero; }
+            return job;
+        }
+    }
+}
+'@ -ErrorAction Stop
+        }
+        $h = [CvExec.KillJob]::Enable()
+        if ($h -eq [System.IntPtr]::Zero) { return $false }
+        $script:CvKillJob = $h
+        return $true
+    } catch {
+        return $false
+    }
 }
 
 function Test-CvProcessAlive {

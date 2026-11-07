@@ -133,13 +133,39 @@ function Show-CvToolsWindow {
         if (-not (Show-CvGuiConfirm -Title (Get-CvText -Key 'herr.instalar.tit') -Message (Get-CvText -Key 'herr.instalar.msg' -Values @($t.Name, $ver)))) { return }
         $targs = @('-Task', 'install', '-App', $t.Name, '-Version', $ver)
         if ($chkDef.Checked) { $targs += '-SetDefault' }
-        $form.Enabled = $false
+        # SIN esperar aqui: con -Wait la ventana (y setup detras) se quedaba 'No responde' durante toda
+        # la descarga. Se lanza, la ventana se queda apagada pero VIVA (se repinta) y un temporizador
+        # mira cuando acaba para recargar la lista.
+        $p = $null
+        try { $p = Start-CvSetupTask -Root $Root -CfgPath $CfgPath -TaskArgs $targs } catch { $p = $null }
+        if ($null -eq $p) { & $reload; return }
+        $tarea.Proc = $p
+        $lblInfo.Text = (Get-CvText -Key 'herr.instalando' -Values @($t.Name, $ver))
+        foreach ($c in @($lstApps, $lstVers, $btnInstall, $btnUse, $chkDef, $btnClose)) { $c.Enabled = $false }
+        $tareaTimer.Start()
+    })
+    # Cuando la instalacion termina (su consola se cierra), la ventana vuelve y se recarga.
+    $tarea = @{ Proc = $null }
+    $tareaTimer = New-Object System.Windows.Forms.Timer
+    $tareaTimer.Interval = [Math]::Max(100, [int](Get-CvConfigDefaultValue 'gui/setupTaskPollMs'))
+    try {
+        $cfgPoll = [int](Get-CvNodeVal (Get-CvNodeVal (Get-CvConfig -Root $Root -Path $CfgPath) 'gui') 'setupTaskPollMs')
+        if ($cfgPoll -ge 100) { $tareaTimer.Interval = $cfgPoll }
+    } catch { }
+    $tareaTimer.Add_Tick({
         try {
-            [void](Start-CvSetupTask -Root $Root -CfgPath $CfgPath -TaskArgs $targs -Wait)
-        } finally {
-            $form.Enabled = $true
-        }
+            if ($null -ne $tarea.Proc -and -not $tarea.Proc.HasExited) { return }
+        } catch { }
+        $tareaTimer.Stop()
+        $tarea.Proc = $null
+        foreach ($c in @($lstApps, $lstVers, $chkDef, $btnClose)) { $c.Enabled = $true }
+        $btnInstall.Enabled = $true
         & $reload
+    })
+    # Mientras instala no se cierra (el temporizador se quedaria sin ventana a la que volver).
+    $form.Add_FormClosing({
+        param($s, $e)
+        if ($null -ne $tarea.Proc) { $e.Cancel = $true }
     })
     # Usar una version YA instalada, sin descargar nada: es lo que faltaba para volver a una version
     # anterior que ya se tenia (y para arreglar un 'selected' que apunta a una version borrada).
@@ -160,6 +186,8 @@ function Show-CvToolsWindow {
     # "Tema" de la cola): asi una ventana que se abre DESPUES de cambiarlo sale ya con el nuevo.
     [void](Set-CvGuiTheme -Form $form)
     [void]$form.ShowDialog()
+    $tareaTimer.Stop()
+    $tareaTimer.Dispose()
     $form.Dispose()
 }
 

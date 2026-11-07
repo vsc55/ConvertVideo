@@ -13,14 +13,38 @@ function Get-Tag {
     return $null
 }
 
+# Lo ya leido con ffprobe, por fichero + huella (ver Get-MediaInfo).
+$script:CvMediaInfo = @{}
+
 function Get-MediaInfo {
-    <# Devuelve el objeto JSON de ffprobe (streams + format) o $null si falla. #>
+    <#
+        Devuelve el objeto JSON de ffprobe (streams + format + chapters) o $null si falla.
+
+        Lo leido se GUARDA por fichero + tamano + fecha: mientras el fichero no cambie, no se vuelve a
+        lanzar ffprobe. Al acabar un archivo, su salida se miraba TRES veces seguidas (el resumen, los
+        capitulos y la nota de calidad), y el original otras tantas entre preparar y codificar. Los
+        capitulos van en la misma consulta (Get-CvChapterCount los cuenta de aqui). Lo que devuelve es
+        el de todos: se lee, no se modifica.
+    #>
     param([Parameter(Mandatory)]$Context, [Parameter(Mandatory)][string]$File)
+    $clave = ''
+    try {
+        $fi = New-Object System.IO.FileInfo($File)
+        if ($fi.Exists) { $clave = "{0}|{1}|{2}|{3}" -f $fi.FullName.ToLowerInvariant(), $fi.Length, $fi.LastWriteTimeUtc.Ticks, "$($Context.FFprobe)" }
+    } catch { $clave = '' }
+    if ($clave -ne '' -and $script:CvMediaInfo.ContainsKey($clave)) { return $script:CvMediaInfo[$clave] }
     $r = Invoke-ToolCapture -Exe $Context.FFprobe -Arguments @(
-        '-v','quiet','-print_format','json','-show_streams','-show_format', $File
+        '-v','quiet','-print_format','json','-show_streams','-show_format','-show_chapters', $File
     ) -Context $Context
     if ($r.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($r.StdOut)) { return $null }
-    try { return ($r.StdOut | ConvertFrom-Json) } catch { return $null }
+    $info = $null
+    try { $info = ($r.StdOut | ConvertFrom-Json) } catch { return $null }
+    if ($clave -ne '' -and $null -ne $info) {
+        # Sin crecer para siempre en una sesion larga (la cola abierta dias): se vacia de vez en cuando.
+        if ($script:CvMediaInfo.Count -ge 500) { $script:CvMediaInfo.Clear() }
+        $script:CvMediaInfo[$clave] = $info
+    }
+    return $info
 }
 
 function Get-VideoStreams {
@@ -406,6 +430,48 @@ function Get-CvSubtitleCueTag {
     return -1
 }
 
+# Lineas (cues) ya contadas, por archivo + pista + huella del fichero (ver Get-CvSubtitleCueCount).
+$script:CvCueCache = @{}
+
+function Get-CvCueCacheKey {
+    <#
+        La clave de un recuento en la cache: ruta + indice de la pista + tamano y fecha del fichero (si
+        el fichero cambia, la cuenta ya no vale). '' si el fichero no se puede mirar.
+    #>
+    param([string]$File, [int]$Index)
+    try {
+        $fi = New-Object System.IO.FileInfo($File)
+        if (-not $fi.Exists) { return '' }
+        return ("{0}|{1}|{2}|{3}" -f $fi.FullName.ToLowerInvariant(), $Index, $fi.Length, $fi.LastWriteTimeUtc.Ticks)
+    } catch { return '' }
+}
+
+function Set-CvSubtitleCueCache {
+    <#
+        Siembra la cache de recuentos con los que YA se saben de un archivo (-Counts: indice -> lineas,
+        como el 'subtitleCues' del job o el SubCues de un borrador). Asi el editor de jobs no vuelve a
+        demultiplexar lo que el analisis de Preparar, o el propio job, ya contaron. Los negativos (no se
+        supo) no se siembran.
+    #>
+    param([Parameter(Mandatory)][string]$File, $Counts)
+    if ($null -eq $Counts) { return 0 }
+    $n = 0
+    $pares = @()
+    if ($Counts -is [System.Collections.IDictionary]) { foreach ($k in @($Counts.Keys)) { $pares += ,@($k, $Counts[$k]) } }
+    else { foreach ($p in @($Counts.PSObject.Properties)) { $pares += ,@($p.Name, $p.Value) } }
+    foreach ($par in $pares) {
+        $idx = 0
+        $cnt = 0
+        if (-not [int]::TryParse("$($par[0])", [ref]$idx)) { continue }
+        if (-not [int]::TryParse("$($par[1])", [ref]$cnt) -or $cnt -lt 0) { continue }
+        $clave = Get-CvCueCacheKey -File $File -Index $idx
+        if ($clave -eq '') { continue }
+        $script:CvCueCache[$clave] = $cnt
+        $n++
+    }
+    return $n
+}
+
 function Get-CvSubtitleCueCount {
     <#
         Nº de cues (entradas) de una pista de subtitulo por su indice absoluto. Devuelve -1 si no
@@ -416,6 +482,10 @@ function Get-CvSubtitleCueCount {
         Solo si falta ese tag se recurre a '-count_packets', que DEMULTIPLEXA el fichero entero
         (varios segundos en MKVs de varios GB, por cada pista). Muchos MKVs (los muxeados con
         mkvmerge/MKVToolNix) traen el tag, asi que PREPARAR no tiene por que demultiplexar.
+
+        Lo contado a mano se GUARDA por archivo + pista + huella del fichero (Set-CvSubtitleCueCache
+        siembra lo que ya se sabe): el editor de jobs pedia estas cuentas al abrir -dos veces- y otra
+        vez en cada cambio de perfil, y con un MKV grande sin el tag eran minutos cada vez.
     #>
     param([Parameter(Mandatory)]$Context, [Parameter(Mandatory)][string]$File, [int]$Index, $Stream = $null)
     $n = 0
@@ -436,12 +506,16 @@ function Get-CvSubtitleCueCount {
     }
     if ([int]::TryParse("$nf".Trim(), [ref]$n)) { return $n }
 
-    # 2) Sin tag: contar paquetes demultiplexando (lento en ficheros grandes).
+    # 2) Sin tag: lo ya contado en esta sesion, o contar paquetes demultiplexando (lento).
+    $clave = Get-CvCueCacheKey -File $File -Index $Index
+    if ($clave -ne '' -and $script:CvCueCache.ContainsKey($clave)) { return [int]$script:CvCueCache[$clave] }
     $r = Invoke-ToolCapture -Exe $Context.FFprobe -Arguments @(
         '-v','error','-select_streams',"$Index",'-count_packets',
         '-show_entries','stream=nb_read_packets','-of','default=nw=1:nk=1', $File
     ) -Context $Context
-    return (ConvertTo-CvCueCount "$($r.StdOut)")
+    $cnt = ConvertTo-CvCueCount "$($r.StdOut)"
+    if ($clave -ne '' -and [int]$cnt -ge 0) { $script:CvCueCache[$clave] = [int]$cnt }
+    return $cnt
 }
 
 function ConvertTo-CvCueCount {
@@ -462,8 +536,10 @@ function ConvertTo-CvCueCount {
 }
 
 function Get-CvChapterCount {
-    <# Nº de capitulos del contenedor (ffprobe -show_chapters), 0 si no hay. #>
+    <# Nº de capitulos del contenedor, 0 si no hay. De Get-MediaInfo (ya los trae y esta guardado). #>
     param([Parameter(Mandatory)]$Context, [Parameter(Mandatory)][string]$File)
+    $info = Get-MediaInfo -Context $Context -File $File
+    if ($null -ne $info -and $null -ne $info.PSObject.Properties['chapters']) { return @($info.chapters | Where-Object { $null -ne $_ }).Count }
     $r = Invoke-ToolCapture -Exe $Context.FFprobe -Arguments @('-v','error','-show_chapters','-of','csv=p=0', $File) -Context $Context
     return @("$($r.StdOut)" -split "`r?`n" | Where-Object { $_.Trim() -ne '' }).Count
 }

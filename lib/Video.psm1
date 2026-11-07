@@ -1495,10 +1495,25 @@ function Get-CvQualityLavfi {
         alineacion temporal (fps distinto por forceFps) la resuelve el framesync de la propia metrica,
         asi que NO se usa el filtro 'fps' (que ademas dispara una asercion en ffmpeg 7.1 con 2 inputs).
         $Metric: 'vmaf' -> libvmaf; cualquier otro -> ssim.
+
+        La REFERENCIA es la pista de video que se codifico (-VideoIndex, la del job; '[1:v]' seria la
+        primera, que puede ser una caratula u otra pista) y con el MISMO recorte que la salida (-Crop,
+        'W:H:X:Y' del job): sin el, scale2ref estiraba el original CON sus barras al tamano de la
+        salida SIN ellas, y la nota salia mala sin serlo.
+
+        Y con 'shortest=1': la comparacion acaba con el video MAS CORTO. Sin el, si la salida es mas
+        corta que el original (modo pruebas, o un recorte de duracion), la metrica repetia su ultimo
+        fotograma contra todo lo que quedaba del original: medido, SSIM 0,67 donde era 0,94.
     #>
-    param([string]$Metric)
+    param(
+        [string]$Metric,
+        [string]$Crop = '',
+        [int]$VideoIndex = -1
+    )
     $m = if ("$Metric".ToLower() -eq 'vmaf') { 'libvmaf' } else { 'ssim' }
-    "[0:v]format=yuv420p[d0];[1:v]format=yuv420p[r0];[r0][d0]scale2ref[ref][dist];[dist][ref]$m"
+    $ref = $(if ($VideoIndex -ge 0) { '[1:{0}]' -f $VideoIndex } else { '[1:v]' })
+    $corte = $(if ("$Crop".Trim() -match '^\d+:\d+:\d+:\d+$') { 'crop={0},' -f "$Crop".Trim() } else { '' })
+    "[0:v]format=yuv420p[d0];$($ref)$($corte)format=yuv420p[r0];[r0][d0]scale2ref[ref][dist];[dist][ref]$($m)=shortest=1"
 }
 
 function Get-CvQualityScore {
@@ -1521,12 +1536,20 @@ function Measure-CvQuality {
         o $null si no se puede medir (metrica 'off', sin ffmpeg, ficheros ausentes, ffmpeg falla —p. ej.
         libvmaf no disponible—). FAIL-SOFT: nunca lanza; el llamador decide que hacer con $null.
     #>
-    param([Parameter(Mandatory)]$Context, [Parameter(Mandatory)][string]$Source, [Parameter(Mandatory)][string]$Output, [string]$Metric = 'off')
+    param(
+        [Parameter(Mandatory)]$Context,
+        [Parameter(Mandatory)][string]$Source,
+        [Parameter(Mandatory)][string]$Output,
+        [string]$Metric = 'off',
+        # La pista y el recorte del job, para comparar lo mismo con lo mismo (Get-CvQualityLavfi).
+        [string]$Crop = '',
+        [int]$VideoIndex = -1
+    )
     if ("$Metric".ToLower() -in @('', 'off')) { return $null }
     $exe = "$($Context.FFmpeg)"
     if ([string]::IsNullOrWhiteSpace($exe) -or -not (Test-Path -LiteralPath $exe)) { return $null }
     if (-not (Test-Path -LiteralPath $Output) -or -not (Test-Path -LiteralPath $Source)) { return $null }
-    $lavfi = Get-CvQualityLavfi -Metric $Metric
+    $lavfi = Get-CvQualityLavfi -Metric $Metric -Crop $Crop -VideoIndex $VideoIndex
     # Duracion para el % + ETA: la comparativa acaba con el video mas corto (normalmente la salida).
     $total = 0.0
     try { $total = [double](Get-MediaDuration (Get-MediaInfo -Context $Context -File $Output)) } catch {}

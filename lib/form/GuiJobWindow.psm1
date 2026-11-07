@@ -79,6 +79,7 @@ function Show-CvJobWindow {
         Loading  = $true      # arranca cargando: los manejadores no tocan nada hasta que se llene
         Closing  = $false
         Ready    = $false
+        Abort    = 'cv-job-analisis-cancelado'   # lo que lanza $say al cerrar a mitad del analisis
     }
 
     $form = New-Object System.Windows.Forms.Form
@@ -126,6 +127,7 @@ function Show-CvJobWindow {
     $lblHead.Text      = (Get-CvText -Key 'job.analizando' -Values @($Name))
     $head.Controls.Add($lblHead, 0, 0)
     $tipHead = New-Object System.Windows.Forms.ToolTip
+    [void](Register-CvGuiDisposeWith -Control $form -Object $tipHead)
     $tipHead.AutoPopDelay = 20000
 
     # Barra PINTADA (New-CvGuiProgressPanel) y no la del sistema: esa la dibuja Windows e ignora los
@@ -895,6 +897,7 @@ function Show-CvJobWindow {
     })
 
     $btnSave.Add_Click({
+        if (-not $st.Ready) { return }   # sin analisis terminado no hay borrador que guardar
         $d = ConvertTo-CvJobDraftFromRows -Draft $st.Draft -AudioRows $st.Audio -SubRows $st.Subs
         $v = Test-CvJobDraft -Draft $d
         if (-not $v.Ok) {
@@ -915,6 +918,10 @@ function Show-CvJobWindow {
         param([string]$Text)
         $lblHead.Text = $Text
         [System.Windows.Forms.Application]::DoEvents()
+        # Si se ha cerrado la ventana mientras tanto (el DoEvents de arriba deja pulsar Cancelar o la
+        # X), el analisis se corta AQUI, en el siguiente paso: antes seguia hasta el final -minutos con
+        # un MKV grande- y encima lanzaba el reproductor del recorte para una ventana ya cerrada.
+        if ($st.Closing) { throw $st.Abort }
     }
     # BORDES SEGUN EL PERFIL, lo mismo que hace la consola al preparar (Invoke-VideoAsk) y el
     # recorrido de 'Preparar pendientes' (Get-CvJobAutoPlan). Sin esto, abrir el job de UNO EN UNO con
@@ -973,7 +980,12 @@ function Show-CvJobWindow {
         }
     }
 
+    # Mientras se analiza, lo que depende del analisis esta APAGADO: los botones de video (detectar
+    # bordes, ver original, ver recorte), el perfil y las listas trabajaban sobre un borrador que aun no
+    # existia, y lanzaban trabajo pesado DENTRO del analisis. Se encienden al terminar ($st.Ready).
+    $contenido = @($topBar, $gbV, $gbA, $gbS)
     $analyze = {
+        foreach ($c in $contenido) { $c.Enabled = $false }
         try {
             if ($null -eq $st.Info) {
                 & $say (Get-CvText -Key 'job.paso.leer' -Values @($Name))
@@ -998,6 +1010,14 @@ function Show-CvJobWindow {
             # Este es el paso que puede tardar de verdad: sin el tag NUMBER_OF_FRAMES, contar los cues
             # demultiplexa el fichero entero por cada pista. Por eso se avisa de que puede tardar.
             & $say (Get-CvText -Key 'job.paso.subs')
+            # Lo que ya se conto (el analisis de Preparar, o el job que se edita) no se vuelve a
+            # contar: se siembra la cache de recuentos (Set-CvSubtitleCueCache).
+            try {
+                $sabidas = $null
+                if ($null -ne $st.Draft -and $st.Draft.PSObject.Properties['SubCues']) { $sabidas = $st.Draft.SubCues }
+                elseif (Test-CvJob -Context $Context -Name $Name) { $sabidas = (Read-CvJobDraft -Context $Context -Name $Name).SubCues }
+                if ($null -ne $sabidas) { [void](Set-CvSubtitleCueCache -File $File -Counts $sabidas) }
+            } catch { }
             $subOpts     = @(Get-CvJobSubtitleOptions -Context $Context -Info $st.Info)
 
             if ($null -eq $st.Draft) {
@@ -1071,6 +1091,7 @@ function Show-CvJobWindow {
             & $armAudio
             & $armSubs
             $st.Ready = $true
+            foreach ($c in $contenido) { $c.Enabled = $true }
             & $validate
             # Lo que se ha decidido solo -bordes y sincronia- manda sobre el 'listo para guardar' de
             # $validate: es informacion nueva que el usuario no ha pedido y tiene que ver.
@@ -1099,7 +1120,7 @@ function Show-CvJobWindow {
             # ORIGINAL y luego CON EL RECORTE antes de preguntar (gui.previewCropOnAsk). Una sola vez:
             # cambiar despues de perfil no vuelve a lanzar el reproductor. Sin recorte que proponer no
             # hay nada que comparar.
-            if ($st.CropAsk -and -not $st.CropPlayed -and [bool]$Context.GuiPreviewCropOnAsk -and "$($st.Draft.Crop)" -ne '') {
+            if ($st.CropAsk -and -not $st.CropPlayed -and -not $st.Closing -and [bool]$Context.GuiPreviewCropOnAsk -and "$($st.Draft.Crop)" -ne '') {
                 $st.CropPlayed = $true
                 $form.Refresh()        # la ventana, ya pintada detras del reproductor
                 & $playVideo ''
@@ -1115,6 +1136,8 @@ function Show-CvJobWindow {
                 [void]$btnSave.Focus()
             }
         } catch {
+            # Cerrada a mitad: no es un error, es que ya no hace falta.
+            if ("$($_.Exception.Message)" -eq "$($st.Abort)") { return }
             $bar.Visible = $false
             $lblHead.ForeColor = (Get-CvGuiCurrentPalette).Error
             $lblHead.Text = (Get-CvText -Key 'job.error.analizar' -Values @($_.Exception.Message))

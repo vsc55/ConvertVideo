@@ -187,7 +187,7 @@ try {
     if (-not $ready.Ok) {
         Write-CvLog 'COLA' ("[ERR] - {0}" -f $ready.Reason)
         $abrir = Show-CvGuiConfirm -Title (Get-CvText -Key 'cg.faltan') -Message (
-            ("No se puede trabajar todavia: {0}`n`nQuieres abrir setup ahora para instalarla o elegir otra version?" -f $ready.Reason))
+            (Get-CvText -Key 'cg.faltan.msg' -Values @($ready.Reason)))
         if ($abrir) {
             $setup = Join-Path $Root 'setup-gui.cmd'
             try { [void](Start-Process -FilePath $setup -ArgumentList @('-Config', ('"{0}"' -f $cfgPath)) -WorkingDirectory $Root) }
@@ -199,7 +199,7 @@ try {
     } elseif (@($ready.Warnings).Count -gt 0) {
         foreach ($w in @($ready.Warnings)) { Write-CvLog 'COLA' ("[AVISO] - {0}" -f $w) }
         Show-CvGuiInfo -Title (Get-CvText -Key 'cg.aviso') -Message (
-            ("Se puede trabajar, pero:`n`n - {0}`n`nSe arregla en setup (Herramientas)." -f ((@($ready.Warnings) -join "`n - "))))
+            (Get-CvText -Key 'cg.aviso.msg' -Values @(((@($ready.Warnings) -join "`n - ")))))
     }
 
     Write-CvLog 'COLA' (Get-CvText -Key 'cg.abriendo' -Values @($cfgName))

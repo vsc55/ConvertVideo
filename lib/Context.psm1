@@ -266,6 +266,8 @@ function New-CvContext {
         # 'external', el .exe. Se normalizan al usarse (Resolve-CvSubtitleOpen): '' -> start, 'ventana' -> win.
         SubtitleEditor    = "$($cfg.preview.subtitleEditor)"
         SubtitleEditorExe = "$($cfg.preview.subtitleEditorExe)"
+        # Horas que se guardan los subtitulos sacados para verlos (ver preview.subtitleTempHours).
+        SubtitleTempHours = [Math]::Max(0, [int]$cfg.preview.subtitleTempHours)
         AudioLangs     = @($cfg.languages.audio)
         SubLangs       = @($cfg.languages.subtitle)
         # debug: desde config.json (seccion 'debug') o creando el marcador 'debug_on' (cualquiera lo
@@ -282,6 +284,8 @@ function New-CvContext {
         Workers        = [int]$cfg.behavior.workers
         # Reintentos por archivo cuando la codificacion falla (antes de abandonarlo).
         Retries        = [int]$cfg.behavior.retries
+        # Espera maxima por el turno de instalar una herramienta (ver behavior.installLockWaitSec).
+        InstallLockWaitSec = $(if ([int]$cfg.behavior.installLockWaitSec -ge 1) { [int]$cfg.behavior.installLockWaitSec } else { [int]$def.behavior.installLockWaitSec })
         # Marcas/avisos en ASCII puro ([OK]/[ERROR]) en vez de simbolos/badge (consolas sin glifos).
         AsciiMarks     = [bool]$cfg.console.asciiMarks
         # Progreso inline (% + ETA) en los pasos largos de recodificacion en vez de ventana aparte.
@@ -565,11 +569,18 @@ function Test-CvLanguage {
 
 
 function ConvertTo-InvDouble {
-    <# Parseo de decimales independiente del locale (ffmpeg usa siempre punto). #>
+    <#
+        Parseo de decimales independiente del locale (ffmpeg usa siempre punto). Acepta tambien la COMA
+        decimal ('1,5'), que es lo que escribe cualquiera en castellano: antes se rechazaba y, en la
+        pregunta de la sincronia, el retardo se quedaba en 0 sin avisar. Solo una coma entre cifras (no
+        hay separador de miles que confundir: NumberStyles.Float no los admite).
+    #>
     param([string]$Text)
     $inv = [System.Globalization.CultureInfo]::InvariantCulture
     $out = 0.0
-    if ([double]::TryParse($Text, [System.Globalization.NumberStyles]::Float, $inv, [ref]$out)) { return $out }
+    $t = "$Text".Trim()
+    if ($t -match '^[-+]?\d+,\d+$') { $t = $t.Replace(',', '.') }
+    if ([double]::TryParse($t, [System.Globalization.NumberStyles]::Float, $inv, [ref]$out)) { return $out }
     return $null
 }
 
@@ -585,13 +596,25 @@ function Get-CvFiles {
     #>
     param([Parameter(Mandatory)][string]$Dir, [string[]]$Filters = @('*'), [switch]$Recurse, [switch]$Exact)
     if (-not (Test-Path -LiteralPath $Dir)) { return @() }
-    $out = @()
-    foreach ($f in $Filters) {
-        $found = @(Get-ChildItem -LiteralPath $Dir -Filter $f -File -Recurse:$Recurse -ErrorAction SilentlyContinue)
-        if ($Exact) { $found = @($found | Where-Object { $_.Name -like $f }) }
-        $out += $found
+    $filtros = @($Filters | Where-Object { "$_" -ne '' })
+    if ($filtros.Count -eq 0) { $filtros = @('*') }
+    # Con VARIOS patrones, la carpeta se lista UNA vez y se filtra en memoria (-like, que es la
+    # comparacion exacta, sin la trampa 8.3): antes era un listado por patron, y la cola lista
+    # Original\ con las cinco extensiones en cada refresco -cinco recorridos de la carpeta, con el
+    # disco ocupado codificando-. Con uno solo, el -Filter del sistema, que es lo mas rapido.
+    if ($filtros.Count -gt 1) {
+        $todos = @(Get-ChildItem -LiteralPath $Dir -File -Recurse:$Recurse -ErrorAction SilentlyContinue)
+        $out = @($todos | Where-Object {
+            $n = $_.Name
+            $casa = $false
+            foreach ($f in $filtros) { if ($n -like $f) { $casa = $true; break } }
+            $casa
+        })
+        return @($out | Sort-Object -Property FullName -Unique)
     }
-    @($out | Sort-Object -Property FullName -Unique)
+    $found = @(Get-ChildItem -LiteralPath $Dir -Filter $filtros[0] -File -Recurse:$Recurse -ErrorAction SilentlyContinue)
+    if ($Exact) { $found = @($found | Where-Object { $_.Name -like $filtros[0] }) }
+    @($found | Sort-Object -Property FullName -Unique)
 }
 
 function Format-CvClock {

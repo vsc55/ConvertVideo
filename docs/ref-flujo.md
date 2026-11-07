@@ -197,7 +197,7 @@ Ver los comandos exactos en [ref-comandos.md](ref-comandos.md). El detalle del a
 - Se pueden lanzar **varias ventanas** (`Convert.cmd`) a la vez: cuando todos los archivos tienen `.job`, cada ventana entra como worker y se reparten los archivos por el lock.
 - En vez de N consolas, `Convert-gui.cmd` abre **un solo panel** con toda la cola: lanza los workers (`Convert.ps1 -WorkerOnly -Unattended`), enseña el estado y el progreso de cada archivo y permite pararlos ordenadamente. Detalle en [ref-cola.md](ref-cola.md).
 - Cada worker **publica su estado** en `Proceso\<pid>.worker.json` (archivo en curso, paso, %, ETA). Lo lee el panel; un worker abierto a mano también aparece en él.
-- El lock se libera siempre en el `finally`, incluso si la codificación falla. Si un worker muere a mitad, otro puede **robar el lock caducado** (guarda `PID`+equipo; ver [ref-jobs.md](ref-jobs.md)).
+- El lock se queda **abierto** mientras dura el trabajo (nadie puede borrarlo con su dueño vivo) y se libera siempre en el `finally`, incluso si la codificación falla. Si un worker muere a mitad, otro puede **robar el lock caducado**, y su `ffmpeg` muere con él (ver [ref-jobs.md](ref-jobs.md)).
 - **Reintentos con límite**: un archivo que falla se reintenta hasta un máximo (`behavior.retries`, por defecto 2); superado, se **abandona** (se marca en `skip`). Los ilegibles se descartan y un error inesperado se captura por archivo (no aborta el lote). Esto evita el bucle infinito con inputs corruptos o ffmpeg que no arranca.
 - La codificación de audio/vídeo debe terminar con éxito (ffmpeg código 0 + salida no vacía) para que se multiplexe; si no, el archivo cuenta como fallo (no se genera un MKV con vídeo sin recodificar).
 

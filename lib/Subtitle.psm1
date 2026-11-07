@@ -294,6 +294,27 @@ function Open-CvSrtDefault {
     try { Start-Process -FilePath 'notepad.exe' -ArgumentList $Path } catch {}
 }
 
+function Clear-CvSubtitleViewTemps {
+    <#
+        Borra de %TEMP% los subtitulos sacados para VERLOS (cv_sub_*) que tengan mas de -Hours horas.
+        Esos no se pueden borrar al momento: los tiene abiertos el programa con el que se ven (el bloc
+        de notas, el editor de subtitulos...), y se quedaban para siempre. Se limpia cada vez que se
+        saca uno nuevo. Nunca lanza (uno que siga abierto, se queda). Devuelve cuantos borro.
+    #>
+    param([int]$Hours = 24, [string]$Dir = '')
+    if ($Hours -le 0) { return 0 }
+    $n = 0
+    try {
+        $limite = (Get-Date).AddHours(-$Hours)
+        $carpeta = $(if ("$Dir" -ne '') { $Dir } else { [System.IO.Path]::GetTempPath() })
+        foreach ($f in @(Get-ChildItem -LiteralPath $carpeta -Filter 'cv_sub_*' -File -ErrorAction SilentlyContinue)) {
+            if ($f.LastWriteTime -ge $limite) { continue }
+            try { Remove-Item -LiteralPath $f.FullName -Force -ErrorAction Stop; $n++ } catch { }
+        }
+    } catch { }
+    return $n
+}
+
 function Export-CvSubtitleFile {
     <#
         Saca UNA pista de subtitulo a un fichero temporal para abrirla fuera: los de TEXTO se
@@ -311,6 +332,7 @@ function Export-CvSubtitleFile {
     $codec = "$($Stream.codec_name)".ToLower()
     $ext   = Get-CvSubtitleFileExt -Codec $codec -Context $Context
     if ($ext -eq '') { return '' }
+    [void](Clear-CvSubtitleViewTemps -Hours ([int]$Context.SubtitleTempHours))
     $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("cv_sub_{0}_{1}{2}" -f ([System.IO.Path]::GetFileNameWithoutExtension($File)), $idx, $ext)
     $ok = {
         param([string]$Path)
@@ -368,6 +390,7 @@ function Show-SubtitleContent {
         }
         return
     }
+    [void](Clear-CvSubtitleViewTemps -Hours ([int]$Context.SubtitleTempHours))
     $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("cv_sub_{0}_{1}.srt" -f ([System.IO.Path]::GetFileNameWithoutExtension($File)), $idx)
     if (Test-Path -LiteralPath $tmp) { Remove-Item -Force -LiteralPath $tmp -ErrorAction SilentlyContinue }
     [void](Invoke-ToolCapture -Exe $Context.FFmpeg -Arguments @('-hide_banner','-loglevel','error','-y','-i',$File,'-map',"0:$idx",'-c:s','srt',$tmp) -Context $Context)

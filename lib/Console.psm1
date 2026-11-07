@@ -19,7 +19,7 @@ function Resolve-CvSepWidth {
     param([int]$Width = 0)
     if ($Width -gt 0)             { return $Width }
     if ($script:CvSepWidth -gt 0) { return $script:CvSepWidth }
-    return [Math]::Max(1, [int](Get-CvConfigDefaults).console.sepWidth)
+    return [Math]::Max(1, [int](Get-CvConfigDefaultsShared).console.sepWidth)
 }
 function Get-CvLine {
     <#
@@ -81,7 +81,7 @@ function Resolve-CvProgressBarWidth {
     param([int]$Width = -1)
     if ($Width -ge 0)              { return $Width }
     if ($script:CvProgressBarWidth -ge 0) { return $script:CvProgressBarWidth }
-    return [Math]::Max(0, [int](Get-CvConfigDefaults).console.progressBarWidth)
+    return [Math]::Max(0, [int](Get-CvConfigDefaultsShared).console.progressBarWidth)
 }
 function Get-CvProgressBar {
     <#

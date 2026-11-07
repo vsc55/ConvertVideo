@@ -657,6 +657,8 @@ try {
     $Sync.Finished = $true
 }
 '@
+    # De paso, los parados antes que ya hayan terminado.
+    [void](Clear-CvPrepareOrphans)
     $rs = [runspacefactory]::CreateRunspace()
     $rs.Open()
     $ps = [powershell]::Create()
@@ -679,17 +681,40 @@ try {
     }
 }
 
+# Analisis de fondo PARADOS que aun no han terminado: se liberan cuando terminan (ver abajo).
+$script:CvPrepareOrphans = New-Object System.Collections.ArrayList
+
+function Clear-CvPrepareOrphans {
+    <#
+        Libera los analisis parados (Stop-CvPrepareAnalysis) que YA han terminado. Se llama al arrancar
+        y al parar otro: antes nadie los liberaba, y cada 'Preparar pendientes' cancelado dejaba su
+        runspace -con todos los modulos cargados, decenas de MB- hasta cerrar la cola. Devuelve cuantos.
+    #>
+    $n = 0
+    foreach ($h in @($script:CvPrepareOrphans)) {
+        $fin = $false
+        try { $fin = [bool]$h.Async.IsCompleted } catch { $fin = $true }
+        if (-not $fin) { continue }
+        Complete-CvPrepareAnalysis -Handle $h
+        [void]$script:CvPrepareOrphans.Remove($h)
+        $n++
+    }
+    return $n
+}
+
 function Stop-CvPrepareAnalysis {
     <#
         Para el analisis de fondo (Start-CvPrepareAnalysis): lo marca para no empezar el siguiente
         archivo y le pide que corte. SIN esperar: si en ese momento hay un ffmpeg escaneando bordes, la
         espera seria la de ese escaneo, y la ventana no puede quedarse colgada mientras. El runspace
-        termina por su cuenta.
+        termina por su cuenta y se libera despues (Clear-CvPrepareOrphans).
     #>
     param($Handle)
     if ($null -eq $Handle) { return }
     $Handle.Sync.Cancel = $true
     try { [void]$Handle.PowerShell.BeginStop($null, $null) } catch { }
+    if (-not $script:CvPrepareOrphans.Contains($Handle)) { [void]$script:CvPrepareOrphans.Add($Handle) }
+    [void](Clear-CvPrepareOrphans)
 }
 
 function Complete-CvPrepareAnalysis {
@@ -1035,7 +1060,9 @@ function Set-CvJobDraftAudioSync {
         $idxs = @(Get-AudioStreams -Info $Info | ForEach-Object { [int]$_.index })
         $fines = @{}
         if ($umbral -gt 0) {
-            $vEnd = Get-CvStreamEndPts -Context $Context -File $file -Stream 'v:0' -Duration $dur -What (Get-CvText -Key 'au.video.pista')
+            # La pista de video del borrador, no 'v:0' (que puede ser una caratula): Get-CvSyncVideoSpec.
+            $vIdx = $(if ($Draft.PSObject.Properties['VideoIndex'] -and $null -ne $Draft.VideoIndex) { [int]$Draft.VideoIndex } else { -1 })
+            $vEnd = Get-CvStreamEndPts -Context $Context -File $file -Stream (Get-CvSyncVideoSpec -Info $Info -VideoIndex $vIdx) -Duration $dur -What (Get-CvText -Key 'au.video.pista')
         }
         foreach ($t in $tracks) {
             if (-not $Force -and [double]$t.Sync -ne 0) { continue }   # ya trae un valor puesto a mano: no se pisa

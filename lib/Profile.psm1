@@ -20,10 +20,10 @@ function New-CvProfile {
         [string]$Multipass = '',       # '' = usar el global (encode.multipass) | off | qres | fullres (NVENC)
         # Salida de audio por defecto: FUENTE UNICA en config (encode.audio.*), no hardcodeada. El
         # default del param solo se evalua cuando el llamador NO lo pasa (perfiles de serie de Get-CvProfiles).
-        [string]$AudioEncoder = "$((Get-CvConfigDefaults).encode.audio.encoder)",  # aac_coder (recodificar) | copy
-        [string]$AudioCodec   = "$((Get-CvConfigDefaults).encode.audio.codec)",    # aac | ac3 | eac3 | libmp3lame | flac | libopus
-        [string]$AudioBitrate = "$((Get-CvConfigDefaults).encode.audio.bitrate)",
-        [int]$AudioHz         = [int](Get-CvConfigDefaults).encode.audio.hz,
+        [string]$AudioEncoder = "$((Get-CvConfigDefaultsShared).encode.audio.encoder)",  # aac_coder (recodificar) | copy
+        [string]$AudioCodec   = "$((Get-CvConfigDefaultsShared).encode.audio.codec)",    # aac | ac3 | eac3 | libmp3lame | flac | libopus
+        [string]$AudioBitrate = "$((Get-CvConfigDefaultsShared).encode.audio.bitrate)",
+        [int]$AudioHz         = [int](Get-CvConfigDefaultsShared).encode.audio.hz,
         # Salida de audio POR PERFIL (override del global; $null = usar el global encode.*):
         [object]$AudioChannels = $null,   # MAXIMO de canales (no hace upmix). $null = encode.audioChannels | 2 | 6 | 8
         [object]$DownmixMode   = $null,   # $null = encode.downmixMode | 'default' | 'dialogue' (voz reforzada, BETA)
@@ -318,7 +318,7 @@ function Get-CvAutoRate {
         $crf26x = [int]$Context.AutoCrf; $crfAv1 = [int]$Context.AutoCrfAv1
         $qmin   = [int]$Context.AutoQmin; $qmax = [int]$Context.AutoQmax; $level = "$($Context.AutoLevel)"
     } else {
-        $a = (Get-CvConfigDefaults).encode.video.auto
+        $a = (Get-CvConfigDefaultsShared).encode.video.auto
         $crf26x = [int]$a.crf; $crfAv1 = [int]$a.crfAv1
         $qmin   = [int]$a.qmin; $qmax = [int]$a.qmax; $level = "$($a.level)"
     }
@@ -705,7 +705,7 @@ function ConvertTo-CvProfile {
     <# Convierte un objeto de perfil de config.json (camelCase) en un perfil (New-CvProfile). #>
     param([Parameter(Mandatory)]$Obj)
     # Fallbacks de la salida de audio: FUENTE UNICA en config (encode.audio.*), no hardcodeados.
-    $eaud = (Get-CvConfigDefaults).encode.audio
+    $eaud = (Get-CvConfigDefaultsShared).encode.audio
     New-CvProfile `
         -VideoEncoder "$(Get-CvProfileProp $Obj 'videoEncoder' '')" `
         -VideoProfile "$(Get-CvProfileProp $Obj 'videoProfile' '')" `
@@ -1026,7 +1026,8 @@ function Save-CvConfigProfile {
     try {
         # El config crudo es un PSCustomObject (viene de ConvertFrom-Json) pero los defaults son un
         # hashtable: se entra por los helpers del propio Config, que saben con cual estan hablando.
-        $cfg = $(if (Test-Path -LiteralPath $Path) { Read-CvConfigFile -Path $Path } else { Get-CvConfigDefaults })
+        # Sin fichero, de VACIO (no los valores de fabrica: ver Set-CvConfigValue).
+        $cfg = $(if (Test-Path -LiteralPath $Path) { Read-CvConfigFile -Path $Path } else { [pscustomobject]@{} })
         $cur = @(Get-CvProfileList $cfg)
         $chk = Test-CvProfileName -Name $Label -Existing $cur -Allow $(if ("$Replace" -ne '') { $Replace } else { $Label })
         if (-not $chk.Ok) { return @{ Ok = $false; Error = "$($chk.Error)"; Label = "$Label"; Count = $cur.Count } }
@@ -1177,7 +1178,7 @@ function New-CustomProfile {
     )
     # Valores por defecto: del contexto (config 'customProfile'); si no hay contexto, de los defaults
     # de config (Get-CvConfigDefaults, fuente unica) en vez de literales hardcodeados aqui.
-    $dflt = Get-CvConfigDefaults; $cp = $dflt.customProfile
+    $dflt = Get-CvConfigDefaultsShared; $cp = $dflt.customProfile
     $defEnc  = if ($Context -and "$($Context.CustomVideoEncoder)" -ne '') { "$($Context.CustomVideoEncoder)" } else { "$($cp.videoEncoder)" }
     $defProf = if ($Context -and "$($Context.CustomVideoProfile)" -ne '') { "$($Context.CustomVideoProfile)" } else { "$($cp.videoProfile)" }
     $defLvl  = if ($Context -and "$($Context.CustomVideoLevel)"   -ne '') { "$($Context.CustomVideoLevel)"   } else { "$($cp.videoLevel)" }

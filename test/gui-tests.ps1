@@ -180,6 +180,40 @@ Assert-Eq 'Limpieza all = 3'  3 @(Get-CvSetupCleanTargets -Context $ctx -What 'a
 Assert-Eq 'Borrado devuelve n' 1 (Remove-CvSetupFiles -Files @(Get-CvSetupCleanTargets -Context $ctx -What 'jobs'))
 Assert-Eq 'Tras borrar: 0 jobs' 0 (Get-CvSetupProcesoStatus -Context $ctx).Jobs
 Assert-Eq 'Borrado de nada = 0' 0 (Remove-CvSetupFiles -Files @())
+# Lo de un worker VIVO no se limpia: su lock, sus temporales y su estado. Lo de uno muerto, si.
+Set-Content -LiteralPath (Join-Path $ctx.Proceso 'viva.lock') -Value ("PID={0};HOST={1}" -f $PID, $env:COMPUTERNAME) -NoNewline
+Set-Content -LiteralPath (Join-Path $ctx.Proceso 'viva.mkv') -Value '' -Encoding UTF8
+Set-Content -LiteralPath (Join-Path $ctx.Proceso 'viva_a1.m4a') -Value '' -Encoding UTF8
+Set-Content -LiteralPath (Join-Path $ctx.Proceso ('{0}.worker.json' -f $PID)) -Value '{}' -Encoding UTF8
+$lim = @(Get-CvSetupCleanTargets -Context $ctx -What 'all' | ForEach-Object { $_.Name })
+Assert-Eq   'Limpieza: no el lock de un worker vivo'      $false ($lim -contains 'viva.lock')
+Assert-Eq   'Limpieza: ni sus temporales'                 $false (($lim -contains 'viva.mkv') -or ($lim -contains 'viva_a1.m4a'))
+Assert-Eq   'Limpieza: ni el estado de un worker vivo'    $false ($lim -contains ('{0}.worker.json' -f $PID))
+Assert-True 'Limpieza: lo demas si (el lock vacio, basura)' ($lim -contains 'peli.lock')
+Assert-True 'En uso: un temporal de otro nombre no'      (-not (Test-CvSetupFileInUse -File ([pscustomobject]@{ Name = 'vivas.mkv' }) -LiveNames @('viva')))
+foreach ($n in 'viva.lock', 'viva.mkv', 'viva_a1.m4a', ('{0}.worker.json' -f $PID)) { Remove-Item -LiteralPath (Join-Path $ctx.Proceso $n) -Force }
+# El recuento es lo BORRADO de verdad: uno abierto por otro (ffmpeg) no cuenta.
+$abierto = Join-Path $ctx.Proceso 'abierto.mkv'
+Set-Content -LiteralPath $abierto -Value 'x' -Encoding UTF8
+$hAb = [System.IO.File]::Open($abierto, 'Open', 'Read', 'Read')
+try { Assert-Eq 'Borrado: uno abierto no cuenta' 0 (Remove-CvSetupFiles -Files @(Get-Item -LiteralPath $abierto)) } finally { $hAb.Dispose() }
+Remove-Item -LiteralPath $abierto -Force
+
+# REINSTALAR: la version de antes se APARTA y vuelve si la nueva falla (sin red ya no te quedas sin ffmpeg).
+$vDir = Get-CvToolDir -Context $ctx -Name 'ffmpeg' -Version '9.9.9'
+New-Item -ItemType Directory -Path $vDir -Force | Out-Null
+Set-Content -LiteralPath (Join-Path $vDir 'ffmpeg.exe') -Value 'buena' -NoNewline
+$bk = Backup-CvSetupAppVersion -Context $ctx -Name 'ffmpeg' -Version '9.9.9'
+Assert-True 'Reinstalar: se aparta'                      ([bool]$bk.Ok -and (Test-Path -LiteralPath $bk.Backup) -and -not (Test-Path -LiteralPath $vDir))
+New-Item -ItemType Directory -Path $vDir -Force | Out-Null      # lo que dejo a medias la instalacion
+Restore-CvSetupAppVersion -Context $ctx -Name 'ffmpeg' -Version '9.9.9' -Backup $bk.Backup -Success $false
+Assert-Eq   'Reinstalar: si falla, vuelve la de antes'   'buena' (Get-Content -LiteralPath (Join-Path $vDir 'ffmpeg.exe') -Raw)
+Assert-Eq   'Reinstalar: sin copia de sobra'             $false (Test-Path -LiteralPath $bk.Backup)
+$bk = Backup-CvSetupAppVersion -Context $ctx -Name 'ffmpeg' -Version '9.9.9'
+Restore-CvSetupAppVersion -Context $ctx -Name 'ffmpeg' -Version '9.9.9' -Backup $bk.Backup -Success $true
+Assert-Eq   'Reinstalar: si va bien, la copia se tira'   $false (Test-Path -LiteralPath $bk.Backup)
+Assert-True 'Reinstalar: nada que apartar, sigue'        ([bool](Backup-CvSetupAppVersion -Context $ctx -Name 'ffmpeg' -Version '0.0.1').Ok)
+Remove-Item -Recurse -Force -LiteralPath (Join-Path $ctx.Root 'tools\ffmpeg') -ErrorAction SilentlyContinue
 $w = Get-CvSetupWorkStatus -Context $ctx
 Assert-Eq 'Trabajo: 0 entradas'    0 $w.Input
 Assert-Eq 'Trabajo: 0 convertidos' 0 $w.Converted
@@ -258,7 +292,10 @@ $mCfg = Join-Path $mRoot 'config.json'
 $ctxM = New-CvContext -Root $mRoot -ConfigPath $mCfg
 Set-Content -Path (Join-Path $ctxM.Proceso 'Serie_1x01.job.json') -Value '{}' -Encoding UTF8
 Set-Content -Path (Join-Path $ctxM.Proceso 'Serie_1x02.job.json') -Value '{}' -Encoding UTF8
-Set-Content -Path (Join-Path $ctxM.Proceso 'Serie_1x01.lock') -Value 'PID=1;HOST=x' -Encoding UTF8
+# El lock de un worker MUERTO de este equipo: eso es lo que se limpia (uno vivo, o de otro equipo, no).
+$mMuerto = 0
+for ($i = 999983; $i -gt 100000; $i -= 7777) { if ($null -eq (Get-Process -Id $i -ErrorAction SilentlyContinue)) { $mMuerto = $i; break } }
+Set-Content -Path (Join-Path $ctxM.Proceso 'Serie_1x01.lock') -Value ("PID={0};HOST={1}" -f $mMuerto, $env:COMPUTERNAME) -Encoding UTF8
 $mLogViejo = Join-Path $ctxM.Logs 'Convert_20260101_1.log'
 $mLogAhora = Join-Path $ctxM.Logs 'Convert_20260102_2.log'
 Set-Content -Path $mLogViejo -Value 'viejo' -Encoding UTF8
@@ -405,6 +442,17 @@ $cntCfg = [pscustomobject]@{
     console  = [pscustomobject]@{ sepWidth = 64 }      # igual al default
 }
 Assert-Eq 'Editadas: cuenta solo lo distinto' 1 (Get-CvCfgModifiedCount -Node $cntCfg -Path '')
+
+# La barra animada (-Marquee) no deja su temporizador vivo: escondida se para, y destruida se va.
+[void](Initialize-CvGui)
+$barra = New-CvGuiProgressPanel -Marquee
+Assert-True 'Barra: animada al crearla'          ([bool]$barra.Tag.Timer.Enabled)
+$barra.Visible = $false
+Assert-Eq   'Barra: escondida, se para'          $false ([bool]$barra.Tag.Timer.Enabled)
+$barra.Visible = $true
+Assert-True 'Barra: a la vista, sigue'           ([bool]$barra.Tag.Timer.Enabled)
+$barra.Dispose()
+Assert-Eq   'Barra: destruida, sin temporizador' $null $barra.Tag.Timer
 
 # Las ventanas se centran en el monitor de la PRINCIPAL: el calculo, puro.
 [void](Initialize-CvGui)   # System.Drawing, para el rectangulo del monitor

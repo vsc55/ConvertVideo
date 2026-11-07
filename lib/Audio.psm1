@@ -103,6 +103,79 @@ function Measure-CvPeakGain {
     }
 }
 
+function Get-CvPeakMultiArgs {
+    <#
+        PURO. Los argumentos de UNA pasada de ffmpeg que mide el pico (volumedetect) de VARIAS pistas
+        de audio a la vez: una rama de filtro por pista ('[0:N]volumedetect[vN]'), todas a 'null'. Para
+        -Indexes (indices absolutos). -Limit > 0 corta a esos segundos (modo pruebas).
+    #>
+    param([Parameter(Mandatory)][string]$File, [int[]]$Indexes = @(), [double]$Limit = 0)
+    $ramas = @()
+    $maps  = @()
+    $k = 0
+    foreach ($i in @($Indexes)) {
+        $ramas += ('[0:{0}]volumedetect[v{1}]' -f [int]$i, $k)
+        $maps  += @('-map', ('[v{0}]' -f $k))
+        $k++
+    }
+    $a = @('-hide_banner', '-i', $File)
+    if ($Limit -gt 0) { $a += @('-t', ([double]$Limit).ToString([System.Globalization.CultureInfo]::InvariantCulture)) }
+    $a += @('-filter_complex', ($ramas -join ';')) + $maps + @('-f', 'null', '-')
+    return ,$a
+}
+
+function ConvertTo-CvPeakList {
+    <#
+        PURO. Los picos de la salida de una medida de varias pistas (Get-CvPeakMultiArgs), en el ORDEN de
+        las pistas: cada volumedetect firma su linea como '[Parsed_volumedetect_N @ ...] max_volume: X
+        dB', y N es su posicion en el filtro. -Count pistas; una que no aparezca, $null.
+    #>
+    param([string]$Text = '', [int]$Count = 0)
+    $picos = @{}
+    foreach ($m in [regex]::Matches("$Text", 'Parsed_volumedetect_(\d+)[^\]]*\]\s*max_volume:\s*(-?\d+(?:\.\d+)?)')) {
+        $picos[[int]$m.Groups[1].Value] = ConvertTo-InvDouble $m.Groups[2].Value
+    }
+    $out = @()
+    for ($i = 0; $i -lt $Count; $i++) { $out += , $(if ($picos.ContainsKey($i)) { $picos[$i] } else { $null }) }
+    return ,$out
+}
+
+function Measure-CvPeakGains {
+    <#
+        Como Measure-CvPeakGain pero de VARIAS pistas en UNA sola lectura del archivo: antes era una
+        pasada de ffmpeg -leer el audio entero- POR pista, y con tres pistas el archivo se leia tres
+        veces. Devuelve una fila @{ Peak; Gain; Filter } por pista, en su orden.
+    #>
+    param(
+        [Parameter(Mandatory)]$Context,
+        [Parameter(Mandatory)][string]$Tag,
+        [Parameter(Mandatory)][string]$File,
+        [int[]]$Indexes = @(),
+        [double]$Target = 0
+    )
+    $idx = @($Indexes)
+    if ($idx.Count -eq 0) { return @() }
+    Start-CvStep $Context $Tag (Get-CvText -Key 'au.vol.an')
+    $a = Get-CvPeakMultiArgs -File $File -Indexes $idx -Limit ([double]$Context.TestLimit)
+    $r = Invoke-ToolCapture -Exe $Context.FFmpeg -Arguments $a -Context $Context
+    $picos = ConvertTo-CvPeakList -Text "$($r.StdErr)" -Count $idx.Count
+    $txts = @()
+    $out = @()
+    foreach ($peak in $picos) {
+        $txts += $(if ($null -ne $peak) { (Get-CvText -Key 'au.vol.pico') -f $peak } else { (Get-CvText -Key 'au.vol.nopico') })
+        $gain = 0.0
+        if ($null -ne $peak -and $peak -lt $Target) { $gain = [math]::Round($Target - $peak, 1) }
+        $out += [pscustomobject]@{
+            Peak   = $peak
+            Gain   = $gain
+            Filter = $(if ($gain -gt 0) { 'volume={0}dB:precision=fixed' -f $gain.ToString([System.Globalization.CultureInfo]::InvariantCulture) } else { '' })
+        }
+    }
+    $txt = ($txts -join ' | ')
+    Stop-CvStep $Context $Tag $true -Extra $txt -OkMsg (Get-CvText -Key 'au.vol.ok' -Values @($txt))
+    return @($out)
+}
+
 function Get-CvDownmixPan {
     <#
         Filtro 'pan' del downmix 5.1->estereo con VOZ REFORZADA, de los coeficientes {Center;Front;
@@ -279,8 +352,14 @@ function Get-CvSyncPreviewAt {
 # par con el ingles en toda la pelicula. Doblaje y original comparten musica y efectos, asi que los
 # CAMBIOS de energia del sonido coinciden: se busca el desplazamiento con el que mejor encajan.
 # El calculo va en C#: en PowerShell son millones de multiplicaciones por punto (minutos).
-if (-not ('CvAudioEnvelope' -as [type])) {
-    Add-Type -TypeDefinition @'
+function Initialize-CvAudioEnvelope {
+    <#
+        Compila (una vez por sesion) el calculo en C# de la comprobacion cruzada de la sincronia. Al
+        cargar el modulo costaba ~0,2 s en cada proceso, y solo se usa cuando una pista de audio acaba
+        antes que el video y hay otra con la que compararla.
+    #>
+    if (-not ('CvAudioEnvelope' -as [type])) {
+        Add-Type -TypeDefinition @'
 using System;
 public static class CvAudioEnvelope
 {
@@ -345,6 +424,7 @@ public static class CvAudioEnvelope
     }
 }
 '@
+    }
 }
 
 function Resolve-CvAudioCrossCheck {
@@ -438,6 +518,7 @@ function Get-CvAudioEnvelope {
             '-y', $tmp
         ) -Context $Context)
         if (-not (Test-Path -LiteralPath $tmp)) { return ,([double[]]@()) }
+        Initialize-CvAudioEnvelope
         return ,([CvAudioEnvelope]::FromS16([System.IO.File]::ReadAllBytes($tmp), $rate, $PerSec))
     }
     finally {
@@ -457,6 +538,7 @@ function Measure-CvAudioTrackLag {
     $ref  = Get-CvAudioEnvelope -Context $Context -File $File -Index $RefIndex -Start $At -Seconds $Window -PerSec $per
     $oIni = [Math]::Max(0.0, $At - $Pad)
     $oth  = Get-CvAudioEnvelope -Context $Context -File $File -Index $Index -Start $oIni -Seconds (($At - $oIni) + $Window + $Pad) -PerSec $per
+    Initialize-CvAudioEnvelope
     $b = [CvAudioEnvelope]::BestLag([double[]]$ref, [double[]]$oth)
     if ($b[0] -lt 0) { return $null }
     return @{
@@ -860,6 +942,22 @@ function Select-AudioFallback {
     }
 }
 
+function Get-CvSyncVideoSpec {
+    <#
+        PURO. Que pista de video mirar para saber donde ACABA el video (la sincronia del audio): la
+        elegida (-VideoIndex, indice absoluto) y, sin ella, la primera de video REAL (Get-VideoStream:
+        sin caratulas). Antes era siempre 'v:0', y con una caratula o una pista de video delante se media
+        el final de esa (0, o el que no era) y la deteccion del audio adelantado no servia.
+    #>
+    param($Info = $null, [int]$VideoIndex = -1)
+    if ($VideoIndex -ge 0) { return ("{0}" -f $VideoIndex) }
+    if ($null -ne $Info) {
+        $v = Get-VideoStream -Info $Info
+        if ($null -ne $v -and $null -ne $v.index) { return ("{0}" -f [int]$v.index) }
+    }
+    return 'v:0'
+}
+
 function Invoke-AudioAsk {
     <#
         Devuelve @{ Skip; Tracks=[{Index,Is51,Sync,Lang,Default}]; Manual }. La pista DEFAULT va PRIMERO
@@ -868,7 +966,13 @@ function Invoke-AudioAsk {
         En copy (Skip=$true) las Tracks NO se recodifican: el multiplex las copia (o, si Tracks esta
         vacio, cae al comportamiento clasico 0:a:0).
     #>
-    param([Parameter(Mandatory)]$Context, [Parameter(Mandatory)]$Prof, [Parameter(Mandatory)]$Info)
+    param(
+        [Parameter(Mandatory)]$Context,
+        [Parameter(Mandatory)]$Prof,
+        [Parameter(Mandatory)]$Info,
+        # La pista de video ELEGIDA (la de Invoke-VideoAsk): su final es el que cuenta para la sincronia.
+        [int]$VideoIndex = -1
+    )
     $res    = [ordered]@{
         Skip   = $false
         Tracks = @()
@@ -938,7 +1042,7 @@ function Invoke-AudioAsk {
     # video con inicios alineados). Solo si esta activa la deteccion (encode.audioSyncThreshold > 0).
     $videoEnd = 0.0
     if (-not $isCopy -and $Context.AudioSyncThreshold -gt 0) {
-        $videoEnd = Get-CvStreamEndPts -Context $Context -File $file -Stream 'v:0' -Duration $adur -What (Get-CvText -Key 'au.video.pista')
+        $videoEnd = Get-CvStreamEndPts -Context $Context -File $file -Stream (Get-CvSyncVideoSpec -Info $Info -VideoIndex $VideoIndex) -Duration $adur -What (Get-CvText -Key 'au.video.pista')
     }
     $tracks = @()
     $finesAudio = @{}   # fin de cada pista de audio, leido una sola vez (la comprobacion cruzada lo reusa)
@@ -962,10 +1066,15 @@ function Invoke-AudioAsk {
                 }
                 else {
                     Write-CvLog 'AUDIO' (Get-CvText -Key 'au.sync.wav' -Values @($delay, $lbl)) -Indent 3
-                    $ans = (Read-CvLine -Prompt (Get-CvText -Key 'au.sync.sil.q' -Values @($delay)) -TimeoutSec (Get-CvPromptTimeout $Context 'sync')).Trim()
                     $res.Manual = $true   # se pregunto por el silencio de sincronia
-                    if ($ans -eq '') { $sync = $delay }
-                    else { $v = ConvertTo-InvDouble $ans; if ($null -ne $v) { $sync = $v } }
+                    # Algo que no es un numero se VUELVE A PREGUNTAR: antes se quedaba en 0 sin decir nada.
+                    while ($true) {
+                        $ans = (Read-CvLine -Prompt (Get-CvText -Key 'au.sync.sil.q' -Values @($delay)) -TimeoutSec (Get-CvPromptTimeout $Context 'sync')).Trim()
+                        if ($ans -eq '') { $sync = $delay; break }
+                        $v = ConvertTo-InvDouble $ans
+                        if ($null -ne $v) { $sync = $v; break }
+                        Write-Host (Get-CvText -Key 'au.sync.nonum' -Values @($ans)) -ForegroundColor Yellow
+                    }
                     Write-Host ''
                 }
             }
@@ -973,6 +1082,8 @@ function Invoke-AudioAsk {
                 # CASO 2: el audio ACABA antes que el video (inicios alineados) -> parece ADELANTADO; se
                 # sugiere retrasarlo esa diferencia. Se PREGUNTA (default = detectado, con preview A/B).
                 $audioEnd = if ($videoEnd -gt 0) { Get-CvStreamEndPts -Context $Context -File $file -Stream "$($s.Index)" -Duration $adur -What (Get-CvText -Key 'au.pista.audio' -Values @($s.Index)) } else { 0.0 }
+                # Apuntado: la comprobacion cruzada de OTRA pista lo reusa en vez de volver a leerlo.
+                if ($videoEnd -gt 0) { $finesAudio[[int]$s.Index] = $audioEnd }
                 $chk   = Get-CvAudioAheadVerdict -Context $Context -File $file -AudioIndexes @($aud | ForEach-Object { [int]$_.index }) -Index ([int]$s.Index) `
                                                  -VideoEnd $videoEnd -AudioEnd $audioEnd -Duration $adur -EndCache $finesAudio
                 $ahead = [double]$chk.Delay
@@ -1088,7 +1199,11 @@ function Invoke-AudioRun {
         # Canales de la pista de ORIGEN (para no hacer upmix: audioChannels es un MAXIMO). 0 = desconocido.
         [int]$SourceChannels = 0,
         # Posicion 0-based de la pista en la salida (multipista): define el temporal <name>_aN.*.
-        [int]$Pos = 0
+        [int]$Pos = 0,
+        # Ganancia 'peak' YA medida por quien llama (Measure-CvPeakGains, todas las pistas en una sola
+        # lectura del archivo). Sin ella, se mide aqui esta pista; y con la fuente WAV de sincronia
+        # tambien, porque entonces lo que se codifica ya no es la pista del original tal cual.
+        $PeakGain = $null
     )
     $name   = [System.IO.Path]::GetFileNameWithoutExtension($File)
     $atmp   = Get-CvAudioTempPath -Context $Context -Name $name -Pos $Pos
@@ -1166,8 +1281,11 @@ function Invoke-AudioRun {
         $wavArgs = @('-hide_banner','-y','-i',$File,'-filter_complex',$fc,'-map','[out]')
         if ($Context.TestLimit -gt 0) { $wavArgs += @('-t',"$($Context.TestLimit)") }  # modo pruebas
         $wavArgs += $wav
-        Invoke-ToolShow -Exe $Context.FFmpeg -Arguments $wavArgs -Context $Context | Out-Null
-        $syncOk = (Test-Path -LiteralPath $wav)
+        $wavCode = Invoke-ToolShow -Exe $Context.FFmpeg -Arguments $wavArgs -Context $Context
+        # Bien = ffmpeg acabo con 0 Y dejo algo. Mirando solo si existia el .wav, un fallo a mitad de
+        # la decodificacion dejaba un WAV valido pero CORTADO, y la salida llevaba el audio truncado.
+        $syncOk = (([int]$wavCode -eq 0) -and (Test-Path -LiteralPath $wav) -and ((Get-Item -LiteralPath $wav).Length -gt 0))
+        if (-not $syncOk -and (Test-Path -LiteralPath $wav)) { Remove-Item -Force -LiteralPath $wav -ErrorAction SilentlyContinue }
         Stop-CvStep $Context 'AUDIO' $syncOk -FailMsg (Get-CvText -Key 'au.sil.mal')
         if (-not $syncOk) { return $null }
         $sourceInput = @('-i',$wav)
@@ -1199,7 +1317,7 @@ function Invoke-AudioRun {
         if ($Context.TestLimit -gt 0 -and -not $fromWav) { $measureArgs += @('-t',"$($Context.TestLimit)") }
         # Medir el pico recorre TODO el audio (volumedetect): puede tardar. Paso con ✓ para que
         # no parezca colgado entre "Resolucion" y "Aplicando ganancia".
-        $pk = Measure-CvPeakGain -Context $Context -Tag 'AUDIO' -InputArgs $measureArgs -Target $target
+        $pk = $(if ($null -ne $PeakGain -and -not $fromWav) { $PeakGain } else { Measure-CvPeakGain -Context $Context -Tag 'AUDIO' -InputArgs $measureArgs -Target $target })
         if ($pk.Gain -gt 0) {
             Write-CvInfoStep $Context 'AUDIO' (Get-CvText -Key 'au.vol.gan' -Values @($pk.Gain))
             $mainFilter = $pk.Filter
@@ -1251,8 +1369,10 @@ function Invoke-AudioRun {
     if ($method -eq 'aacgain' -and (Test-Path -LiteralPath $outM4a)) {
         if (Test-Path $Context.AacGain) {
             Start-CvStep $Context 'AUDIO' (Get-CvText -Key 'au.aacg.apl')
-            [void](Invoke-ToolShow -Exe $Context.AacGain -Arguments @('/r','/c','/q', $outM4a) -Context $Context)
-            Stop-CvStep $Context 'AUDIO' $true
+            # Su codigo de salida cuenta: antes se daba por bueno siempre. Un fallo no tira el archivo
+            # (aacgain no toca el .m4a si no termina), pero se dice: el audio queda sin ajustar.
+            $agCode = Invoke-ToolShow -Exe $Context.AacGain -Arguments @('/r','/c','/q', $outM4a) -Context $Context
+            Stop-CvStep $Context 'AUDIO' ([int]$agCode -eq 0) -FailMsg (Get-CvText -Key 'au.aacg.mal' -Values @($agCode))
         } else {
             Write-CvLog 'AUDIO' (Get-CvText -Key 'au.aacg.no')
         }

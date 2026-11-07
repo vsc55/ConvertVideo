@@ -91,7 +91,7 @@ function Show-CvSetupWindow {
     $outTitle = New-Object System.Windows.Forms.Label
     $outTitle.Dock      = 'Fill'
     $outTitle.AutoSize  = $false
-    $outTitle.Font      = New-Object System.Drawing.Font('Segoe UI', 10, [System.Drawing.FontStyle]::Bold)
+    $outTitle.Font      = Get-CvGuiFont -Size 10 -Style Bold
     $outTitle.ForeColor = (Get-CvGuiCurrentPalette).Muted
     $outTitle.Text      = (Get-CvText -Key 'setup.cab.estado')
     $outBox.Controls.Add($outTitle, 0, 0)
@@ -147,7 +147,7 @@ function Show-CvSetupWindow {
         $l = New-Object System.Windows.Forms.Label
         $l.Text      = $Text
         $l.AutoSize  = $true
-        $l.Font      = New-Object System.Drawing.Font('Segoe UI', 9, [System.Drawing.FontStyle]::Bold)
+        $l.Font      = Get-CvGuiFont -Size 9 -Style Bold
         $l.ForeColor = (Get-CvGuiCurrentPalette).Muted
         $l.Margin    = New-Object System.Windows.Forms.Padding(3, 10, 3, 2)
         $side.Controls.Add($l)
@@ -230,7 +230,13 @@ function Show-CvSetupWindow {
         $msg = Get-CvText -Key 'setup.reset.msg' -Values @($CfgName)
         if (-not (Show-CvGuiConfirm -Title (Get-CvText -Key 'setup.reset.tit') -Message $msg)) { & $write (Get-CvText -Key 'setup.cab.config') (Get-CvText -Key 'setup.reset.cancel'); return }
         [void](Reset-CvConfig -Path $CfgPath)
-        & $write (Get-CvText -Key 'setup.cab.config') (Get-CvText -Key 'setup.reset.hecho' -Values @($CfgName))
+        # Como al guardar desde el editor: el contexto se REHACE. Si no, las demas ventanas de setup
+        # (mantenimiento, limpieza, logs, herramientas) seguian con las carpetas de ANTES del reset, y
+        # mantenimiento podia limpiar un Proceso\ que ya no era el bueno.
+        $msg = (Get-CvText -Key 'setup.reset.hecho' -Values @($CfgName))
+        $err = & $recarga
+        if ("$err" -ne '') { $msg = $msg + [Environment]::NewLine + (Get-CvText -Key 'setup.cfg.norecarga' -Values @($err)) }
+        & $write (Get-CvText -Key 'setup.cab.config') $msg
     })
 
     # MANTENIMIENTO en un sitio: jobs, bloqueos, temporales, logs viejos y caches de las ventanas.
