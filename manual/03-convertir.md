@@ -70,7 +70,7 @@ Está así porque es una trampa fácil: marcas una fila solo para leer su resume
 | Opción | Sobre qué actúa |
 |---|---|
 | *Codificar solo este* | Los marcados que estén **en cola**: abre un worker solo para ellos. |
-| *Cortar la codificación de este* | Mata **su** worker (y su ffmpeg), no los demás. |
+| *Parar la conversión de este archivo (vuelve a la cola)* | Mata **su** worker (y su ffmpeg), no los demás. El archivo vuelve a la cola y lo empieza de nuevo el siguiente worker libre; si no quieres convertirlo, después *Quitar de la cola*. |
 | *Ver el proceso (log)* | Si se está codificando, su log **en vivo**; si ya terminó, el tramo del log donde se convirtió. |
 | *Reproducir el ORIGINAL* / *el CONVERTIDO* | Abre el vídeo para verlo. El convertido aparece en cuanto existe el archivo — también **mientras se codifica** (*a medio hacer*), que es la forma rápida de comprobar que va bien sin esperar al final. |
 | *Preparar / editar el job* | Abre el editor ([página 2](02-preparar.md)). No se puede con un archivo que se está codificando: el worker ya trabaja con la copia que leyó. |

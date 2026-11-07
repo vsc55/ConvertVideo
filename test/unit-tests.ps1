@@ -3517,6 +3517,22 @@ Assert-Eq   'Amplia: reducir un 4K, no'                  $false (Test-CvJobResiz
 Assert-Eq   'Amplia: un perfil que SI deja ampliar, no'  $false (Test-CvJobResizeEnlarges -Prof ([pscustomobject]@{ ChangeSize = '1920:-2'; NoUpscale = $false }) -Width 1920 -Height 1080 -Sar '1:1' -Crop '1440:1080:240:0' -Resize '1920:-2')
 Assert-Eq   'Amplia: squareheight con SAR, no se juzga'  $false (Test-CvJobResizeEnlarges -Prof ([pscustomobject]@{ ChangeSize = '' }) -Width 720 -Height 576 -Sar '64:45' -Resize '1024:576,setsar=1' -Anamorphic 'squareheight')
 Assert-Eq   'Amplia: sin el tamano del original, no se sabe' $false (Test-CvJobResizeEnlarges -Prof $rlSolo -Width 0 -Height 0 -Crop '1440:1080:240:0' -Resize '1920:-2')
+# Iconos del menu del boton derecho de la cola: estan en el catalogo y se ponen una vez por tema.
+foreach ($rlK in 'play', 'stop', 'log', 'edit', 'bulk', 'job', 'video', 'output', 'folder', 'delete', 'unlock', 'remove') {
+    Assert-True ("Menu: hay icono '{0}'" -f $rlK) ((Get-CvGuiIconGlyphs).ContainsKey($rlK))
+}
+$rlMenu = New-Object System.Windows.Forms.ContextMenuStrip
+$rlMi = $rlMenu.Items.Add('x')
+$rlEst = @{}
+Set-CvGuiMenuIcons -Items @(@{ Item = $rlMi; Kind = 'stop' }) -State $rlEst
+$rlImg = $rlMi.Image
+Assert-True 'Menu: la opcion lleva su icono'             ($null -ne $rlImg)
+Set-CvGuiMenuIcons -Items @(@{ Item = $rlMi; Kind = 'stop' }) -State $rlEst
+Assert-True 'Menu: con el mismo tema no se rehace'       ([object]::ReferenceEquals($rlImg, $rlMi.Image))
+Set-CvGuiThemeDefault -Theme 'dark' | Out-Null
+Set-CvGuiMenuIcons -Items @(@{ Item = $rlMi; Kind = 'stop' }) -State $rlEst
+Assert-True 'Menu: con otro tema, se repinta'            (-not [object]::ReferenceEquals($rlImg, $rlMi.Image))
+$rlMenu.Dispose()
 # MODO PRUEBAS de las baterias de ventanas: a que monitor van (pantallas simuladas, sin Windows).
 $rlPant = {
     param([string]$Nombre, [int]$X)

@@ -2,6 +2,18 @@
 
 ## VERSION 4.7.6 - 16/10/2026
 ### UPDATE
+  - **El menú del botón derecho de la cola lleva iconos**: los mismos de la barra de botones (la fuente de iconos de Windows, `New-CvGuiIcon`), con los que faltaban añadidos a su catálogo (`Get-CvGuiIconGlyphs`).
+    - **Qué icono lleva cada opción:**
+      - Reproducir y parar, como en la barra.
+      - Un documento para el log, el lápiz para editar, una lista con marcas para editar varios y `{ }` para ver el job.
+      - Una cámara para el original y fotogramas para el convertido.
+      - La carpeta, una papelera para la salida a medias, un candado abierto para liberar el bloqueo y un círculo con menos para quitar de la cola.
+    - **Tema:** se ponen al abrir el menú, con el tema de ese momento (`Set-CvGuiMenuIcons`). Si se cambia de tema con la ventana abierta, se repintan, y con el mismo tema no se vuelven a dibujar.
+    - Comprobado dibujándolos en claro y en oscuro.
+  - **«Cortar la codificación de este» pasa a llamarse «Parar la conversión de este archivo (vuelve a la cola)»**, en el menú del botón derecho de la cola. El nombre no se entendía.
+    - El nombre nuevo dice además lo que pasa: lo convertido hasta ahí se pierde (queda un `.part`, que no cuenta) y el archivo vuelve a la cola, donde lo empieza de nuevo el siguiente worker libre.
+    - Por eso no se llama «Cancelar»: el confirmar explica que, si no se quiere convertir, después se use «Quitar de la cola».
+    - Mismo cambio en el log, en `docs\ref-cola.md` y en el manual.
   - **Los jobs de antes con el escalado mal calculado se detectan y se corrigen.**
     - **El fallo:** antes de la 7ª tanda, «solo reducir» se comparaba con el tamaño SIN recortar. Una serie 4:3 con bandas (1920x1080 recortado a 1440x1080) se guardaba con `1920:-2`, que la estira a 1920x1440: más lenta de codificar y más grande que el original.
     - **La regla** está en `Test-CvJobResizeEnlarges` (`JobCore`): un escalado que amplía cuando el perfil no lo permite no puede salir del perfil bien calculado.

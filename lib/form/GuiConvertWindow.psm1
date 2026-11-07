@@ -489,6 +489,23 @@ function Show-CvConvertWindow {
     $miPurge = $menu.Items.Add((Get-CvText -Key 'cola.men.purge'))
     $miFree  = $menu.Items.Add((Get-CvText -Key 'cola.men.free'))
     $miDrop  = $menu.Items.Add((Get-CvText -Key 'cola.men.drop'))
+    # Cada opcion con su icono (los del catalogo Get-CvGuiIconGlyphs). Se ponen al ABRIR el menu, con
+    # el tema de ese momento: cambiar el tema con la ventana abierta los repinta (Set-CvGuiMenuIcons).
+    $iconosMenu = @(
+        @{ Item = $miStart;     Kind = 'play' }
+        @{ Item = $miKill;      Kind = 'stop' }
+        @{ Item = $miWorkerLog; Kind = 'log' }
+        @{ Item = $miEdit;      Kind = 'edit' }
+        @{ Item = $miBulk;      Kind = 'bulk' }
+        @{ Item = $miJob;       Kind = 'job' }
+        @{ Item = $miPlayIn;    Kind = 'video' }
+        @{ Item = $miPlayOut;   Kind = 'output' }
+        @{ Item = $miOut;       Kind = 'folder' }
+        @{ Item = $miPurge;     Kind = 'delete' }
+        @{ Item = $miFree;      Kind = 'unlock' }
+        @{ Item = $miDrop;      Kind = 'remove' }
+    )
+    [void](Register-CvGuiDisposeWith -Control $lv -Object $menu)   # el menu (y sus iconos) se va con la lista
 
     $current = {
         if ($lv.SelectedIndices.Count -eq 0) { return $null }
@@ -1192,6 +1209,7 @@ function Show-CvConvertWindow {
     $btnLogOpen.Add_Click({ [void](Open-CvGuiPath -Path "$($st.LogPath)" -Title (Get-CvText -Key 'logs.tit')) })
 
     $menu.Add_Opening({
+        Set-CvGuiMenuIcons -Items $iconosMenu -State $st
         $r   = & $current
         $sel = @(& $selected)
         # El job se puede editar mientras NADIE lo este codificando: a mitad de conversion el worker

@@ -779,6 +779,15 @@ function Get-CvGuiIconGlyphs {
         folder  = @{ Code = 0xED25; Color = @(198, 155, 40) }   # carpeta
         console = @{ Code = 0xE756; Color = @(69, 90, 100) }    # ventana de comandos
         theme   = @{ Code = 0xE706; Color = @(120, 120, 130) }  # brillo (cambiar claro/oscuro)
+        # Los del menu del boton derecho de la cola (Set-CvGuiMenuIcons).
+        log     = @{ Code = 0xE8A5; Color = @(69, 90, 100) }    # documento (ver el log)
+        bulk    = @{ Code = 0xE762; Color = @(69, 90, 100) }    # lista con marcas (editar varios)
+        job     = @{ Code = 0xE943; Color = @(69, 90, 100) }    # llaves { } (ver el job, JSON)
+        video   = @{ Code = 0xE714; Color = @(21, 101, 192) }   # camara (reproducir el original)
+        output  = @{ Code = 0xE8B2; Color = @(21, 101, 192) }   # fotogramas (reproducir el convertido)
+        delete  = @{ Code = 0xE74D; Color = @(198, 40, 40) }    # papelera (borrar la salida a medias)
+        unlock  = @{ Code = 0xE785; Color = @(199, 119, 0) }    # candado abierto (liberar el bloqueo)
+        remove  = @{ Code = 0xECC9; Color = @(198, 40, 40) }    # circulo con menos (quitar de la cola)
     }
 }
 
@@ -801,6 +810,31 @@ function Get-CvGuiIconRgb {
     )
 }
 
+function Set-CvGuiMenuIcons {
+    <#
+        Pone a cada opcion de un menu su icono (New-CvGuiIcon, la misma fuente de iconos de Windows
+        que los botones de la barra). -Items: @{ Item = <opcion>; Kind = <icono> }. Los iconos llevan
+        el color del tema (en oscuro se aclaran), asi que se rehacen si el tema ha cambiado desde la
+        ultima vez: se llama al ABRIR el menu, y con el mismo tema no hace nada. -State guarda que
+        paleta tienen puesta. Nunca lanza: una opcion sin icono sigue siendo una opcion.
+    #>
+    param(
+        [Parameter(Mandatory)]$Items,
+        [Parameter(Mandatory)][hashtable]$State,
+        [int]$Size = 16
+    )
+    $pal = Get-CvGuiCurrentPalette
+    if ([object]::ReferenceEquals($State['MenuIconPal'], $pal)) { return }
+    foreach ($par in @($Items)) {
+        try {
+            $viejo = $par.Item.Image
+            $par.Item.Image = New-CvGuiIcon -Kind "$($par.Kind)" -Size $Size
+            if ($null -ne $viejo) { $viejo.Dispose() }
+        } catch { }
+    }
+    $State['MenuIconPal'] = $pal
+}
+
 function New-CvGuiIcon {
     <#
         Icono para la barra de botones. Se pinta el glifo que toca de 'Segoe MDL2 Assets' (la fuente
@@ -810,7 +844,7 @@ function New-CvGuiIcon {
         Si esa fuente NO esta (Windows viejo), se cae a los iconos DIBUJADOS a mano con GDI+ que habia
         antes: mas pobres, pero siempre disponibles. En ningun caso hay ficheros .png que instalar.
 
-        -Kind: play | stop | cancel | prepare | edit | refresh | options | console. Devuelve un Bitmap
+        -Kind: una clave de Get-CvGuiIconGlyphs (play, stop, cancel, edit, folder, delete...). Devuelve un Bitmap
         (o $null si algo falla: un boton sin icono sigue siendo un boton).
     #>
     param(

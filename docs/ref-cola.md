@@ -367,7 +367,7 @@ La lista es de **selección múltiple** (Ctrl+clic, Mayús+clic, Ctrl+A). El men
 | Opción | Sobre qué actúa |
 |---|---|
 | *Codificar solo estos* | **todos** los marcados que estén *en cola* — lo mismo que *Iniciar* con selección |
-| *Cortar la codificación de este* | **todos** los marcados que se estén *codificando*: mata **su** worker (y su `ffmpeg`), no los demás |
+| *Parar la conversión de este archivo (vuelve a la cola)* | **todos** los marcados que se estén *codificando*: mata **su** worker (y su `ffmpeg`), no los demás. El archivo **vuelve a la cola** (su salida a medias es un `.part`, que no cuenta): lo coge el siguiente worker libre. Para que no se convierta, después *Quitar de la cola* |
 | *Ver el proceso (log)* | el **primero** marcado. Si se está codificando, abre el log **en vivo** de su worker; si ya terminó (o quedó a medias), busca en `logs\` el **tramo** donde se convirtió ese archivo |
 | *Reproducir el ORIGINAL* / *Reproducir el CONVERTIDO* | el **primero** marcado: abre el archivo de entrada o el de salida para **verlo**. El de salida solo se ofrece si el fichero ya existe (también mientras se codifica — dice *(a medio hacer)* —, que es como se comprueba que va bien sin esperar al final). Lo abre lo que diga `preview.player`: por defecto el **reproductor asociado de Windows**, o el `ffplay` de `tools\`, o el de `preview.playerExe`. **No bloquea la cola**: el reproductor se abre aparte y la ventana sigue refrescándose |
 | *Preparar / editar el job* | el **primero** marcado (es una ventana por archivo) |
