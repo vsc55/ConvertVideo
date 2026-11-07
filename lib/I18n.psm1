@@ -155,7 +155,9 @@ function Set-CvLanguage {
         [string]$Dir = ''
     )
     $sys = ''
-    try { $sys = (Get-Culture).TwoLetterISOLanguageName } catch { $sys = '' }
+    # El idioma de la INTERFAZ de Windows (Get-UICulture), no el formato regional (Get-Culture): con
+    # Windows en ingles y formato de fechas espanol, 'auto' salia en castellano.
+    try { $sys = (Get-UICulture).TwoLetterISOLanguageName } catch { $sys = '' }
     $res = Resolve-CvLanguage -Lang $Lang -SystemLang $sys -Available (Get-CvLangAvailable -Dir $Dir)
     $script:CvLang    = $res
     $script:CvLangMap = Get-CvLangResources -Lang $res -Dir $Dir

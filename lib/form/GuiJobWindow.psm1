@@ -76,6 +76,7 @@ function Show-CvJobWindow {
         AutoResize = $null    # el escalado que salio SOLO (del perfil); si el campo sigue asi, se rehace
         Head     = ''         # la cabecera de cuando acabo el analisis ($restoreHead)
         Leido    = $null      # el job ya leido de disco al analizar (no se lee dos veces)
+        CropAuto = ''         # el recorte que puso la deteccion de bordes (no el tecleado)
         SyncNotes = @()       # retardos de audio detectados (se aplican y se cuentan, como en consola)
         EditA    = $null      # la fila de audio que estan editando los campos de su barra
         EditS    = $null      # idem en subtitulos (ver los manejadores de los campos de texto)
@@ -247,7 +248,8 @@ function Show-CvJobWindow {
     $lvA.MultiSelect   = $false
     $lvA.Font          = (New-CvGuiFont 9)
     $lvA.Name          = 'cvJobAudio'
-    [void](Add-CvGuiListColumns -List $lvA -Columns (Get-CvJobAudioColumns))
+    $colsA = Get-CvJobAudioColumns
+    [void](Add-CvGuiListColumns -List $lvA -Columns $colsA)
     # 'Pista' se queda con lo que sobre: es la que lleva el texto largo, y asi no queda un trozo de
     # cabecera sin columna (que el sistema pinta claro y no hay forma de oscurecer).
     [void](Set-CvGuiListFillColumn -List $lvA -Index 0 -Min 240)
@@ -294,7 +296,8 @@ function Show-CvJobWindow {
     $lvS.MultiSelect   = $false
     $lvS.Font          = (New-CvGuiFont 9)
     $lvS.Name          = 'cvJobSubs'
-    [void](Add-CvGuiListColumns -List $lvS -Columns (Get-CvJobSubColumns))
+    $colsS = Get-CvJobSubColumns
+    [void](Add-CvGuiListColumns -List $lvS -Columns $colsS)
     [void](Set-CvGuiListFillColumn -List $lvS -Index 0 -Min 240)
     [void](Set-CvGuiDoubleBuffered -Control $lvS)
     $sGrid.Controls.Add($lvS, 0, 0)
@@ -349,64 +352,83 @@ function Show-CvJobWindow {
     # ACTUALIZAN en su sitio (render). Reconstruirlas con Items.Clear() desde un manejador -y
     # ItemChecked lo es- deja la tabla interna del control inconsistente y al cerrar la ventana
     # .NET revienta con NullReferenceException en ListView.OnHandleDestroyed.
+    # Cada celda va a SU columna, buscada por la Key del catalogo (Get-CvGuiCatalogIndex), no por un
+    # numero fijo: anadir o mover una columna en Get-CvJobAudioColumns ya no descuadra la tabla.
+    $celdasA = {
+        param($r)
+        @{
+            track = "$($r.Text)"
+            lang  = "$($r.Lang)"
+            ch    = "$($r.Channels)"
+            codec = "$($r.Codec)"
+            def   = $(if ($r.Default) { (Get-CvText -Key 'comun.si.corto') } else { '' })
+            sync  = (Format-CvNumber $r.Sync)
+        }
+    }
     $buildAudio = {
         $st.Loading = $true
         try {
             $lvA.Items.Clear()
             foreach ($r in @($st.Audio)) {
-                $it = New-Object System.Windows.Forms.ListViewItem("$($r.Text)")
-                [void]$it.SubItems.Add("$($r.Lang)")
-                [void]$it.SubItems.Add("$($r.Channels)")
-                [void]$it.SubItems.Add("$($r.Codec)")
-                [void]$it.SubItems.Add($(if ($r.Default) { (Get-CvText -Key 'comun.si.corto') } else { '' }))
-                [void]$it.SubItems.Add((Format-CvNumber $r.Sync))
-                $it.Checked = [bool]$r.Keep
+                $it = New-Object System.Windows.Forms.ListViewItem('')
+                for ($c = 1; $c -lt @($colsA).Count; $c++) { [void]$it.SubItems.Add('') }
                 [void]$lvA.Items.Add($it)
             }
         } finally { $st.Loading = $false }
+        & $renderAudio
     }
     $renderAudio = {
         if ($st.Closing) { return }
         $st.Loading = $true
         try {
-            for ($i = 0; $i -lt $lvA.Items.Count -and $i -lt @($st.Audio).Count; $i++) {
-                $r  = @($st.Audio)[$i]
+            $filas = @($st.Audio)
+            for ($i = 0; $i -lt $lvA.Items.Count -and $i -lt $filas.Count; $i++) {
+                $r  = $filas[$i]
                 $it = $lvA.Items[$i]
-                $it.SubItems[1].Text = "$($r.Lang)"
-                $it.SubItems[2].Text = "$($r.Channels)"
-                $it.SubItems[3].Text = "$($r.Codec)"
-                $it.SubItems[4].Text = $(if ($r.Default) { (Get-CvText -Key 'comun.si.corto') } else { '' })
-                $it.SubItems[5].Text = (Format-CvNumber $r.Sync)
+                $txt = & $celdasA $r
+                foreach ($k in @($txt.Keys)) {
+                    $ix = Get-CvGuiCatalogIndex -Items $colsA -Key $k
+                    if ($ix -ge 0 -and $ix -lt $it.SubItems.Count -and $it.SubItems[$ix].Text -ne $txt[$k]) { $it.SubItems[$ix].Text = $txt[$k] }
+                }
                 if ($it.Checked -ne [bool]$r.Keep) { $it.Checked = [bool]$r.Keep }
             }
         } finally { $st.Loading = $false }
+    }
+    $celdasS = {
+        param($r)
+        @{
+            track  = "$($r.Text)"
+            lang   = "$($r.Lang)"
+            cues   = $(if ($r.Cues -ge 0) { "$($r.Cues)" } else { '?' })
+            forced = $(if ($r.Forced)  { (Get-CvText -Key 'comun.si.corto') } else { '' })
+            def    = $(if ($r.Default) { (Get-CvText -Key 'comun.si.corto') } else { '' })
+        }
     }
     $buildSubs = {
         $st.Loading = $true
         try {
             $lvS.Items.Clear()
             foreach ($r in @($st.Subs)) {
-                $it = New-Object System.Windows.Forms.ListViewItem("$($r.Text)")
-                [void]$it.SubItems.Add("$($r.Lang)")
-                [void]$it.SubItems.Add($(if ($r.Cues -ge 0) { "$($r.Cues)" } else { '?' }))
-                [void]$it.SubItems.Add($(if ($r.Forced)  { (Get-CvText -Key 'comun.si.corto') } else { '' }))
-                [void]$it.SubItems.Add($(if ($r.Default) { (Get-CvText -Key 'comun.si.corto') } else { '' }))
-                $it.Checked = [bool]$r.Keep
+                $it = New-Object System.Windows.Forms.ListViewItem('')
+                for ($c = 1; $c -lt @($colsS).Count; $c++) { [void]$it.SubItems.Add('') }
                 [void]$lvS.Items.Add($it)
             }
         } finally { $st.Loading = $false }
+        & $renderSubs
     }
     $renderSubs = {
         if ($st.Closing) { return }
         $st.Loading = $true
         try {
-            for ($i = 0; $i -lt $lvS.Items.Count -and $i -lt @($st.Subs).Count; $i++) {
-                $r  = @($st.Subs)[$i]
+            $filas = @($st.Subs)
+            for ($i = 0; $i -lt $lvS.Items.Count -and $i -lt $filas.Count; $i++) {
+                $r  = $filas[$i]
                 $it = $lvS.Items[$i]
-                $it.SubItems[1].Text = "$($r.Lang)"
-                $it.SubItems[2].Text = $(if ($r.Cues -ge 0) { "$($r.Cues)" } else { '?' })
-                $it.SubItems[3].Text = $(if ($r.Forced)  { (Get-CvText -Key 'comun.si.corto') } else { '' })
-                $it.SubItems[4].Text = $(if ($r.Default) { (Get-CvText -Key 'comun.si.corto') } else { '' })
+                $txt = & $celdasS $r
+                foreach ($k in @($txt.Keys)) {
+                    $ix = Get-CvGuiCatalogIndex -Items $colsS -Key $k
+                    if ($ix -ge 0 -and $ix -lt $it.SubItems.Count -and $it.SubItems[$ix].Text -ne $txt[$k]) { $it.SubItems[$ix].Text = $txt[$k] }
+                }
                 if ($it.Checked -ne [bool]$r.Keep) { $it.Checked = [bool]$r.Keep }
             }
         } finally { $st.Loading = $false }
@@ -1013,7 +1035,17 @@ function Show-CvJobWindow {
         $force = "$Name".StartsWith('_')
         $on    = ($dbv -eq 'true') -or $force
         $auto  = ($dbv -eq 'auto') -and -not $force
-        if (-not ($on -or $auto)) { return }
+        if (-not ($on -or $auto)) {
+            # Un perfil SIN deteccion: el recorte que puso la deteccion de otro perfil se quita (la
+            # consola con este perfil no recortaria). Uno tecleado o elegido a mano se respeta.
+            if ("$($st.CropAuto)" -ne '' -and "$($st.Draft.Crop)" -eq "$($st.CropAuto)") {
+                $st.Draft.Crop = ''
+                $st.CropAsk    = $false
+                $st.CropAuto   = ''
+                & $reResize
+            }
+            return
+        }
         $kind = if ($auto) { 'auto' } else { 'full' }
         try {
             if ($null -eq $st.CropScan -or $st.CropKind -ne $kind) {
@@ -1048,6 +1080,7 @@ function Show-CvJobWindow {
                 $st.Draft.Crop = ''
                 $st.CropNote = (Get-CvText -Key 'job.recorte.sinbordes')
             }
+            $st.CropAuto = "$($st.Draft.Crop)"   # lo puso la deteccion (ver el caso sin deteccion, arriba)
             & $reResize
         } catch {
             # Cerrar la ventana a mitad (lo que lanza $say) no es un fallo del recorte: se deja pasar

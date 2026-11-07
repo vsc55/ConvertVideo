@@ -2156,7 +2156,21 @@ if ($null -eq $jobInfo) {
                         return
                     }
                     $script:bgWhile = $row2
-                    if (-not $sv[0].Enabled) { $t2.Stop(); $script:bgErr = 'Guardar job desactivado'; foreach ($fm in $forms) { $fm.Close() }; return }
+                    # El editor puede estar TODAVIA analizando (el segundo se prepara en segundo plano y
+                    # puede acabar antes): se le espera. Solo es un fallo si no se puede guardar ya
+                    # terminado, o si no termina nunca.
+                    if (-not $sv[0].Enabled) {
+                        $script:bgWaits++
+                        if ($script:bgWaits -le 200) { return }
+                        # Con lo que dicen el mensaje y la cabecera del editor: sin eso, un fallo aqui no
+                        # explicaba por que no se podia guardar.
+                        $msg = @($forms | ForEach-Object { $_.Controls.Find('cvJobMsg', $true) } | Where-Object { $_ })
+                        $cab = @($forms | ForEach-Object { $_.Controls.Find('cvJobHead', $true) } | Where-Object { $_ })
+                        $t2.Stop()
+                        $script:bgErr = ("Guardar job desactivado ({0} | {1})" -f $(if ($msg.Count) { $msg[0].Text } else { '' }), $(if ($cab.Count) { $cab[0].Text } else { '' }))
+                        foreach ($fm in $forms) { $fm.Close() }
+                        return
+                    }
                     $sv[0].PerformClick()
                     $script:bgEdOpen = $false
                     return

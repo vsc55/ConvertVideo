@@ -652,7 +652,7 @@ if (-not $sta) {
             $spCfg = @($f.Controls.Find('cvCfgSplit', $true))
             $script:cfgSplitOk    = ($spCfg.Count -eq 1 -and -not $spCfg[0].IsSplitterFixed)
             $script:cfgSplitAncho = $(if ($spCfg.Count -eq 1) { [int]$spCfg[0].SplitterWidth } else { 0 })
-            $script:cfgSplitGrip  = $(if ($spCfg.Count -eq 1) { "$($spCfg[0].AccessibleName)" } else { '' })
+            $script:cfgSplitGrip  = $(if ($spCfg.Count -eq 1 -and (Test-CvGuiMark -Control $spCfg[0] -Mark 'grip')) { 'grip' } else { '' })
             # El agarre va en el CENTRO del divisor: al cambiar el tamano de la ventana le toca otro
             # sitio, y si nadie manda repintar se queda en el hueco viejo (o sea: desaparece). Se
             # comprueba que redimensionar dispara el repintado del divisor.
@@ -754,7 +754,7 @@ if (-not $sta) {
 
     Assert-Eq   'Ventana sin excepciones' '' $script:guiErr
     Assert-True 'Editor: el divisor se arrastra'   $script:cfgSplitOk
-    Assert-True 'Editor: y se ve (ancho + agarre)' ($script:cfgSplitAncho -ge 8 -and $script:cfgSplitGrip -eq 'cv-grip')
+    Assert-True 'Editor: y se ve (ancho + agarre)' ($script:cfgSplitAncho -ge 8 -and $script:cfgSplitGrip -eq 'grip')
     Assert-True 'Editor: el agarre se repinta al redimensionar' $script:cfgSplitPinta
     Assert-True 'Avanzadas ocultas por defecto'  $script:advOff
     Assert-True 'Lo normal se ve igualmente'     $script:advNorm
@@ -1430,10 +1430,10 @@ if (-not $sta) {
     Assert-Eq   'Separador: y sigue tras repetir el tema' "$($palD.Border)" "$($sepT.BackColor)"
     Assert-True 'Separador: no se confunde con el fondo' ("$($sepT.BackColor)" -ne "$($palD.Back)")
     # El desplegable plano deja una flecha fantasma al estirarse si no se repinta.
-    Assert-Eq   'Combo: se repinta al cambiar de tamano' 'cv-repaint' "$($cbT.AccessibleName)"
+    Assert-True 'Combo: se repinta al cambiar de tamano' (Test-CvGuiMark -Control $cbT -Mark 'repaint')
     # El divisor: ancho para poder pincharlo y con su agarre pintado.
     Assert-True 'Divisor: ancho para agarrarlo'   ($spT.SplitterWidth -ge 8)
-    Assert-Eq   'Divisor: lleva agarre'           'cv-grip' "$($spT.AccessibleName)"
+    Assert-True 'Divisor: lleva agarre'           (Test-CvGuiMark -Control $spT -Mark 'grip')
     Assert-Eq   'Divisor: se puede arrastrar'     $false ([bool]$spT.IsSplitterFixed)
 
     # REGRESION: cambiar el tema tiene que valer para las ventanas que se abran DESPUES. Antes cada

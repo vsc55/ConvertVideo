@@ -359,6 +359,12 @@ function Install-CvTool {
         }
         Write-CvLog 'GLOBAL' (Get-CvText -Key 'tl.sha.ok' -Values @($tag))
     } else {
+        # Sin SHA256 y sin nadie delante (worker desatendido): no se instala. Ver Set-CvToolRequireHash.
+        if ($script:CvRequireHash) {
+            Write-CvLog 'GLOBAL' (Get-CvText -Key 'tl.sha.exige' -Values @($tag, $ver))
+            Remove-Item -Recurse -Force -LiteralPath $tmp -ErrorAction SilentlyContinue
+            return $false
+        }
         Write-CvLog 'GLOBAL' (Get-CvText -Key 'tl.sha.sin' -Values @($tag, $ver))
     }
 
@@ -530,9 +536,21 @@ function Get-CvGpuEncoders {
 # Cache de la comprobacion por-encoder de GPU (NVENC): la GPU/driver no cambian en la sesion, asi
 # que cada encoder se prueba UNA vez. Clave = nombre del encoder; valor = $true/$false.
 $script:CvGpuEncCache = @{}
-# El ffmpeg con el que se lleno CvGpuEncCache (Initialize-CvGpuCaps): el soporte de NVENC depende
-# TAMBIEN de la version de ffmpeg, y un job congelado con otra se comprueba con la SUYA, aparte
-# (CvGpuEncByExe, clave 'exe|encoder').
+# Si una instalacion SIN SHA256 en el catalogo se rechaza (worker desatendido con
+# behavior.requireHashUnattended). Lo fija quien arranca: Set-CvToolRequireHash.
+$script:CvRequireHash = $false
+
+function Set-CvToolRequireHash {
+    <# Exigir (o no) SHA256 para instalar herramientas en esta sesion. Lo pide el worker desatendido. #>
+    param([bool]$On = $true)
+    $script:CvRequireHash = $On
+}
+
+# La VERSION de ffmpeg con la que se lleno CvGpuEncCache (Initialize-CvGpuCaps): el soporte de NVENC
+# depende tambien de ella, y un job congelado con otra se comprueba con la SUYA, aparte
+# (CvGpuEncByExe, clave 'version|encoder'). Por version y no por ruta: la misma version puede llegar
+# por otra ruta (un enlace a tools\, como en las baterias) y se volvia a sondear la GPU en cada
+# analisis -un ffmpeg por encoder- dentro de la ventana.
 $script:CvGpuCapsExe  = ''
 $script:CvGpuEncByExe = @{}
 # Si la ultima sonda fallo por algo PASAJERO (sesiones NVENC ocupadas por otros workers, memoria):
@@ -557,9 +575,10 @@ function Test-CvGpuEncoder {
     #>
     param([Parameter(Mandatory)]$Context, [Parameter(Mandatory)][string]$Encoder)
     $exe = "$($Context.FFmpeg)"
-    $esCaps = ($script:CvGpuCapsExe -eq '' -or $exe -eq $script:CvGpuCapsExe)
+    $verFf  = "$($Context.FFmpegVersion)"
+    $esCaps = ($script:CvGpuCapsExe -eq '' -or $verFf -eq '' -or $verFf -eq $script:CvGpuCapsExe)
     if ($esCaps -and $script:CvGpuEncCache.ContainsKey($Encoder)) { return $script:CvGpuEncCache[$Encoder] }
-    $clave = "{0}|{1}" -f $exe, $Encoder
+    $clave = "{0}|{1}" -f $(if ($verFf -ne '') { $verFf } else { $exe }), $Encoder
     if ($script:CvGpuEncByExe.ContainsKey($clave)) { return $script:CvGpuEncByExe[$clave] }
     if ([string]::IsNullOrWhiteSpace($exe) -or -not (Test-Path -LiteralPath $exe)) { return $true }
     if ($Context.Debug) { Write-CvLog 'GLOBAL' ("[GPU] - Sondeando soporte de '{0}' en la GPU (encode sintetico)..." -f $Encoder) }
@@ -721,7 +740,7 @@ function Initialize-CvGpuCaps {
     $gpuEnc = @(Get-CvGpuEncoders)
     $ffVer  = "$($Context.FFmpegVersion)"
     $gpuNm  = Get-CvGpuCacheId
-    $script:CvGpuCapsExe = "$($Context.FFmpeg)"
+    $script:CvGpuCapsExe = "$($Context.FFmpegVersion)"
 
     $cached = Read-CvGpuCache -CfgPath $CfgPath -Ffmpeg $ffVer -Gpu $gpuNm
     if ($cached) {

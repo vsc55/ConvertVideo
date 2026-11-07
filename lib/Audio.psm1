@@ -257,9 +257,36 @@ function Get-CvAudioFilterChain {
     return ,$parts
 }
 
+function Get-CvAudioStartOffset {
+    <#
+        PURO. Lo que una pista empieza despues que el archivo segun ffprobe (start_time de la pista menos
+        el del formato), nunca negativo; $null si falta alguno de los dos (entonces hay que medirlo).
+    #>
+    param($Info, [int]$Index)
+    if ($null -eq $Info -or $null -eq $Info.format) { return $null }
+    $s = @($Info.streams | Where-Object { [int]$_.index -eq $Index })
+    if ($s.Count -eq 0) { return $null }
+    $inv = [System.Globalization.CultureInfo]::InvariantCulture
+    $fst = 0.0
+    $sst = 0.0
+    if (-not [double]::TryParse("$($Info.format.start_time)", [System.Globalization.NumberStyles]::Float, $inv, [ref]$fst)) { return $null }
+    if (-not [double]::TryParse("$($s[0].start_time)", [System.Globalization.NumberStyles]::Float, $inv, [ref]$sst)) { return $null }
+    # ffmpeg no da negativos (un audio que empieza ANTES que el archivo cuenta como 0).
+    return [double][math]::Max(0.0, [math]::Round($sst - $fst, 6))
+}
+
 function Get-AudioInitDelay {
-    <# Devuelve el pts_time del primer frame de audio (desfase inicial) o 0. #>
-    param([Parameter(Mandatory)]$Context, [Parameter(Mandatory)][string]$File, [int]$Index)
+    <#
+        Devuelve el pts_time del primer frame de audio (desfase inicial) o 0.
+
+        Con -Info (lo de ffprobe, que ya se tiene) sale de ahi: el start_time de la pista menos el del
+        archivo, que es justo el pts_time que da ffmpeg (este resta el inicio del archivo). Medido en
+        las 24 pistas de las fixtures y en audios retrasados en MKV y MP4: iguales al milesimo. Ahorra
+        lanzar un ffmpeg por pista. Si ffprobe no trae los dos datos, se mide como siempre.
+    #>
+    param([Parameter(Mandatory)]$Context, [Parameter(Mandatory)][string]$File, [int]$Index, $Info = $null)
+    $desdeInfo = Get-CvAudioStartOffset -Info $Info -Index $Index
+    if ($null -ne $desdeInfo) { return $desdeInfo }
     $r = Invoke-ToolCapture -Exe $Context.FFmpeg -Arguments @(
         '-hide_banner','-i',$File,'-map',"0:$Index",'-af','ashowinfo','-f','alaw','-frames:a','1','-y','NUL'
     ) -Context $Context
@@ -1061,7 +1088,7 @@ function Invoke-AudioAsk {
         $lang = if ($s.Language) { "$($s.Language)" } else { 'und' }
         $sync = 0.0
         if (-not $isCopy) {
-            $delay = Get-AudioInitDelay -Context $Context -File $file -Index $s.Index
+            $delay = Get-AudioInitDelay -Context $Context -File $file -Index $s.Index -Info $Info
             $lbl = if ($sels.Count -gt 1) { (Get-CvText -Key 'au.pista.par' -Values @($s.Index, $lang)) } else { '' }
             if ($delay -gt 0) {
                 # CASO 1: el audio EMPIEZA mas tarde (start_time > 0). NO es una desincronia: los timestamps

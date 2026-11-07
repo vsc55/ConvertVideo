@@ -73,6 +73,10 @@ function Start-CvSession {
     Set-CvProgressBarWidth -Width $ctx.ProgressBarWidth   # ancho de la barra de progreso (config console.progressBarWidth)
     Set-CvPromptStopOnType -Value $ctx.PromptStopOnType   # auto-timeout: desactivar al teclear (behavior.promptTimeoutStopOnType)
     $log = Start-CvLog -Context $ctx -Prefix $LogPrefix   # transcript a logs\ (antes de pintar, para capturarlo)
+    # Un config que no se pudo leer: se sigue con los valores de serie, pero que quede en el LOG (un
+    # worker de la cola no tiene consola a la vista).
+    $cfgErr = Get-CvConfigLoadError
+    if ($cfgErr -ne '') { Write-CvLog 'GLOBAL' (Get-CvText -Key 'ctx.cfg.roto' -Values @($cfgErr)) }
     Set-CvAppearance -Context $ctx -Title ("{0} {1}{2}" -f $ctx.AppName, $ctx.Version, $TitleSuffix)
     Show-CvHeader -Context $ctx -Subtitle $Subtitle
     [pscustomobject]@{
@@ -288,6 +292,8 @@ function New-CvContext {
         Retries        = [int]$cfg.behavior.retries
         # Espera maxima por el turno de instalar una herramienta (ver behavior.installLockWaitSec).
         InstallLockWaitSec = $(if ([int]$cfg.behavior.installLockWaitSec -ge 1) { [int]$cfg.behavior.installLockWaitSec } else { [int]$def.behavior.installLockWaitSec })
+        # Desatendido, solo se instalan herramientas con SHA256 en el catalogo (ver behavior.requireHashUnattended).
+        RequireHashUnattended = [bool]$cfg.behavior.requireHashUnattended
         # Marcas/avisos en ASCII puro ([OK]/[ERROR]) en vez de simbolos/badge (consolas sin glifos).
         AsciiMarks     = [bool]$cfg.console.asciiMarks
         # Progreso inline (% + ETA) en los pasos largos de recodificacion en vez de ventana aparte.

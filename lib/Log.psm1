@@ -38,8 +38,15 @@ function Write-CvBadge {
         [System.ConsoleColor]$Fg = [System.ConsoleColor]::Black,
         [System.ConsoleColor]$Bg = [System.ConsoleColor]::Yellow
     )
-    $dbg = $Host.UI.RawUI.BackgroundColor
-    $dfg = $Host.UI.RawUI.ForegroundColor
+    # Sin consola de verdad (el analisis de Preparar corre en un runspace sin host) no hay colores
+    # que leer: se escribe el texto tal cual en vez de fallar el paso entero por un aviso.
+    try {
+        $dbg = $Host.UI.RawUI.BackgroundColor
+        $dfg = $Host.UI.RawUI.ForegroundColor
+    } catch {
+        Write-Host (' ' + $Text + ' ') -NoNewline
+        return
+    }
     if ($script:CvAsciiMarks) {
         $lb = '['; $rb = ']'
     } else {

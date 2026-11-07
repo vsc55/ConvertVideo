@@ -547,6 +547,21 @@ function Get-CvSubtitleCueCount {
     # 2) Sin tag: lo ya contado en esta sesion, o contar paquetes demultiplexando (lento).
     $clave = Get-CvCueCacheKey -File $File -Index $Index
     if ($clave -ne '' -and $script:CvCueCache.ContainsKey($clave)) { return [int]$script:CvCueCache[$clave] }
+    # TODAS las pistas de subtitulo en UNA lectura: demultiplexar cuesta lo mismo para una que para
+    # todas, y antes se leia el archivo entero otra vez por cada pista. Se guardan todas en la cache.
+    $todas = Invoke-ToolCapture -Exe $Context.FFprobe -Arguments @(
+        '-v','error','-select_streams','s','-count_packets',
+        '-show_entries','stream=index,nb_read_packets','-of','csv=p=0', $File
+    ) -Context $Context
+    $mapa = ConvertTo-CvCueCountMap "$($todas.StdOut)"
+    if ($mapa.ContainsKey($Index)) {
+        foreach ($k in @($mapa.Keys)) {
+            $ck = Get-CvCueCacheKey -File $File -Index ([int]$k)
+            if ($ck -ne '' -and [int]$mapa[$k] -ge 0) { $script:CvCueCache[$ck] = [int]$mapa[$k] }
+        }
+        return [int]$mapa[$Index]
+    }
+    # Si esa salida no se entiende, como antes: solo esta pista.
     $r = Invoke-ToolCapture -Exe $Context.FFprobe -Arguments @(
         '-v','error','-select_streams',"$Index",'-count_packets',
         '-show_entries','stream=nb_read_packets','-of','default=nw=1:nk=1', $File
@@ -554,6 +569,24 @@ function Get-CvSubtitleCueCount {
     $cnt = ConvertTo-CvCueCount "$($r.StdOut)"
     if ($clave -ne '' -and [int]$cnt -ge 0) { $script:CvCueCache[$clave] = [int]$cnt }
     return $cnt
+}
+
+function ConvertTo-CvCueCountMap {
+    <#
+        PURO. Interpreta la salida de ffprobe '-select_streams s -count_packets -show_entries
+        stream=index,nb_read_packets -of csv=p=0': una linea 'indice,paquetes' por pista. Devuelve
+        indice -> cues con la misma regla que ConvertTo-CvCueCount ('N/A' = 0, vacia).
+    #>
+    param([string]$Text)
+    $mapa = @{}
+    foreach ($l in ("$Text" -split "`r?`n")) {
+        $p = "$l".Trim() -split ','
+        if ($p.Count -lt 2) { continue }
+        $i = 0
+        if (-not [int]::TryParse($p[0].Trim(), [ref]$i)) { continue }
+        $mapa[$i] = ConvertTo-CvCueCount $p[1]
+    }
+    return $mapa
 }
 
 function ConvertTo-CvCueCount {

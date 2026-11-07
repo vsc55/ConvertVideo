@@ -1118,7 +1118,7 @@ function Set-CvJobDraftAudioSync {
             if (-not $Force -and [double]$t.Sync -ne 0) { continue }   # ya trae un valor puesto a mano: no se pisa
             $idx  = [int]$t.Index
             $sync = 0.0
-            $ini  = [double](Get-AudioInitDelay -Context $Context -File $file -Index $idx)
+            $ini  = [double](Get-AudioInitDelay -Context $Context -File $file -Index $idx -Info $Info)
             if ($ini -gt 0) {
                 if ($Context.SyncAdelay) {
                     # Informativo: con adelay el offset se conserva solo. Sin pedirlo, solo si se nota.

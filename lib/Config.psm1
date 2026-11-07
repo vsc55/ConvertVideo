@@ -810,6 +810,10 @@ function Get-CvConfigDefaults {
             # turno como mucho estos segundos (descargar ffmpeg puede tardar). Pasado, ese archivo falla
             # y se reintenta mas tarde, en vez de pisar la instalacion del otro.
             installLockWaitSec = 1800
+            # Un worker DESATENDIDO (el que abre la cola) solo instala por su cuenta herramientas que
+            # el catalogo trae con SHA256: si no, nadie ve que se esta descargando y ejecutando algo
+            # sin verificar. Con alguien delante (consola) se instala avisando, como siempre.
+            requireHashUnattended = $true
             progress        = $true
             promptTimeout   = [ordered]@{
                 default    = 0
@@ -1265,6 +1269,7 @@ function Get-CvConfigHelp {
         'behavior/log' = (Get-CvText -Key 'cfg.help.behavior.log')
         'behavior/workers' = (Get-CvText -Key 'cfg.help.behavior.workers')
         'behavior/installLockWaitSec' = ((Get-CvConfigAdvancedMark) + (Get-CvText -Key 'cfg.help.behavior.installLockWaitSec'))
+        'behavior/requireHashUnattended' = ((Get-CvConfigAdvancedMark) + (Get-CvText -Key 'cfg.help.behavior.requireHashUnattended'))
         'behavior/retries' = (Get-CvText -Key 'cfg.help.behavior.retries')
         'console/asciiMarks' = (Get-CvText -Key 'cfg.help.console.asciiMarks')
         'behavior/progress' = (Get-CvText -Key 'cfg.help.behavior.progress')
@@ -1501,6 +1506,14 @@ function Resolve-CvConfigPathArg {
     return (Join-Path (Get-Location).Path $Config)
 }
 
+# El ultimo config que no se pudo leer (ruta: motivo), o '' (ver Get-CvConfigLoadError).
+$script:CvConfigError = ''
+
+function Get-CvConfigLoadError {
+    <# Si el ultimo Get-CvConfig no pudo leer el fichero (y siguio con los valores de serie), por que. #>
+    return "$script:CvConfigError"
+}
+
 function Get-CvConfig {
     <#
         Carga config.json (si existe) sobre los valores por defecto, por secciones.
@@ -1512,6 +1525,7 @@ function Get-CvConfig {
         [string]$Path = ''
     )
     $cfg = Get-CvConfigDefaults
+    $script:CvConfigError = ''
     $path = if ([string]::IsNullOrWhiteSpace($Path)) { Get-CvDefaultConfigPath -Root $Root } else { $Path }
     # Leido en UTF-8 y con ruta LITERAL (Read-CvJsonFile), como lo escribe Save-CvConfigFile. Con
     # 'Get-Content -Raw' PowerShell 5.1 lo leia en ANSI (el fichero no lleva BOM): 'D:\Videos' con
@@ -1530,6 +1544,9 @@ function Get-CvConfig {
             Sync-CvCustomProfileSeeds -Cfg $cfg -Except $propios
         } catch {
             Write-Host (Get-CvText -Key 'cf.malo' -Values @($_.Exception.Message)) -ForegroundColor Yellow
+            # Y se apunta: un worker de la cola corre con la consola oculta, y ese aviso no lo veia
+            # nadie mientras trabajaba con los valores de serie. Start-CvSession lo deja en el log.
+            $script:CvConfigError = ("{0}: {1}" -f $path, $_.Exception.Message)
         }
     }
     return $cfg

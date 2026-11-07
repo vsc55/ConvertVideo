@@ -1281,10 +1281,10 @@ function Set-CvGuiWrapLabel {
 
 function Set-CvGuiRole {
     <#
-        Marca un control con su ROL de mensaje y le pone el color que le toca AHORA. La marca va en
-        AccessibleDescription ('cv-role:error'), que no usamos para nada mas, y sirve para que al
-        aplicar el tema no se le pise el color con el del texto normal: un aviso en rojo tiene que
-        seguir en rojo en los dos temas.
+        Marca un control con su ROL de mensaje y le pone el color que le toca AHORA. La marca va en la
+        tabla de marcas del tema (Get-CvGuiRoleOf), y sirve para que al aplicar el tema no se le pise
+        el color con el del texto normal: un aviso en rojo tiene que seguir en rojo en los dos temas.
+        Antes iba en AccessibleDescription, que un lector de pantalla lee en voz alta.
     #>
     param(
         [Parameter(Mandatory)]$Control,
@@ -1292,9 +1292,37 @@ function Set-CvGuiRole {
         $Palette = $null
     )
     $pal = $(if ($null -ne $Palette) { $Palette } else { Get-CvGuiCurrentPalette })
-    $Control.AccessibleDescription = ("cv-role:{0}" -f "$Role".ToLower())
+    (Get-CvGuiMarks -Control $Control)['role'] = "$Role".ToLower()
     $Control.ForeColor = Get-CvGuiRoleColor -Palette $pal -Role $Role
     return $Control
+}
+
+function Get-CvGuiRoleOf {
+    <# El ROL de color que se le puso a un control con Set-CvGuiRole, o '' si no tiene. #>
+    param([Parameter(Mandatory)]$Control)
+    $h = $null
+    if (-not $script:CvGuiMarks.TryGetValue($Control, [ref]$h)) { return '' }
+    return "$($h['role'])"
+}
+
+function Set-CvGuiExplorerThemeTree {
+    <#
+        Recorre los controles y, en los que lo llevan (cuadros de texto, listas, arbol) y ya tienen
+        handle, pone o quita el tema oscuro del explorador (Set-CvGuiExplorerTheme). Es lo unico del
+        tema que hay que repetir al ENSENARSE la ventana: lo demas ya se aplico al montarla.
+    #>
+    param([Parameter(Mandatory)]$Control, [bool]$Dark = $false)
+    $tipos = @(
+        'TextBox'
+        'RichTextBox'
+        'ListBox'
+        'ListView'
+        'TreeView'
+    )
+    if ($tipos -contains $Control.GetType().Name -and $Control.IsHandleCreated) {
+        try { Set-CvGuiExplorerTheme -Control $Control -Dark $Dark } catch { }
+    }
+    foreach ($c in $Control.Controls) { Set-CvGuiExplorerThemeTree -Control $c -Dark $Dark }
 }
 
 function Set-CvGuiExplorerTheme {
@@ -1425,7 +1453,7 @@ function Set-CvGuiThemeControl {
                 # color (ControlDark), la primera pasada del tema se lo cambiaba a 'Border' y la
                 # segunda -el tema se aplica otra vez en 'Shown'- ya no lo reconocia y lo pintaba del
                 # color del fondo: las lineas de la barra DESAPARECIAN.
-                $Control.BackColor = $(if ("$($Control.AccessibleName)" -eq 'cv-sep') { $Palette.Border } else { $Palette.Back })
+                $Control.BackColor = $(if (Test-CvGuiMark -Control $Control -Mark 'sep') { $Palette.Border } else { $Palette.Back })
                 # Los paneles que se pintan solos (la tira de pestanas, la barra de progreso) leen
                 # la paleta al dibujar: hay que pedirles que se redibujen o se quedan del tema viejo.
                 try { $Control.Invalidate() } catch { }
@@ -1438,9 +1466,9 @@ function Set-CvGuiThemeControl {
             }
         }
         # Un control con ROL conserva SU color (el aviso rojo sigue rojo).
-        $marca = "$($Control.AccessibleDescription)"
-        if ($marca -like 'cv-role:*') {
-            $Control.ForeColor = Get-CvGuiRoleColor -Palette $Palette -Role ($marca -replace '^cv-role:', '')
+        $marca = Get-CvGuiRoleOf -Control $Control
+        if ($marca -ne '') {
+            $Control.ForeColor = Get-CvGuiRoleColor -Palette $Palette -Role $marca
         }
         # Menu contextual colgado del control (la lista de la cola, el resumen...).
         if ($Control.ContextMenuStrip) { [void](Set-CvGuiMenuTheme -Menu $Control.ContextMenuStrip -Palette $Palette) }
@@ -1452,7 +1480,7 @@ function Set-CvGuiThemeControl {
 function New-CvGuiSeparator {
     <#
         Linea vertical para separar grupos de botones en una barra (lo que en una barra de verdad es
-        la rayita gris). Va MARCADA (AccessibleName) para que el tema la pinte con el color de borde
+        la rayita gris). Va MARCADA ('sep', Set-CvGuiMark) para que el tema la pinte con el color de borde
         en vez de con el del fondo.
     #>
     param(
@@ -1460,7 +1488,7 @@ function New-CvGuiSeparator {
         [int]$MarginX = 12
     )
     $sep = New-Object System.Windows.Forms.Panel
-    $sep.AccessibleName = 'cv-sep'
+    Set-CvGuiMark -Control $sep -Mark 'sep'
     $sep.Width     = 1
     $sep.Height    = $Height
     $sep.BackColor = (Get-CvGuiCurrentPalette).Border
@@ -1483,8 +1511,8 @@ function Set-CvGuiSplitGrip {
         [int]$Width = 10
     )
     $Split.SplitterWidth = $Width
-    if ("$($Split.AccessibleName)" -eq 'cv-grip') { return $Split }
-    $Split.AccessibleName = 'cv-grip'
+    if (Test-CvGuiMark -Control $Split -Mark 'grip') { return $Split }
+    Set-CvGuiMark -Control $Split -Mark 'grip'
     $Split.Add_Paint({
         param($s, $e)
         try {
@@ -1531,12 +1559,12 @@ function Set-CvGuiRepaintOnResize {
         ancho de serie (121 px) y lo estira el divisor en 'Shown'; al desplegarlo se repinta entero y
         ya no vuelve, que es justo lo que despista al buscarlo.
 
-        La marca (AccessibleName) evita engancharlo dos veces: el tema se aplica al montar la ventana
+        La marca ('repaint', Set-CvGuiMark) evita engancharlo dos veces: el tema se aplica al montar la ventana
         y otra vez en 'Shown'.
     #>
     param([Parameter(Mandatory)]$Control)
-    if ("$($Control.AccessibleName)" -eq 'cv-repaint') { return $Control }
-    $Control.AccessibleName = 'cv-repaint'
+    if (Test-CvGuiMark -Control $Control -Mark 'repaint') { return $Control }
+    Set-CvGuiMark -Control $Control -Mark 'repaint'
     $Control.Add_Resize({ param($s, $e) try { $s.Invalidate() } catch { } })
     return $Control
 }
@@ -1639,6 +1667,37 @@ function Set-CvGuiListFillColumn {
     return $List
 }
 
+# Pinceles y banderas del pintor de listas oscuras, para la paleta EN CURSO (ver Set-CvGuiListDarkPaint).
+$script:CvGuiListPaint = $null
+
+function Get-CvGuiListPaintTools {
+    <#
+        Lo que necesita el pintor de listas oscuras, montado UNA vez por paleta: los pinceles (antes
+        se creaba y tiraba uno por celda), los colores y las banderas de texto. Si cambia el tema, la
+        paleta es otra y se rehace (soltando los de antes).
+    #>
+    $pal = Get-CvGuiCurrentPalette
+    $viejo = $script:CvGuiListPaint
+    if ($null -ne $viejo -and [object]::ReferenceEquals($viejo.Pal, $pal)) { return $viejo }
+    $base = [System.Windows.Forms.TextFormatFlags]::VerticalCenter -bor [System.Windows.Forms.TextFormatFlags]::EndEllipsis
+    $nuevo = @{
+        Pal         = $pal
+        Dark        = ("$($pal.Name)" -eq 'dark')
+        Panel       = [System.Drawing.SolidBrush]::new($pal.Panel)
+        Accent      = [System.Drawing.SolidBrush]::new($pal.Accent)
+        Border      = [System.Drawing.Pen]::new($pal.Border)
+        Fore        = $pal.Fore
+        FlagsLeft   = ($base -bor [System.Windows.Forms.TextFormatFlags]::Left)
+        FlagsRight  = ($base -bor [System.Windows.Forms.TextFormatFlags]::Right)
+        FlagsCenter = ($base -bor [System.Windows.Forms.TextFormatFlags]::HorizontalCenter)
+    }
+    $script:CvGuiListPaint = $nuevo
+    if ($null -ne $viejo) {
+        foreach ($k in 'Panel', 'Accent', 'Border') { try { $viejo[$k].Dispose() } catch { } }
+    }
+    return $nuevo
+}
+
 function Set-CvGuiListDarkPaint {
     <#
         Pinta la lista ENTERA en oscuro: cabecera y filas.
@@ -1663,23 +1722,24 @@ function Set-CvGuiListDarkPaint {
     Set-CvGuiMark -Control $List -Mark 'list-dark'
     $List.OwnerDraw = $true
 
+    # Esto corre POR CELDA en cada repintado: medido, 30x10 celdas costaban ~410 ms en oscuro (86 en
+    # claro). Por eso nada de New-Object ni de llamar a funciones aqui dentro: la paleta se mira por su
+    # variable, los pinceles se guardan (Get-CvGuiListPaintTools, se rehacen si cambia el tema) y
+    # los rectangulos se crean con ::new.
     $List.Add_DrawColumnHeader({
         param($s, $e)
         try {
-            $pal = Get-CvGuiCurrentPalette
-            if ("$($pal.Name)" -ne 'dark') { $e.DrawDefault = $true; return }
-            $br = New-Object System.Drawing.SolidBrush $pal.Panel
-            $e.Graphics.FillRectangle($br, $e.Bounds)
-            $br.Dispose()
+            $h = $script:CvGuiListPaint
+            if ($null -eq $h -or -not [object]::ReferenceEquals($h.Pal, $script:CvGuiPalette)) { $h = Get-CvGuiListPaintTools }
+            if (-not $h.Dark) { $e.DrawDefault = $true; return }
+            $b = $e.Bounds
+            $e.Graphics.FillRectangle($h.Panel, $b)
             # Separador de columna y linea inferior, para que se siga leyendo como una cabecera.
-            $pen = New-Object System.Drawing.Pen $pal.Border
-            $e.Graphics.DrawLine($pen, ($e.Bounds.Right - 1), ($e.Bounds.Top + 4), ($e.Bounds.Right - 1), ($e.Bounds.Bottom - 4))
-            $e.Graphics.DrawLine($pen, $e.Bounds.Left, ($e.Bounds.Bottom - 1), $e.Bounds.Right, ($e.Bounds.Bottom - 1))
-            $pen.Dispose()
+            $e.Graphics.DrawLine($h.Border, ($b.Right - 1), ($b.Top + 4), ($b.Right - 1), ($b.Bottom - 4))
+            $e.Graphics.DrawLine($h.Border, $b.Left, ($b.Bottom - 1), $b.Right, ($b.Bottom - 1))
             # Margen de 2 px: con columnas estrechas (la de 'Bordes'), 4 se comian el texto.
-            $r = New-Object System.Drawing.Rectangle(($e.Bounds.X + 2), $e.Bounds.Y, ($e.Bounds.Width - 3), $e.Bounds.Height)
-            [System.Windows.Forms.TextRenderer]::DrawText($e.Graphics, "$($e.Header.Text)", $e.Font, $r, $pal.Fore,
-                ([System.Windows.Forms.TextFormatFlags]::Left -bor [System.Windows.Forms.TextFormatFlags]::VerticalCenter -bor [System.Windows.Forms.TextFormatFlags]::EndEllipsis))
+            $r = [System.Drawing.Rectangle]::new(($b.X + 2), $b.Y, ($b.Width - 3), $b.Height)
+            [System.Windows.Forms.TextRenderer]::DrawText($e.Graphics, $e.Header.Text, $e.Font, $r, $h.Fore, $h.FlagsLeft)
         } catch { $e.DrawDefault = $true }
     })
 
@@ -1689,27 +1749,31 @@ function Set-CvGuiListDarkPaint {
     $List.Add_DrawSubItem({
         param($s, $e)
         try {
-            $pal = Get-CvGuiCurrentPalette
-            if ("$($pal.Name)" -ne 'dark') { $e.DrawDefault = $true; return }
+            $h = $script:CvGuiListPaint
+            if ($null -eq $h -or -not [object]::ReferenceEquals($h.Pal, $script:CvGuiPalette)) { $h = Get-CvGuiListPaintTools }
+            if (-not $h.Dark) { $e.DrawDefault = $true; return }
             # La celda: para la primera columna, Bounds devuelve la FILA entera (es asi desde
             # siempre en WinForms), asi que se recorta al ancho de su columna.
             $r = $e.Bounds
+            $item = $e.Item
             if ($e.ColumnIndex -eq 0) {
-                $r = New-Object System.Drawing.Rectangle($e.Item.Bounds.X, $e.Item.Bounds.Y, $s.Columns[0].Width, $e.Item.Bounds.Height)
+                $ib = $item.Bounds
+                $r = [System.Drawing.Rectangle]::new($ib.X, $ib.Y, $s.Columns[0].Width, $ib.Height)
             }
-            $fondo = $(if ($e.Item.Selected) { $pal.Accent } else { $pal.Panel })
             # El color de la FILA, no el del tema: si alguien le ha puesto uno (las filas de solo
             # lectura de la ventana de perfiles van en gris), aqui se respeta. Sin tocar nada,
             # Item.ForeColor ya devuelve el de la lista, que es el del tema.
-            $texto = $(if ($e.Item.Selected) { [System.Drawing.Color]::White } else { $e.Item.ForeColor })
-            $br = New-Object System.Drawing.SolidBrush $fondo
-            $e.Graphics.FillRectangle($br, $r)
-            $br.Dispose()
-            $al = "$($s.Columns[$e.ColumnIndex].TextAlign)"
-            $flags = [System.Windows.Forms.TextFormatFlags]::VerticalCenter -bor [System.Windows.Forms.TextFormatFlags]::EndEllipsis
-            if ($al -eq 'Right')       { $flags = $flags -bor [System.Windows.Forms.TextFormatFlags]::Right }
-            elseif ($al -eq 'Center')  { $flags = $flags -bor [System.Windows.Forms.TextFormatFlags]::HorizontalCenter }
-            else                       { $flags = $flags -bor [System.Windows.Forms.TextFormatFlags]::Left }
+            if ($item.Selected) {
+                $e.Graphics.FillRectangle($h.Accent, $r)
+                $texto = [System.Drawing.Color]::White
+            } else {
+                $e.Graphics.FillRectangle($h.Panel, $r)
+                $texto = $item.ForeColor
+            }
+            $al = $s.Columns[$e.ColumnIndex].TextAlign
+            $flags = if ($al -eq [System.Windows.Forms.HorizontalAlignment]::Right) { $h.FlagsRight }
+                     elseif ($al -eq [System.Windows.Forms.HorizontalAlignment]::Center) { $h.FlagsCenter }
+                     else { $h.FlagsLeft }
             $margen = 2
             if ($e.ColumnIndex -eq 0 -and [bool]$s.CheckBoxes) {
                 $tam = [System.Windows.Forms.CheckBoxRenderer]::GetGlyphSize($e.Graphics, [System.Windows.Forms.VisualStyles.CheckBoxState]::UncheckedNormal)
@@ -1722,8 +1786,10 @@ function Set-CvGuiListDarkPaint {
                 [System.Windows.Forms.CheckBoxRenderer]::DrawCheckBox($e.Graphics, (New-Object System.Drawing.Point(($r.X + 4), $cy)), $est)
                 $margen = $tam.Width + 8
             }
-            $rt = New-Object System.Drawing.Rectangle(($r.X + $margen), $r.Y, [Math]::Max(0, ($r.Width - $margen - 2)), $r.Height)
-            [System.Windows.Forms.TextRenderer]::DrawText($e.Graphics, "$($e.SubItem.Text)", $s.Font, $rt, $texto, $flags)
+            $ancho = $r.Width - $margen - 2
+            if ($ancho -lt 0) { $ancho = 0 }
+            $rt = [System.Drawing.Rectangle]::new(($r.X + $margen), $r.Y, $ancho, $r.Height)
+            [System.Windows.Forms.TextRenderer]::DrawText($e.Graphics, $e.SubItem.Text, $s.Font, $rt, $texto, $flags)
         } catch { $e.DrawDefault = $true }
     })
     return $List
@@ -2139,8 +2205,10 @@ function Set-CvGuiTheme {
     else { $Form.Add_HandleCreated({ & $poner }.GetNewClosure()) }
     $Form.Add_Shown({
         & $poner
-        # Las listas y el arbol solo aceptan el tema del explorador cuando ya tienen handle.
-        [void](Set-CvGuiThemeControl -Control $Form -Palette $pal)
+        # Las listas y el arbol solo aceptan el tema del explorador cuando ya tienen handle. Solo eso:
+        # antes se volvia a aplicar el tema ENTERO a todos los controles, y en el editor de config
+        # (un arbol enorme) eso doblaba lo que cuesta abrirlo.
+        Set-CvGuiExplorerThemeTree -Control $Form -Dark ("$($pal.Name)" -eq 'dark')
     }.GetNewClosure())
     return $pal
 }

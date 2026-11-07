@@ -3317,7 +3317,8 @@ $ulBtn = New-Object System.Windows.Forms.Button
 [void](Set-CvGuiRole -Control $ulBtn -Role 'error')
 Set-CvGuiMark -Control $ulBtn -Mark 'btn-off'
 Assert-True 'Marcas: la del tema se ve'                   (Test-CvGuiMark -Control $ulBtn -Mark 'btn-off')
-Assert-Eq   'Marcas: y el rol sigue donde estaba'         'cv-role:error' "$($ulBtn.AccessibleDescription)"
+Assert-Eq   'Marcas: y el rol sigue donde estaba'         'error' (Get-CvGuiRoleOf -Control $ulBtn)
+Assert-Eq   'Marcas: nada en la accesibilidad'            '' "$($ulBtn.AccessibleDescription)$($ulBtn.AccessibleName)"
 Assert-Eq   'Marcas: otra que no se puso, no'             $false (Test-CvGuiMark -Control $ulBtn -Mark 'list-dark')
 Set-CvGuiMark -Control $ulBtn -Mark 'btn-off' -On $false
 Assert-Eq   'Marcas: se puede quitar'                     $false (Test-CvGuiMark -Control $ulBtn -Mark 'btn-off')
@@ -3467,6 +3468,46 @@ $rlD2 = Set-CvJobBulkChanges -Draft $rlD -Changes @{ prof = (New-CvProfile -Vide
 Assert-Eq   'Bloque: perfil de 720p, escalado nuevo'     '1280:-2' "$($rlD2.Resize)"
 $rlD3 = Set-CvJobBulkChanges -Draft $rlD -Changes @{ prof = (New-CvProfile -VideoEncoder 'libx265' -MaxWidth 1280); resize = '' } -Context ([pscustomobject]@{ Anamorphic = 'keep' })
 Assert-Eq   'Bloque: con su propio escalado, manda ese'  '' "$($rlD3.Resize)"
+# El retardo inicial del audio sale de ffprobe (inicio de la pista menos el del archivo): medido igual
+# al pts_time de ffmpeg en todas las fixtures. Sin los datos, $null (entonces se mide con ffmpeg).
+$rlInfo = [pscustomobject]@{ format = [pscustomobject]@{ start_time = '0.000000' }; streams = @([pscustomobject]@{ index = 1; start_time = '0.476000' }) }
+Assert-Eq   'Retardo: de ffprobe'                        0.476 (Get-CvAudioStartOffset -Info $rlInfo -Index 1)
+Assert-Eq   'Retardo: sin start_time, se mide'           $null (Get-CvAudioStartOffset -Info ([pscustomobject]@{ format = [pscustomobject]@{ start_time = 'N/A' }; streams = @([pscustomobject]@{ index = 1 }) }) -Index 1)
+$rlNeg = [pscustomobject]@{ format = [pscustomobject]@{ start_time = '0.020000' }; streams = @([pscustomobject]@{ index = 1; start_time = '0.000000' }) }
+Assert-Eq   'Retardo: antes que el archivo, 0'           0.0 (Get-CvAudioStartOffset -Info $rlNeg -Index 1)
+# Las lineas de TODAS las pistas de subtitulo en una lectura.
+$rlMapa = ConvertTo-CvCueCountMap "2,9`r`n3,N/A`r`nbasura`r`n5,7"
+Assert-Eq   'Cues de golpe: tres pistas'                 '2=9|3=0|5=7' ((@($rlMapa.Keys | Sort-Object) | ForEach-Object { "$_=$($rlMapa[$_])" }) -join '|')
+# Un perfil propio no congela el audio que coincide con el global (sigue al config).
+Set-CvActiveEncodeAudio -Audio ([ordered]@{ encoder = 'aac'; codec = 'aac'; bitrate = '192k'; hz = 44100 })
+try {
+    $rlPC = ConvertTo-CvProfileConfig -Prof (New-CvProfile -VideoEncoder 'libx265') -Label 'x'
+    Assert-Eq   'Perfil guardado: sin el audio global'   $false ([bool]($rlPC.PSObject.Properties['audioBitrate']))
+    $rlPC2 = ConvertTo-CvProfileConfig -Prof (New-CvProfile -VideoEncoder 'libx265' -AudioBitrate '256k') -Label 'x'
+    Assert-Eq   'Perfil guardado: con el suyo propio'    '256k' "$($rlPC2.audioBitrate)"
+} finally { Set-CvActiveEncodeAudio -Audio $null }
+# Desatendido, nada sin SHA256 (configurable, de serie si).
+Assert-Eq   'SHA: exigirlo desatendido, de serie'        $true ([bool](Get-CvConfigDefaultValue 'behavior/requireHashUnattended'))
+# Un config que no se puede leer queda apuntado (para el log) y no impide seguir.
+$rlDir3 = Join-Path ([System.IO.Path]::GetTempPath()) ('cv_rl3_' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+New-Item -ItemType Directory -Path $rlDir3 -Force | Out-Null
+try {
+    $rlRoto = Join-Path $rlDir3 'config.json'
+    Set-Content -LiteralPath $rlRoto -Value '{ esto no es json' -Encoding UTF8
+    $rlCR = Get-CvConfig -Root $rlDir3 -Path $rlRoto 6>$null
+    Assert-True 'Config roto: se apunta por que'         ((Get-CvConfigLoadError) -ne '')
+    Assert-Eq   'Config roto: y sigue con los de serie'  ([int](Get-CvConfigDefaultsShared).threads) ([int]$rlCR.threads)
+    Set-Content -LiteralPath $rlRoto -Value '{}' -Encoding UTF8
+    [void](Get-CvConfig -Root $rlDir3 -Path $rlRoto)
+    Assert-Eq   'Config bueno: sin error'                '' (Get-CvConfigLoadError)
+} finally { Remove-Item -Recurse -Force -LiteralPath $rlDir3 -ErrorAction SilentlyContinue }
+# El pintor de listas oscuras monta sus pinceles una vez por paleta.
+Set-CvGuiThemeDefault -Theme 'dark' | Out-Null
+$rlT1 = Get-CvGuiListPaintTools
+Assert-True 'Listas: pinceles del tema oscuro'          ([bool]$rlT1.Dark)
+Assert-True 'Listas: la misma paleta, los mismos'       ([object]::ReferenceEquals($rlT1, (Get-CvGuiListPaintTools)))
+Set-CvGuiThemeDefault -Theme 'light' | Out-Null
+Assert-Eq   'Listas: otra paleta, se rehacen'            $false ([bool](Get-CvGuiListPaintTools).Dark)
 
 # ================================================================================================
 $total = $script:pass + $script:fail

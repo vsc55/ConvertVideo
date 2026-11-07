@@ -2,6 +2,30 @@
 
 ## VERSION 4.7.6 - 16/10/2026
 ### UPDATE
+  - **Lo que quedaba de la revisión línea a línea (8ª tanda).**
+    - **Comprobado con un HDR10 de prueba**, sin cambios:
+      - `cropdetect` ve las bandas en 10 bits con ffmpeg 7.1.1 y 8.1.2 (ajusta solo su umbral).
+      - `libplacebo` seguido de un `format=` normal funciona con x265 Main 10 y x264 High 10.
+    - **El retardo inicial del audio sale de ffprobe** (inicio de la pista menos el del archivo, `Get-CvAudioStartOffset`), en vez de lanzar un ffmpeg por pista. Medido igual al milésimo que el `pts_time` de ffmpeg en las 24 pistas de las fixtures y en audios retrasados en MKV y MP4. Si ffprobe no trae el dato, se mide como antes.
+    - **Las líneas de TODAS las pistas de subtítulo en una sola lectura** (`ConvertTo-CvCueCountMap`) cuando no traen la etiqueta: antes se leía el archivo entero otra vez por pista. Comprobado igual, pista a pista.
+    - **Editor de jobs:**
+      - Pasar a un perfil sin detección de bordes quita el recorte que puso la detección (como la consola); uno tecleado se respeta.
+      - Las columnas de audio y subtítulos se buscan por su clave, no por un número fijo.
+    - **Listas en tema oscuro, 2,5 veces más rápidas**: repintar 30×10 celdas pasa de ~410 ms a ~160 ms (claro: ~85).
+      - Los pinceles se montan una vez por tema (`Get-CvGuiListPaintTools`), y nada de `New-Object` ni de llamar a funciones por celda.
+      - Llevarlo a C# lo dejaría como en claro, pero compilarlo costaría ~0,5 s al arrancar en oscuro.
+    - **Al abrir una ventana**, la segunda pasada del tema solo pone el del explorador a listas, árbol y cuadros de texto (`Set-CvGuiExplorerThemeTree`); antes repetía el tema entero, y el editor de config lo pagaba doble.
+    - **Las marcas del tema salen de la accesibilidad**: el rol de color y las de separador, agarre y repintado van en la tabla de marcas (`Get-CvGuiRoleOf`, `Test-CvGuiMark`), no en `AccessibleName`/`AccessibleDescription`, que lee un lector de pantalla.
+    - **Un perfil propio no guarda el audio que coincide con el global**: así sigue al `encode.audio.*` del config en vez de quedarse congelado; lo distinto sí se guarda.
+    - **Un worker desatendido no instala herramientas sin SHA256** en el catálogo (`behavior.requireHashUnattended`, de serie sí): nadie ve que se descarga y ejecuta algo sin verificar. Con la consola delante se instala avisando, como siempre.
+    - **Un `config.json` que no se puede leer queda en el log** (`Get-CvConfigLoadError`): el worker de la cola no tiene consola a la vista y seguía con los valores de serie sin que se supiera.
+    - **Un aviso coloreado sin consola** (el análisis de Preparar en segundo plano) se escribe sin color en vez de fallar.
+    - **`ui.language: auto` mira el idioma de la interfaz de Windows** (`Get-UICulture`), no el formato regional.
+    - **La caché de la sonda GPU se distingue por VERSIÓN de ffmpeg, no por su ruta** (arreglo de la 7ª tanda): la misma versión por otra ruta (un enlace a `tools\`) volvía a sondear la GPU en cada análisis.
+    - **Batería de la cola**: el caso «En segundo plano» espera a que el editor termine de analizar. El segundo archivo se prepara ahora más rápido y lo pillaba a medias. Si falla, dice además el mensaje y la cabecera del editor.
+    - **No se hace**: un respaldo para el reemplazo atómico en unidades de red (NAS). Es especulativo y no hay dónde probarlo.
+
+    Probado: unitarios 1595/1595, setup 456/456, cola 622/622, E2E 16/16 por etapas y 16/16 en una pasada (hevc_nvenc).
   - **Revisión línea a línea de todo el código (7ª tanda).** Doce revisiones (los cambios de las seis tandas, y `lib\` y `bin\` enteros por zonas); cada hallazgo se comprobó en el código antes de tocarlo.
     - **Lo más grave:**
       - **El perfil personalizado de consola no funcionaba desde la v4.7.2**: dos líneas partidas habían perdido su acento grave, así que el lint no lo veía y fallaba al elegir el encoder. Un unitario busca ahora ese patrón en todo el código.
@@ -92,12 +116,7 @@
       - La ventana de texto (ver el job) sale con el tema.
       - Se sueltan fuentes, iconos y diálogos que se quedaban.
       - Más textos pasan a `lang\`: perfiles y GPU de setup, cachés, motivos del autodescubrimiento, errores de la edición masiva y de los perfiles.
-    - **Lo que NO se hace**, por si se retoma:
-      - Contar los cues de todas las pistas en una sola pasada.
-      - Sacar el retardo inicial del audio de ffprobe en vez de ffmpeg (hay que compararlo antes con archivos reales).
-      - El repintado oscuro de las listas por celda (sin medir).
-      - Que un perfil guardado no fije el audio (necesita un «(global)» en el editor).
-      - Rechazar binarios sin SHA256 en modo desatendido.
+    - **Lo que quedó para después** (hecho en la 8ª tanda, arriba): contar los cues de todas las pistas en una sola pasada, el retardo inicial del audio desde ffprobe, el repintado oscuro de las listas, que un perfil guardado no fije el audio global y no instalar sin SHA256 en modo desatendido.
 
     Probado: unitarios 1581/1581, setup 455/455, cola 622/622, E2E 16/16 por etapas y 16/16 en una pasada (hevc_nvenc). Lo de la barra oscura se comprobó en Windows: 0 sin el arreglo, 1 con él.
   - **Revisión de bugs (6ª tanda): lo último que quedaba.**

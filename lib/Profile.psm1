@@ -774,10 +774,19 @@ function ConvertTo-CvProfileConfig {
     if ([bool]$Prof.NoUpscale)               { $o['noUpscale']  = $true }
     if ($null -ne $Prof.MaxWidth -and [int]$Prof.MaxWidth -gt 0) { $o['maxWidth'] = [int]$Prof.MaxWidth }
     if ("$($Prof.Multipass)".Trim()    -ne '') { $o['multipass']    = "$($Prof.Multipass)".Trim() }
-    if ("$($Prof.AudioEncoder)".Trim() -ne '') { $o['audioEncoder'] = "$($Prof.AudioEncoder)".Trim() }
-    if ("$($Prof.AudioCodec)".Trim()   -ne '') { $o['audioCodec']   = "$($Prof.AudioCodec)".Trim() }
-    if ("$($Prof.AudioBitrate)".Trim() -ne '') { $o['audioBitrate'] = "$($Prof.AudioBitrate)".Trim() }
-    if ($null -ne $Prof.AudioHz -and [int]$Prof.AudioHz -gt 0) { $o['audioHz'] = [int]$Prof.AudioHz }
+    # La salida de audio que COINCIDE con la global (encode.audio, Get-CvActiveEncodeAudio) no se
+    # escribe: un perfil sin esos campos sigue al global, y escribirlos los dejaba CONGELADOS aunque
+    # nadie los hubiera tocado (el editor los ensena rellenos con el global). Lo distinto, si.
+    $g = Get-CvActiveEncodeAudio
+    $propio = {
+        param($Valor, $Global)
+        $v = "$Valor".Trim()
+        return ($v -ne '' -and $v -ne "$Global".Trim())
+    }
+    if (& $propio $Prof.AudioEncoder $g.encoder) { $o['audioEncoder'] = "$($Prof.AudioEncoder)".Trim() }
+    if (& $propio $Prof.AudioCodec   $g.codec)   { $o['audioCodec']   = "$($Prof.AudioCodec)".Trim() }
+    if (& $propio $Prof.AudioBitrate $g.bitrate) { $o['audioBitrate'] = "$($Prof.AudioBitrate)".Trim() }
+    if ($null -ne $Prof.AudioHz -and [int]$Prof.AudioHz -gt 0 -and [int]$Prof.AudioHz -ne [int]$g.hz) { $o['audioHz'] = [int]$Prof.AudioHz }
     if ($null -ne $Prof.AudioChannels -and [int]$Prof.AudioChannels -ge 1) { $o['audioChannels'] = [int]$Prof.AudioChannels }
     if ("$($Prof.DownmixMode)".Trim() -ne '') { $o['downmixMode'] = "$($Prof.DownmixMode)".Trim() }
     if ($null -ne $Prof.DownmixCoeffs) {

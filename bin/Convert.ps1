@@ -127,6 +127,9 @@ if (-not $Unattended -and -not $WorkerOnly) { Clear-CvWorkerStop -Context $ctx }
 $sepLine  = Get-CvSepLine
 $dashLine = Get-CvDashLine
 
+# Desatendido (lo abre la cola), nada de instalar herramientas sin SHA256: no hay nadie mirando.
+if ($Unattended -and [bool]$ctx.RequireHashUnattended) { Set-CvToolRequireHash -On $true }
+
 # ---- Comprobacion de herramientas ----
 # Si faltan herramientas, ofrecer descargarlas. $didInstall marca si se instalo algo.
 $didInstall = $false
