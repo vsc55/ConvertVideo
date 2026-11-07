@@ -1255,6 +1255,59 @@ function Format-CvProfileLabel {
     ('A: {0}, V: {1}' -f $a, $v)
 }
 
+function Format-CvProfileWords {
+    <#
+        PURO. El mismo perfil que Format-CvProfileLabel, pero CONTADO EN PALABRAS para ensenarlo:
+        'Video h265 (GPU), 10 bits, nivel 5, calidad 1-23, bordes: deteccion automatica - Audio AAC
+        192 kbps' (el separador, un punto medio, va en 'pw.junta'). Lleva los MISMOS datos que la etiqueta compacta (encoder, perfil, nivel, control de
+        tasa, pasadas, bordes, escalado, ancho maximo, codec, bitrate, canales, voz reforzada): solo
+        cambia como se dicen. Es SOLO para mirar: los menus, las comparaciones y el job siguen con la
+        etiqueta compacta, que es la que los identifica (fase A4 del rediseno).
+    #>
+    param([Parameter(Mandatory)]$Prof)
+    if ($Prof.VideoEncoder -eq 'copy' -or -not $Prof.VideoEncoder) {
+        $v = (Get-CvText -Key 'pw.v.copia')
+    } else {
+        $p = @()
+        $vp = "$($Prof.VideoProfile)"
+        if ($vp -eq 'main10')   { $p += (Get-CvText -Key 'sum.bits' -Values @(10)) }
+        elseif ($vp -eq 'main') { $p += (Get-CvText -Key 'sum.bits' -Values @(8)) }
+        elseif ($vp)            { $p += (Get-CvText -Key 'pw.perfilv' -Values @($vp)) }
+        if ($Prof.VideoLevel)   { $p += (Get-CvText -Key 'pw.nivel' -Values @($Prof.VideoLevel)) }
+        $isCpu = ($Prof.VideoEncoder -in (Get-CvCpuEncoders))
+        if ($null -ne $Prof.Crf) { $p += (Get-CvText -Key 'pw.crf' -Values @($Prof.Crf)) }
+        elseif (($null -ne $Prof.Qmin) -or ($null -ne $Prof.Qmax)) { $p += (Get-CvText -Key 'pw.q' -Values @($Prof.Qmin, $Prof.Qmax)) }
+        elseif (-not $isCpu) { $p += (Get-CvText -Key 'pw.qauto') }
+        if ("$($Prof.Multipass)" -in (Get-CvMultipass2Pass)) { $p += (Get-CvText -Key 'pw.2pass' -Values @($Prof.Multipass)) }
+        if ("$($Prof.DetectBorder)".ToLower() -eq 'auto') { $p += (Get-CvText -Key 'pw.borde.auto') }
+        elseif ([bool]$Prof.DetectBorder)                 { $p += (Get-CvText -Key 'pw.borde.siempre') }
+        if ($Prof.ChangeSize) {
+            $k = if ([bool]$Prof.NoUpscale) { 'pw.escala.reduce' } else { 'pw.escala' }
+            $p += (Get-CvText -Key $k -Values @($Prof.ChangeSize))
+        }
+        if ($null -ne $Prof.MaxWidth -and [int]$Prof.MaxWidth -gt 0) { $p += (Get-CvText -Key 'pw.anchomax' -Values @([int]$Prof.MaxWidth)) }
+        # 'auto' no es un encoder: es 'el mejor del equipo', que se resuelve al preparar.
+        $encTxt = if ("$($Prof.VideoEncoder)".ToLower() -eq 'auto') { (Get-CvText -Key 'pw.enc.auto') } else { (Get-CvEncoderShortName -Encoder "$($Prof.VideoEncoder)") }
+        $v = (Get-CvText -Key 'pw.v' -Values @($encTxt, (@($p) -join ', ')))
+        $v = $v.TrimEnd(' ', ',')
+    }
+    if ($Prof.AudioEncoder -eq 'copy') {
+        $a = (Get-CvText -Key 'pw.a.copia')
+    } else {
+        $codec = "$($Prof.AudioCodec)"; if (-not $codec) { $codec = 'aac' }
+        $e = @(Get-CvAudioCodecs | Where-Object { $_.Value -eq $codec })[0]
+        $nom = if ($e -and $e.Short) { "$($e.Short)" } else { "$codec".ToUpper() }
+        $br = "$($Prof.AudioBitrate)".Trim()
+        if ($br -match '^(\d+)\s*[kK]$') { $br = (Get-CvText -Key 'sum.kbps' -Values @($Matches[1])) }
+        $a = (Get-CvText -Key 'pw.a' -Values @((@($nom, $br) | Where-Object { $_ }) -join ' '))
+    }
+    $extra = @()
+    if ($null -ne $Prof.AudioChannels -and [int]$Prof.AudioChannels -ge 1 -and [int]$Prof.AudioChannels -ne 2) { $extra += (Get-CvText -Key 'pw.canales' -Values @([int]$Prof.AudioChannels)) }
+    if ("$($Prof.DownmixMode)".ToLower() -eq 'dialogue') { $extra += (Get-CvText -Key 'sum.vozreforzada') }
+    if ($extra.Count -gt 0) { $a += (', ' + ($extra -join ', ')) }
+    return (Get-CvText -Key 'pw.junta' -Values @($v, $a))
+}
+
 function New-CustomProfile {
     <#
         Construye un perfil de forma interactiva. En CUALQUIER pregunta, escribir 'C' o

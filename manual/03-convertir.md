@@ -47,8 +47,11 @@ Cuatro grupos, separados por una línea:
 
 | Grupo | Botones |
 |---|---|
-| **Marcha** | **`Iniciar`** abre los workers y empieza. **`Parar`** es la parada **ordenada**: cada worker termina el archivo que tenga y no coge más (no se pierde nada). **`Cancelar ahora`** corta en seco los workers y su ffmpeg: se pierde lo que estuviera en curso, por eso pide confirmación. |
-| **Preparación** | **`Preparar pendientes (N)`** y **`Editar job`**. |
+| **Toda la cola** | **`Iniciar`** abre los workers y empieza. **`Parar al acabar`** es la parada **ordenada**: cada worker termina el archivo que tenga y no coge más (no se pierde nada). **`Cancelar todo`** corta en seco los workers y su ffmpeg: se pierde lo que estuviera en curso, por eso pide confirmación. |
+| **El archivo marcado** | Lo que se le puede hacer al que tengas marcado en la lista: **`Editar`** su job, **`Parar este`** (solo ese worker; el archivo vuelve a la cola) y **`Quitar de la cola`**. Son las mismas opciones del botón derecho, a la vista. |
+| **Preparación** | **`Preparar pendientes (N)`**. |
+| **Carpetas y vista** | Solo con icono (el nombre y el atajo salen al pasar el ratón): carpeta **Original**, carpeta **Convertido**, **Actualizar** y **Tema**. |
+| **Setup** | También solo con icono: **Configuración** (la rueda) abre el editor de la configuración y **Herramientas** (la llave) la ventana para instalar o cambiar la versión de ffmpeg y las demás. Abren la ventana de setup **ya en esa sección**, sobre el mismo config que la cola y en su propia ventana: la cola sigue a lo suyo. Lo que cambies en la configuración vale para los workers que se lancen **después**. |
 | **Carpetas** | **`Original`** y **`Convertido`** las abren en el explorador. |
 | **Vista** | **`Actualizar`**: refresca ya (la lista se refresca sola cada segundo mientras hay algo en marcha, y cada tres cuando no). **`Tema`**: cambia entre claro y oscuro al momento, y lo deja guardado para la próxima vez ([página 1](01-primeros-pasos.md#claro-u-oscuro)). |
 
@@ -106,12 +109,12 @@ La ventana es **modal**: mientras la miras no se toca la cola (que sigue refresc
 
 La línea con los puntitos que separa la lista de las pestañas **se arrastra**: reparte el alto como te convenga.
 
-- **Resumen del archivo** — lo que se le va a hacer al archivo marcado, sacado de su job: perfil, recorte y tamaño que queda, qué pistas de audio se conservan y cómo quedan, qué subtítulos. Es la forma rápida de comprobar que lo preparado es lo que querías. Con el **botón derecho** sobre el resumen puedes copiarlo o contar las líneas de los subtítulos (eso último hay que leerse el archivo entero, así que solo se hace si lo pides).
+- **Resumen del archivo** — lo que se le va a hacer al archivo marcado, sacado de su job, en **tres bloques** (*Vídeo*, *Audio*, *Subtítulos*): el perfil **en palabras** (y debajo, en gris, su etiqueta de siempre), recorte y tamaño que queda, qué pistas de audio se conservan y cómo quedan, qué subtítulos. Lo que se descarta sale en gris y lo que **QUEDA**, en verde. Es la forma rápida de comprobar que lo preparado es lo que querías. Con el **botón derecho** sobre el resumen puedes copiarlo o contar las líneas de los subtítulos (eso último hay que leerse el archivo entero, así que solo se hace si lo pides).
 - **Log** — el transcript completo de cualquier worker, con *Seguir* para quedarse en el final y *Abrir fuera* para verlo en tu editor.
 
 ![Pestaña de log](img/cola-log.png)
 
-- **Opciones** — los ajustes de **esta** sesión:
+- **Sesión** — los ajustes de **esta** sesión:
 
 ![Pestaña de opciones](img/cola-opciones.png)
 
@@ -129,13 +132,13 @@ La línea con los puntitos que separa la lista de las pestañas **se arrastra**:
 | Tecla | Qué hace |
 |---|---|
 | **F5** | Actualizar la lista. |
-| **F2** | Lo mismo que el botón *Editar job*: con el archivo **ya preparado** abre su job para retocarlo; si **no** lo está, abre su editor preguntando el perfil (o sea, lo prepara); y con **varias filas marcadas** que tengan job, la **edición en bloque**. Si no hay nada que editar, el botón está apagado y la tecla no hace nada. |
+| **F2** | Lo mismo que el botón *Editar*: con el archivo **ya preparado** abre su job para retocarlo; si **no** lo está, abre su editor preguntando el perfil (o sea, lo prepara); y con **varias filas marcadas** que tengan job, la **edición en bloque**. Si no hay nada que editar, el botón está apagado y la tecla no hace nada. |
 | **Intro** | Lo mismo que `F2`, cuando el foco está en la lista. |
 | **F6** | Preparar pendientes. |
 | **F9** | Iniciar las conversiones. |
 | **Esc** | Parar (los workers terminan el archivo en curso y no cogen más). **Pregunta antes**: es la tecla que se pulsa sin pensar para cerrar cualquier cosa, y aquí pararía la cola. |
 | **Ctrl+A** | Marcar todas las filas (con el foco en la lista). |
-| **Ctrl+1 / 2 / 3** | Ir a *Resumen del archivo* / *Log* / *Opciones*. |
+| **Ctrl+1 / 2 / 3** | Ir a *Resumen del archivo* / *Log* / *Sesión*. |
 | **Ctrl+O** | Abrir la carpeta `Original\`. |
 | **Ctrl+D** | Abrir la carpeta `Convertido\`. |
 | **Ctrl+T** | Cambiar el tema (claro/oscuro). |
@@ -152,7 +155,7 @@ Cada worker es un **proceso aparte**: cerrar la ventana **no** lo para, seguirí
 |---|---|
 | **Dejarlos en segundo plano** | Siguen codificando; al volver a abrir la cola aparecen otra vez. |
 | **Parada ordenada** | Terminan el archivo que tengan y no cogen más. No se pierde nada. |
-| **Cancelar ahora** | Se cortan los workers y su ffmpeg: se pierde el archivo en curso. |
+| **Cancelar todo** | Se cortan los workers y su ffmpeg: se pierde el archivo en curso. |
 | **No cerrar** | Volver a la cola. |
 
 ---

@@ -103,6 +103,13 @@ if (-not (Initialize-CvGui)) {
     Write-Host 'Sin entorno grafico: no hay nada que capturar.' -ForegroundColor Red
     exit 1
 }
+# Como las baterias de ventanas: todas al monitor donde NO esta quien trabaja, y sin quitarle el
+# primer plano (Set-CvGuiTestScreen). Las claras se dibujan con DrawToBitmap y les da igual donde
+# esten; las oscuras fotografian la pantalla y si necesitan ponerse delante (ver mas abajo), pero
+# al menos en el otro monitor. Antes salian todas encima de la ventana con la que estabas.
+# El monitor, el de gui.testScreen del config por defecto (como las baterias).
+$iniPant = Get-CvStartupPrefs -Root $Root
+[void](Set-CvGuiTestScreen -Mode "$($iniPant.TestScreen)" -Number ([int]$iniPant.TestScreenNumber))
 if (-not $Out) { $Out = Join-Path $PSScriptRoot 'img' }
 New-Item -ItemType Directory -Path $Out -Force | Out-Null
 
@@ -135,6 +142,10 @@ Add-Type -Namespace CvShot -Name Dwm -MemberDefinition @'
     public static extern bool PrintWindow(System.IntPtr hwnd, System.IntPtr hdc, uint flags);
     [DllImport("user32.dll")]
     public static extern System.IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")]
+    public static extern bool ShowWindow(System.IntPtr hwnd, int cmd);
+    [DllImport("user32.dll")]
+    public static extern System.IntPtr SendMessage(System.IntPtr hwnd, int msg, System.IntPtr wParam, System.IntPtr lParam);
     public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
 '@ -ErrorAction SilentlyContinue
 
@@ -215,7 +226,26 @@ function Save-Shot {
         # Fotografiar la pantalla (para menus desplegados y demas ventanas emergentes).
         [switch]$Screen
     )
-    if (-not $NoFocus) {
+    # SIN ROBAR EL FOCO (modo pruebas, Set-CvGuiTestScreen): en vez de ponerla delante a la fuerza
+    # -Activate en bucle y, si no, minimizar y restaurar, que se salta el bloqueo de primer plano de
+    # Windows y le quitaba el foco a quien estuviera trabajando-, se le dice que se PINTE como activa
+    # (WM_NCACTIVATE) justo antes de retratarla: la barra de titulo sale encendida igual. Para la foto
+    # de pantalla basta con ponerla encima (TopMost), que tampoco se lleva el foco.
+    $sinFoco = (Test-CvGuiTestMode)
+    $pintarActiva = {
+        try { [void][CvShot.Dwm]::SendMessage($Form.Handle, 0x86, [System.IntPtr]1, [System.IntPtr]::Zero) } catch { }   # 0x86 = WM_NCACTIVATE
+        [System.Windows.Forms.Application]::DoEvents()
+    }
+    if ($sinFoco) {
+        # Minimizada no se puede retratar (y la foto de pantalla saldria con lo que haya debajo): se
+        # restaura SIN activarla (SW_SHOWNOACTIVATE). Pasa si el proceso se lanzo con la ventana
+        # oculta o minimizada: Windows aplica ese estilo a la primera ventana que abre.
+        if ($Form.WindowState -eq [System.Windows.Forms.FormWindowState]::Minimized) {
+            try { [void][CvShot.Dwm]::ShowWindow($Form.Handle, 4); [System.Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 300 } catch { }
+        }
+        try { $Form.TopMost = $true } catch { }
+    }
+    if (-not $NoFocus -and -not $sinFoco) {
         # Se intenta ponerla delante aunque se vaya a usar PrintWindow: una ventana sin foco se pinta
         # con la barra de titulo APAGADA, y en el manual queda como si estuviera deshabilitada.
         for ($i = 0; $i -lt 4; $i++) {
@@ -236,6 +266,7 @@ function Save-Shot {
     # En OSCURO se fotografia la pantalla: la barra de titulo oscura la compone el gestor de ventanas
     # (DWM) y PrintWindow devuelve el marco claro por defecto, que en el manual pareceria un fallo.
     if ($Theme -eq 'dark') { $Screen = $true }
+    if ($sinFoco -and -not $NoFocus) { & $pintarActiva }
     if (-not $Screen) {
         $full = Get-WindowBitmap -Form $Form
         if ($null -ne $full) {
@@ -254,7 +285,8 @@ function Save-Shot {
         # Foto de pantalla: o se ha pedido (-Screen) o PrintWindow no ha dado nada. Aqui SI importa
         # que la ventana este delante, asi que se insiste un poco y se avisa si no se consigue.
         $b = $(if ($null -ne $Rect) { $Rect } else { $frame })
-        if (-not $NoFocus) {
+        if ($sinFoco -and -not $NoFocus) { & $pintarActiva; Start-Sleep -Milliseconds 200 }
+        if (-not $NoFocus -and -not $sinFoco) {
             for ($i = 0; $i -lt 6; $i++) {
                 $fg = [System.IntPtr]::Zero
                 try { $fg = [CvShot.Dwm]::GetForegroundWindow() } catch { }
@@ -279,6 +311,15 @@ function Save-Shot {
             if ($fg2 -ne $Form.Handle) {
                 Write-Host ("  [AVISO] {0}: la ventana no esta delante; la captura puede salir tapada" -f $Name) -ForegroundColor Yellow
             }
+        }
+        # En modo pruebas, una foto de pantalla FUERA del monitor libre seria la pantalla de quien esta
+        # trabajando (pasaba con la ventana minimizada: sus coordenadas no son las de la ventana). No
+        # se guarda: se avisa y se deja el PNG que hubiera.
+        $zonaT = Get-CvGuiTestArea
+        if ($sinFoco -and $null -ne $zonaT -and -not $zonaT.Contains($b)) {
+            Write-Host ("  [AVISO] {0}: fuera del monitor libre; no se fotografia la pantalla (se deja el PNG anterior)" -f $Name) -ForegroundColor Yellow
+            try { $Form.TopMost = $false } catch { }
+            return
         }
         $bmp = New-Object System.Drawing.Bitmap($b.Width, $b.Height)
         $g   = [System.Drawing.Graphics]::FromImage($bmp)

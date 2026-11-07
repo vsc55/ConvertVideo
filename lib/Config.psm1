@@ -179,6 +179,18 @@ function Get-CvGuiThemes {
     )
 }
 
+function Get-CvGuiTestScreens {
+    <#
+        Donde salen las ventanas de las PRUEBAS (gui.testScreen): las baterias de ventanas y las
+        capturas del manual (Set-CvGuiTestScreen). El 1o = default de fabrica.
+    #>
+    @(
+        @{ Value = 'other';  Text = (Get-CvText -Key 'cat.testscreen.other') }
+        @{ Value = 'mouse';  Text = (Get-CvText -Key 'cat.testscreen.mouse') }
+        @{ Value = 'number'; Text = (Get-CvText -Key 'cat.testscreen.number') }
+    )
+}
+
 function Test-CvWindowsDarkMode {
     <# Windows esta en modo oscuro para las aplicaciones? (AppsUseLightTheme del usuario). #>
     try {
@@ -926,6 +938,21 @@ function Get-CvConfigDefaults {
             # persigue al archivo en curso, pero no mientras estas eligiendo: moverla bajo el raton
             # a mitad de un Ctrl/Mayus+clic acaba seleccionando lo que no querias.
             queueFollowHoldSec = 3
+            # Donde salen las ventanas de las PRUEBAS (baterias de ventanas y capturas del manual),
+            # nunca las de la app. 'other' = el monitor donde NO estas trabajando (el de la ventana
+            # activa al lanzarlas; con uno solo, donde siempre); 'mouse' = el del raton; 'number' = el
+            # monitor testScreenNumber (el numero de Windows: DISPLAY1, DISPLAY2...; si no existe, como
+            # 'other'). En todos los casos no te quitan el foco.
+            testScreen       = 'other'
+            testScreenNumber = 0
+            # 'Identificar monitores' (setup): cuantos segundos se ve el numero en cada pantalla.
+            identifyMonitorsSec = 3
+            # Editor del job: las listas de audio y subtitulos se ajustan a sus pistas (fase A6 del
+            # rediseno) en vez de repartirse media ventana cada una. Ensenan al menos jobListRowsMin
+            # filas (sitio para marcar sin que parezca rota) y como mucho jobListRowsMax (con mas
+            # pistas, barra de scroll). Agrandar la ventana a mano sigue dando mas sitio a los subtitulos.
+            jobListRowsMin = 3
+            jobListRowsMax = 8
             # Margen de proporcion para decidir que hubo recorte (0.01 = 1%). Por debajo caen los
             # redondeos a tamano PAR del escalado (un pixel en 1080 es un 0,09%); por encima, los
             # recortes de verdad (quitar 140px de barras cambia la proporcion un 15%).
@@ -1320,6 +1347,11 @@ function Get-CvConfigHelp {
         'gui/queueFollowWorker' = (Get-CvText -Key 'cfg.help.gui.queueFollowWorker')
         'gui/queueStartGraceSec' = (Get-CvText -Key 'cfg.help.gui.queueStartGraceSec')
         'gui/queueFollowHoldSec' = (Get-CvText -Key 'cfg.help.gui.queueFollowHoldSec')
+        'gui/testScreen' = ((Get-CvConfigAdvancedMark) + (Get-CvText -Key 'cfg.help.gui.testScreen'))
+        'gui/testScreenNumber' = ((Get-CvConfigAdvancedMark) + (Get-CvText -Key 'cfg.help.gui.testScreenNumber'))
+        'gui/identifyMonitorsSec' = ((Get-CvConfigAdvancedMark) + (Get-CvText -Key 'cfg.help.gui.identifyMonitorsSec'))
+        'gui/jobListRowsMin' = ((Get-CvConfigAdvancedMark) + (Get-CvText -Key 'cfg.help.gui.jobListRowsMin'))
+        'gui/jobListRowsMax' = ((Get-CvConfigAdvancedMark) + (Get-CvText -Key 'cfg.help.gui.jobListRowsMax'))
         'gui/queueDoneProbe' = (Get-CvText -Key 'cfg.help.gui.queueDoneProbe')
         'gui/queueDoneTolerance' = (Get-CvText -Key 'cfg.help.gui.queueDoneTolerance')
         'gui/queueQualityProbe' = ((Get-CvConfigAdvancedMark) + (Get-CvText -Key 'cfg.help.gui.queueQualityProbe'))

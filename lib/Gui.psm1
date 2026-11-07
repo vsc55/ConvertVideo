@@ -776,6 +776,7 @@ function Get-CvGuiIconGlyphs {
         edit    = @{ Code = 0xE70F; Color = @(69, 90, 100) }    # lapiz
         refresh = @{ Code = 0xE72C; Color = @(21, 101, 192) }   # flecha circular
         options = @{ Code = 0xE713; Color = @(69, 90, 100) }    # rueda dentada
+        tools   = @{ Code = 0xE90F; Color = @(69, 90, 100) }    # llave inglesa (herramientas)
         folder  = @{ Code = 0xED25; Color = @(198, 155, 40) }   # carpeta
         console = @{ Code = 0xE756; Color = @(69, 90, 100) }    # ventana de comandos
         theme   = @{ Code = 0xE706; Color = @(120, 120, 130) }  # brillo (cambiar claro/oscuro)
@@ -1412,6 +1413,13 @@ function Set-CvGuiThemeControl {
                 $Control.ForeColor = $Palette.Fore
                 $Control.BorderStyle = $(if ($oscuro) { 'None' } else { 'Fixed3D' })
                 if ($Control.IsHandleCreated) { Set-CvGuiExplorerTheme -Control $Control -Dark $oscuro }
+                # Un resumen pintado por bloques (Set-CvGuiSummaryText) lleva sus colores en el texto:
+                # se repinta con los del tema nuevo, si lo que se ve sigue siendo ese resumen.
+                $mk = Get-CvGuiMarks -Control $Control
+                if ($mk.ContainsKey('SummaryLines')) {
+                    $plan = Get-CvGuiSummaryRuns -Lines @($mk['SummaryLines'])
+                    if ("$($Control.Text)" -eq $plan.Text) { [void](Set-CvGuiSummaryText -Box $Control -Lines @($mk['SummaryLines']) -Force) }
+                }
             }
             'ListBox'        {
                 $Control.BackColor = $Palette.Panel
@@ -1437,7 +1445,7 @@ function Set-CvGuiThemeControl {
                 # pierde el tema oscuro del explorador: la cabecera de columnas volvia a salir
                 # BLANCA (comprobado), y volver a pedir el tema despues ya no la recupera. El borde
                 # de la lista es una linea fina; la rejilla era lo que llenaba la ventana de blanco.
-                if ($oscuro) { [void](Set-CvGuiListDarkPaint -List $Control) }
+                if ($oscuro -or (Test-CvGuiMark -Control $Control -Mark 'paint-always')) { [void](Set-CvGuiListDarkPaint -List $Control) }
                 else { try { $Control.OwnerDraw = $false } catch { } }
                 if ($Control.IsHandleCreated) { Set-CvGuiExplorerTheme -Control $Control -Dark $oscuro }
             }
@@ -1714,22 +1722,317 @@ function Get-CvGuiListPaintTools {
     $viejo = $script:CvGuiListPaint
     if ($null -ne $viejo -and [object]::ReferenceEquals($viejo.Pal, $pal)) { return $viejo }
     $base = [System.Windows.Forms.TextFormatFlags]::VerticalCenter -bor [System.Windows.Forms.TextFormatFlags]::EndEllipsis
+    # Fondo SUAVE de una etiqueta: su color mezclado con el del panel (se lee en los dos temas).
+    $suave = {
+        param($C, [double]$F)
+        [System.Drawing.Color]::FromArgb(
+            [int]($pal.Panel.R + ($C.R - $pal.Panel.R) * $F),
+            [int]($pal.Panel.G + ($C.G - $pal.Panel.G) * $F),
+            [int]($pal.Panel.B + ($C.B - $pal.Panel.B) * $F))
+    }
     $nuevo = @{
         Pal         = $pal
         Dark        = ("$($pal.Name)" -eq 'dark')
         Panel       = [System.Drawing.SolidBrush]::new($pal.Panel)
         Accent      = [System.Drawing.SolidBrush]::new($pal.Accent)
         Border      = [System.Drawing.Pen]::new($pal.Border)
+        Track       = [System.Drawing.SolidBrush]::new($pal.Border)
+        SelSoft     = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(70, 255, 255, 255))
+        White       = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::White)
         Fore        = $pal.Fore
+        Muted       = $pal.Muted
+        # Etiquetas de estado: color del texto y su fondo suave, por tipo.
+        Chip        = @{
+            ok   = @{ Fore = $pal.Ok;     Back = [System.Drawing.SolidBrush]::new((& $suave $pal.Ok 0.16)) }
+            run  = @{ Fore = $pal.Accent; Back = [System.Drawing.SolidBrush]::new((& $suave $pal.Accent 0.16)) }
+            warn = @{ Fore = $pal.Warn;   Back = [System.Drawing.SolidBrush]::new((& $suave $pal.Warn 0.16)) }
+            err  = @{ Fore = $pal.Error;  Back = [System.Drawing.SolidBrush]::new((& $suave $pal.Error 0.16)) }
+            q    = @{ Fore = $pal.Fore;   Back = [System.Drawing.SolidBrush]::new((& $suave $pal.Muted 0.14)) }
+        }
         FlagsLeft   = ($base -bor [System.Windows.Forms.TextFormatFlags]::Left)
         FlagsRight  = ($base -bor [System.Windows.Forms.TextFormatFlags]::Right)
         FlagsCenter = ($base -bor [System.Windows.Forms.TextFormatFlags]::HorizontalCenter)
+        # Sin el margen que TextRenderer pone a cada lado: el de la etiqueta se mide igual que se pinta.
+        FlagsTight  = ($base -bor [System.Windows.Forms.TextFormatFlags]::Left -bor [System.Windows.Forms.TextFormatFlags]::NoPadding)
     }
     $script:CvGuiListPaint = $nuevo
     if ($null -ne $viejo) {
-        foreach ($k in 'Panel', 'Accent', 'Border') { try { $viejo[$k].Dispose() } catch { } }
+        foreach ($k in 'Panel', 'Accent', 'Border', 'Track', 'SelSoft', 'White') { try { $viejo[$k].Dispose() } catch { } }
+        foreach ($c in @($viejo.Chip.Values)) { try { $c.Back.Dispose() } catch { } }
     }
     return $nuevo
+}
+
+function Set-CvGuiListCellPainter {
+    <#
+        Una lista que se pinta A MANO en los dos temas (no solo en oscuro), con un PINTOR propio para
+        algunas celdas: -Painter recibe ($e, $herramientas, $rectangulo) y devuelve $true si ha pintado
+        la celda (entonces no se escribe su texto). Lo usa la cola para la etiqueta de color del estado
+        y la barra de progreso (Write-CvGuiCellChip / Write-CvGuiCellBar). El pintor corre en CADA
+        repintado de su celda: que no cree objetos ni llame a nada caro.
+    #>
+    param([Parameter(Mandatory)]$List, [Parameter(Mandatory)][scriptblock]$Painter)
+    $m = Get-CvGuiMarks -Control $List
+    $m['paint-always'] = $true
+    $m['CellPainter']  = $Painter
+    [void](Set-CvGuiListDarkPaint -List $List)
+    return $List
+}
+
+function Get-CvGuiSummaryRuns {
+    <#
+        PURO. Como se pinta un resumen por bloques: de las lineas con su tipo (Get-CvJobSummaryLines
+        -WithKind) saca el TEXTO entero y, por linea, donde empieza, cuanto mide y su estilo. Antes de
+        cada cabecera (VIDEO / AUDIO / SUBS) va una linea en blanco: eso es lo que separa los bloques.
+        No quita ni cambia ninguna linea: solo anade esos huecos. Los saltos son '\n' porque es lo que
+        guarda un RichTextBox (con '\r\n' las posiciones se descuadraban una por linea).
+          Style: 'title' / 'head' / 'result' en negrita; Role: el rol de color (Get-CvGuiRoleColor),
+          con 'head' = el azul de lo editado y 'result' = verde.
+    #>
+    param([object[]]$Lines = @())
+    $estilo = @{
+        title  = @{ Bold = $true;  Role = 'fore' }
+        meta   = @{ Bold = $false; Role = 'muted' }
+        head   = @{ Bold = $true;  Role = 'edited' }
+        keep   = @{ Bold = $false; Role = 'fore' }
+        drop   = @{ Bold = $false; Role = 'muted' }
+        detail = @{ Bold = $false; Role = 'fore' }
+        result = @{ Bold = $true;  Role = 'ok' }
+    }
+    $sb   = New-Object System.Text.StringBuilder
+    $runs = @()
+    foreach ($ln in @($Lines)) {
+        if ($null -eq $ln) { continue }
+        $txt  = "$($ln.Text)"
+        $kind = "$($ln.Kind)"
+        if (-not $estilo.ContainsKey($kind)) { $kind = 'keep' }
+        if ($sb.Length -gt 0) {
+            if ($kind -eq 'head') { [void]$sb.Append("`n") }
+            [void]$sb.Append("`n")
+        }
+        $runs += [pscustomobject]@{
+            Start = $sb.Length
+            Length = $txt.Length
+            Kind = $kind
+            Bold = [bool]$estilo[$kind].Bold
+            Role = $estilo[$kind].Role
+        }
+        [void]$sb.Append($txt)
+    }
+    return [pscustomobject]@{
+        Text = $sb.ToString()
+        Runs = $runs
+    }
+}
+
+function Set-CvGuiSummaryText {
+    <#
+        Pinta en un RichTextBox un resumen por BLOQUES (Get-CvGuiSummaryRuns): el mismo texto, con las
+        cabeceras destacadas, lo descartado atenuado y lo que QUEDA en verde. Solo repinta si cambia el
+        texto o el tema. Guarda las lineas en las marcas del control: el tema las vuelve a pintar con
+        sus colores al cambiar (Set-CvGuiThemeControl), si lo que se ve sigue siendo ese resumen.
+    #>
+    param([Parameter(Mandatory)]$Box, [object[]]$Lines = @(), [switch]$Force)
+    $plan = Get-CvGuiSummaryRuns -Lines $Lines
+    $pal  = Get-CvGuiCurrentPalette
+    $mk   = Get-CvGuiMarks -Control $Box
+    $mk['SummaryLines'] = @($Lines)
+    if (-not $Force -and "$($Box.Text)" -eq $plan.Text -and "$($mk['SummaryTheme'])" -eq "$($pal.Name)") { return $Box }
+    $mk['SummaryTheme'] = "$($pal.Name)"
+    $base = $Box.Font
+    $negrita = Get-CvGuiFont -Family $base.FontFamily.Name -Size $base.Size -Style ([System.Drawing.FontStyle]::Bold)
+    $Box.SuspendLayout()
+    try {
+        $Box.Text = $plan.Text
+        foreach ($r in @($plan.Runs)) {
+            if ($r.Length -le 0) { continue }
+            $Box.Select($r.Start, $r.Length)
+            $Box.SelectionColor = (Get-CvGuiRoleColor -Palette $pal -Role $r.Role)
+            $Box.SelectionFont  = $(if ($r.Bold) { $negrita } else { $base })
+        }
+        $Box.Select(0, 0)
+    } finally {
+        $Box.ResumeLayout()
+    }
+    return $Box
+}
+
+function Set-CvGuiPartsLabel {
+    <#
+        Una etiqueta de UNA linea con trozos de distinto color (Get-CvQueueSummaryParts: {Text; Role}).
+        Su .Text es el texto entero, como siempre (lo leen el icono de la bandeja y los tests); lo que
+        cambia es como se pinta: encima, trozo a trozo, con el color de su rol en el tema de ese
+        momento. El pintor se engancha una sola vez; los trozos van en las marcas del control.
+    #>
+    param([Parameter(Mandatory)]$Label, [object[]]$Parts = @())
+    $mk = Get-CvGuiMarks -Control $Label
+    $mk['Parts'] = @($Parts)
+    $txt = ((@($Parts) | ForEach-Object { "$($_.Text)" }) -join '')
+    if ("$($Label.Text)" -cne $txt) { $Label.Text = $txt } else { $Label.Invalidate() }
+    if (-not $mk.ContainsKey('parts-paint')) {
+        $mk['parts-paint'] = $true
+        $Label.Add_Paint({
+            param($s, $e)
+            try {
+                $trozos = @((Get-CvGuiMarks -Control $s)['Parts'])
+                if ($trozos.Count -eq 0) { return }
+                $pal = Get-CvGuiCurrentPalette
+                $e.Graphics.Clear($s.BackColor)
+                $fl = [System.Windows.Forms.TextFormatFlags]::NoPadding -bor [System.Windows.Forms.TextFormatFlags]::SingleLine -bor
+                      [System.Windows.Forms.TextFormatFlags]::VerticalCenter -bor [System.Windows.Forms.TextFormatFlags]::Left -bor
+                      [System.Windows.Forms.TextFormatFlags]::NoPrefix
+                $x = $s.Padding.Left + 3
+                foreach ($t in $trozos) {
+                    $tx = "$($t.Text)"
+                    if ($tx -eq '' -or $x -ge $s.Width) { continue }
+                    $w = [System.Windows.Forms.TextRenderer]::MeasureText($e.Graphics, $tx, $s.Font, [System.Drawing.Size]::Empty, $fl).Width
+                    $r = New-Object System.Drawing.Rectangle($x, 0, ($s.Width - $x), $s.Height)
+                    [System.Windows.Forms.TextRenderer]::DrawText($e.Graphics, $tx, $s.Font, $r, (Get-CvGuiRoleColor -Palette $pal -Role "$($t.Role)"), $fl)
+                    $x += $w
+                }
+            } catch { }
+        })
+    }
+    return $Label
+}
+
+function Show-CvGuiCellEditor {
+    <#
+        Editar UNA celda de una lista en su sitio (fase A6 del rediseno): un cuadro de texto encima de
+        la celda, con lo que ponia. Intro o salir del cuadro confirma; Esc lo deja como estaba. Al
+        acabar llama a -OnDone con (texto, confirmado) y se quita. No guarda nada por su cuenta: quien
+        llama decide que hacer con el texto (en el editor del job, lo mismo que los campos de la barra).
+        -OnDone tiene que ser un scriptblock SIN GetNewClosure si usa variables de la ventana.
+    #>
+    param(
+        [Parameter(Mandatory)]$List,
+        [Parameter(Mandatory)][int]$ItemIndex,
+        [Parameter(Mandatory)][int]$SubIndex,
+        [string]$Text = '',
+        [Parameter(Mandatory)][scriptblock]$OnDone
+    )
+    if ($ItemIndex -lt 0 -or $ItemIndex -ge $List.Items.Count) { return $null }
+    $it = $List.Items[$ItemIndex]
+    if ($SubIndex -le 0 -or $SubIndex -ge $it.SubItems.Count) { return $null }
+    $r = $it.SubItems[$SubIndex].Bounds
+    $pal = Get-CvGuiCurrentPalette
+    $tb = New-Object System.Windows.Forms.TextBox
+    $tb.BorderStyle = 'FixedSingle'
+    $tb.Font        = $List.Font
+    $tb.BackColor   = $pal.Panel
+    $tb.ForeColor   = $pal.Fore
+    $tb.Text        = $Text
+    $tb.Name        = 'cvCellEditor'
+    $tb.Bounds      = New-Object System.Drawing.Rectangle($r.X, ($r.Y - 1), [Math]::Max(40, $r.Width), ($r.Height + 2))
+    $h = @{ Done = $false }
+    $fin = {
+        param([bool]$Ok)
+        if ($h.Done) { return }
+        $h.Done = $true
+        $t = "$($tb.Text)"
+        # Quitarlo DESPUES de este evento: deshacerse de un control dentro de su propio manejador
+        # (Leave, KeyDown) deja a WinForms con un handle que ya no existe.
+        try { [void]$List.BeginInvoke([System.Action]({ try { $List.Controls.Remove($tb); $tb.Dispose() } catch { } }.GetNewClosure())) } catch { }
+        try { [void]$List.Focus() } catch { }
+        & $OnDone $t $Ok
+    }.GetNewClosure()
+    $tb.Add_KeyDown({
+        if ($_.KeyCode -eq [System.Windows.Forms.Keys]::Enter)  { $_.SuppressKeyPress = $true; & $fin $true }
+        elseif ($_.KeyCode -eq [System.Windows.Forms.Keys]::Escape) { $_.SuppressKeyPress = $true; & $fin $false }
+    }.GetNewClosure())
+    $tb.Add_Leave({ & $fin $true }.GetNewClosure())
+    $List.Controls.Add($tb)
+    [void]$tb.Focus()
+    $tb.SelectAll()
+    return $tb
+}
+
+function Add-CvGuiButtonKey {
+    <#
+        Pone a la derecha de un boton su TECLA de atajo, en una cajita pequena y atenuada (como en los
+        menus de Windows): el atajo se ve sin pasar el raton por encima. Se hace sitio ensanchando el
+        relleno derecho del boton (con AutoSize, el boton crece solo) y se pinta en su Paint con los
+        colores del tema de ese momento. -Key es el texto tal cual ('F9', 'Esc', 'Ctrl+T').
+    #>
+    param([Parameter(Mandatory)]$Button, [Parameter(Mandatory)][string]$Key)
+    $font = Get-CvGuiFont -Family 'Segoe UI' -Size 7.5
+    $w = [System.Windows.Forms.TextRenderer]::MeasureText($Key, $font).Width + 2
+    $p = $Button.Padding
+    $Button.Padding = New-Object System.Windows.Forms.Padding($p.Left, $p.Top, ($p.Right + $w + 6), $p.Bottom)
+    $Button.Add_Paint({
+        param($s, $e)
+        try {
+            $pal = Get-CvGuiCurrentPalette
+            $alto = 15
+            $x = $s.Width - $w - 6
+            $y = [int](($s.Height - $alto) / 2)
+            $rect = New-Object System.Drawing.Rectangle($x, $y, $w, $alto)
+            $pen = New-Object System.Drawing.Pen $pal.Border
+            $e.Graphics.DrawRectangle($pen, $rect)
+            $pen.Dispose()
+            $col = if ($s.Enabled) { $pal.Muted } else { $pal.Border }
+            [System.Windows.Forms.TextRenderer]::DrawText($e.Graphics, $Key, $font, $rect, $col,
+                ([System.Windows.Forms.TextFormatFlags]::HorizontalCenter -bor [System.Windows.Forms.TextFormatFlags]::VerticalCenter -bor [System.Windows.Forms.TextFormatFlags]::NoPadding))
+        } catch { }
+    }.GetNewClosure())
+    return $Button
+}
+
+function Write-CvGuiCellChip {
+    <#
+        Pinta en una celda una ETIQUETA de estado: texto en su color sobre un fondo suave redondeado
+        (-Kind: ok | run | warn | err | q, ver Get-CvGuiListPaintTools). En una fila marcada, en blanco
+        sobre blanco translucido, para que se lea sobre el azul de la seleccion.
+    #>
+    param($Graphics, $Rect, [string]$Text, [string]$Kind = 'q', [bool]$Selected = $false, $Tools, $Font)
+    if ("$Text" -eq '') { return }
+    $c = $Tools.Chip[$Kind]
+    if ($null -eq $c) { $c = $Tools.Chip['q'] }
+    # Medido y pintado con las MISMAS banderas (sin margen): si no, el texto no cabia en su etiqueta.
+    # Sin EndEllipsis al medir: con un tamano propuesto de cero, medir 'con puntos suspensivos' daba
+    # casi nada y la etiqueta salia en 'H...'.
+    $med = [System.Windows.Forms.TextRenderer]::MeasureText($Graphics, $Text, $Font, [System.Drawing.Size]::Empty, ([System.Windows.Forms.TextFormatFlags]::NoPadding -bor [System.Windows.Forms.TextFormatFlags]::SingleLine))
+    $alto = [Math]::Min($Rect.Height - 2, $med.Height + 4)
+    $ancho = [Math]::Min($Rect.Width - 6, $med.Width + 16)
+    if ($ancho -le 8 -or $alto -le 4) { return }
+    $x = $Rect.X + 4
+    $y = $Rect.Y + [int](($Rect.Height - $alto) / 2)
+    $radio = [int]($alto / 2)
+    $ruta = New-Object System.Drawing.Drawing2D.GraphicsPath
+    $ruta.AddArc($x, $y, $alto, $alto, 90, 180)
+    $ruta.AddArc(($x + $ancho - $alto), $y, $alto, $alto, 270, 180)
+    $ruta.CloseFigure()
+    $modo = $Graphics.SmoothingMode
+    $Graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+    $Graphics.FillPath($(if ($Selected) { $Tools.SelSoft } else { $c.Back }), $ruta)
+    $Graphics.SmoothingMode = $modo
+    $ruta.Dispose()
+    $rt = [System.Drawing.Rectangle]::new(($x + 8), $y, ($ancho - 12), $alto)
+    $col = if ($Selected) { [System.Drawing.Color]::White } else { $c.Fore }
+    [System.Windows.Forms.TextRenderer]::DrawText($Graphics, $Text, $Font, $rt, $col, $Tools.FlagsTight)
+}
+
+function Write-CvGuiCellBar {
+    <#
+        Pinta en una celda una BARRA de progreso de verdad (-Percent, 0-100) y a su derecha -Text. En
+        una fila marcada, la barra en blanco. Antes era una barra hecha con caracteres dentro del texto.
+    #>
+    param($Graphics, $Rect, [int]$Percent = 0, [string]$Text = '', [bool]$Selected = $false, $Tools, $Font, [int]$Width = 110)
+    $ancho = [Math]::Min($Width, [int]($Rect.Width / 2))
+    $alto = 8
+    $x = $Rect.X + 4
+    $y = $Rect.Y + [int](($Rect.Height - $alto) / 2)
+    if ($ancho -gt 10) {
+        $Graphics.FillRectangle($(if ($Selected) { $Tools.SelSoft } else { $Tools.Track }), $x, $y, $ancho, $alto)
+        $lleno = [int]($ancho * [Math]::Max(0, [Math]::Min(100, $Percent)) / 100)
+        if ($lleno -gt 0) { $Graphics.FillRectangle($(if ($Selected) { $Tools.White } else { $Tools.Accent }), $x, $y, $lleno, $alto) }
+    } else { $ancho = 0 }
+    if ("$Text" -ne '') {
+        $tx = $x + $ancho + 8
+        $rt = [System.Drawing.Rectangle]::new($tx, $Rect.Y, [Math]::Max(0, $Rect.Right - $tx - 2), $Rect.Height)
+        $col = if ($Selected) { [System.Drawing.Color]::White } else { $Tools.Fore }
+        [System.Windows.Forms.TextRenderer]::DrawText($Graphics, $Text, $Font, $rt, $col, $Tools.FlagsLeft)
+    }
 }
 
 function Set-CvGuiListDarkPaint {
@@ -1765,7 +2068,9 @@ function Set-CvGuiListDarkPaint {
         try {
             $h = $script:CvGuiListPaint
             if ($null -eq $h -or -not [object]::ReferenceEquals($h.Pal, $script:CvGuiPalette)) { $h = Get-CvGuiListPaintTools }
-            if (-not $h.Dark) { $e.DrawDefault = $true; return }
+            $mk = $null
+            [void]$script:CvGuiMarks.TryGetValue($s, [ref]$mk)
+            if (-not $h.Dark -and -not ($null -ne $mk -and $mk['paint-always'])) { $e.DrawDefault = $true; return }
             $b = $e.Bounds
             $e.Graphics.FillRectangle($h.Panel, $b)
             # Separador de columna y linea inferior, para que se siga leyendo como una cabecera.
@@ -1785,7 +2090,10 @@ function Set-CvGuiListDarkPaint {
         try {
             $h = $script:CvGuiListPaint
             if ($null -eq $h -or -not [object]::ReferenceEquals($h.Pal, $script:CvGuiPalette)) { $h = Get-CvGuiListPaintTools }
-            if (-not $h.Dark) { $e.DrawDefault = $true; return }
+            $mk = $null
+            [void]$script:CvGuiMarks.TryGetValue($s, [ref]$mk)
+            # En claro solo las listas que lo piden (Set-CvGuiListCellPainter); las demas, las pinta Windows.
+            if (-not $h.Dark -and -not ($null -ne $mk -and $mk['paint-always'])) { $e.DrawDefault = $true; return }
             # La celda: para la primera columna, Bounds devuelve la FILA entera (es asi desde
             # siempre en WinForms), asi que se recorta al ancho de su columna.
             $r = $e.Bounds
@@ -1803,6 +2111,10 @@ function Set-CvGuiListDarkPaint {
             } else {
                 $e.Graphics.FillRectangle($h.Panel, $r)
                 $texto = $item.ForeColor
+            }
+            # El pintor PROPIO de la lista (etiquetas, barras): si pinta la celda, no se escribe su texto.
+            if ($null -ne $mk -and $null -ne $mk['CellPainter']) {
+                if (& $mk['CellPainter'] $e $h $r) { return }
             }
             $al = $s.Columns[$e.ColumnIndex].TextAlign
             $flags = if ($al -eq [System.Windows.Forms.HorizontalAlignment]::Right) { $h.FlagsRight }
@@ -2134,19 +2446,29 @@ function Set-CvGuiTestScreen {
         que vive en otro hilo y no carga este modulo, y los procesos que lancen las pruebas):
           CV_GUI_TEST      = 1: ninguna ventana se pone delante a la fuerza (Set-CvGuiForeground) ni
                              se queda 'siempre encima' (la pantalla de arranque).
-          CV_GUI_TEST_AREA = 'x,y,ancho,alto': la zona de trabajo del monitor donde NO esta la ventana
-                             que tiene ahora el primer plano (la de quien trabaja). Con un solo
-                             monitor no se pone: las ventanas salen donde siempre, pero sin el foco.
+          CV_GUI_TEST_AREA = 'x,y,ancho,alto': la zona de trabajo del monitor elegido (-Mode, que sale de
+                             gui.testScreen): 'other' = donde NO esta la ventana que tiene ahora el
+                             primer plano (la de quien trabaja; con un solo monitor no se pone y las
+                             ventanas salen donde siempre, pero sin el foco), 'mouse' = el del raton,
+                             'number' = el monitor -Number (DISPLAYn). La eleccion: Select-CvGuiTestArea.
+          CV_GUI_TEST_USER = la ventana que tenia el primer plano al empezar (la de quien trabaja):
+                             si una ventana de las pruebas se lo lleva al abrirse, se lo devuelve
+                             (Restore-CvGuiTestFocus).
         La app normal no lo usa nunca. Devuelve la zona elegida (o $null).
     #>
+    param([string]$Mode = 'other', [int]$Number = 0)
     $env:CV_GUI_TEST = '1'
     $env:CV_GUI_TEST_AREA = ''
     try {
         # Lo unico que se le pregunta a Windows: que monitores hay y en cual esta la ventana que tiene
         # el primer plano (sin ninguna, el del raton). La ELECCION es pura: Select-CvGuiTestArea.
         $fg = [CvGui.Native]::GetForegroundWindow()
+        # Quien trabaja: se apunta una vez (los procesos hijos lo heredan y no lo pisan).
+        if ("$env:CV_GUI_TEST_USER" -eq '' -and $fg -ne [System.IntPtr]::Zero) { $env:CV_GUI_TEST_USER = "$($fg.ToInt64())" }
         $mio = if ($fg -ne [System.IntPtr]::Zero) { [System.Windows.Forms.Screen]::FromHandle($fg) } else { [System.Windows.Forms.Screen]::FromPoint([System.Windows.Forms.Cursor]::Position) }
-        $a = Select-CvGuiTestArea -Screens @([System.Windows.Forms.Screen]::AllScreens) -Current "$($mio.DeviceName)"
+        $raton = [System.Windows.Forms.Screen]::FromPoint([System.Windows.Forms.Cursor]::Position)
+        $a = Select-CvGuiTestArea -Screens @([System.Windows.Forms.Screen]::AllScreens) -Current "$($mio.DeviceName)" `
+            -Mode $Mode -Number $Number -Mouse "$($raton.DeviceName)"
         if ($null -ne $a) {
             $env:CV_GUI_TEST_AREA = ("{0},{1},{2},{3}" -f $a.X, $a.Y, $a.Width, $a.Height)
         }
@@ -2155,15 +2477,137 @@ function Set-CvGuiTestScreen {
     return $null
 }
 
+function Get-CvGuiMonitorRows {
+    <#
+        PURO. Los monitores tal y como los cuenta 'Identificar monitores': su NUMERO (el de Windows,
+        sacado del DeviceName: '\\.\DISPLAY2' -> 2; es el que se pone en gui.testScreenNumber), su
+        resolucion, si es el principal y si es donde saldrian ahora las ventanas de las pruebas
+        (-TestArea, la zona que da Select-CvGuiTestArea; $null = donde siempre, ninguno marcado).
+        -Screens: lo que tenga DeviceName, Bounds, WorkingArea y Primary (como Screen.AllScreens).
+    #>
+    param($Screens = @(), $TestArea = $null)
+    $filas = @()
+    $orden = 0
+    foreach ($s in @($Screens)) {
+        if ($null -eq $s) { continue }
+        $orden++
+        $n = $orden
+        if ("$($s.DeviceName)" -match '(\d+)\s*$') { $n = [int]$Matches[1] }
+        $filas += [pscustomobject]@{
+            Number  = $n
+            Device  = "$($s.DeviceName)"
+            Bounds  = $s.Bounds
+            Primary = [bool]$s.Primary
+            Tests   = ($null -ne $TestArea -and $s.WorkingArea -eq $TestArea)
+        }
+    }
+    return $filas
+}
+
+function Show-CvGuiMonitorIds {
+    <#
+        'IDENTIFICAR MONITORES', como el de Windows: un recuadro con el NUMERO de cada monitor en el
+        centro de cada pantalla durante -Seconds segundos (gui.identifyMonitorsSec). Debajo del numero,
+        su resolucion, si es el principal y si es donde salen ahora las ventanas de las PRUEBAS (con lo
+        que diga gui.testScreen, -Mode / -Number). Asi se sabe que numero poner en gui.testScreenNumber.
+        No espera: los recuadros se cierran solos con su temporizador. Devuelve las filas pintadas.
+    #>
+    param([int]$Seconds = 3, [string]$Mode = 'other', [int]$Number = 0)
+    [void](Initialize-CvGui)
+    $pantallas = @([System.Windows.Forms.Screen]::AllScreens)
+    # 'Donde trabajas' = el monitor de la ventana activa (la que ha pulsado el boton).
+    $fg = [CvGui.Native]::GetForegroundWindow()
+    $mio = if ($fg -ne [System.IntPtr]::Zero) { [System.Windows.Forms.Screen]::FromHandle($fg) } else { [System.Windows.Forms.Screen]::FromPoint([System.Windows.Forms.Cursor]::Position) }
+    $raton = [System.Windows.Forms.Screen]::FromPoint([System.Windows.Forms.Cursor]::Position)
+    $zona = Select-CvGuiTestArea -Screens $pantallas -Current "$($mio.DeviceName)" -Mode $Mode -Number $Number -Mouse "$($raton.DeviceName)"
+    $filas = @(Get-CvGuiMonitorRows -Screens $pantallas -TestArea $zona)
+    $pal = Get-CvGuiCurrentPalette
+    $grande = Get-CvGuiFont -Size 72 -Style Bold
+    $chica  = Get-CvGuiFont -Size 11
+    $formas = @()
+    foreach ($f in $filas) {
+        $w = New-Object System.Windows.Forms.Form
+        $w.FormBorderStyle = 'None'
+        $w.ShowInTaskbar   = $false
+        $w.TopMost         = $true
+        $w.StartPosition   = 'Manual'
+        $w.Size            = New-Object System.Drawing.Size(320, 230)
+        $w.Location        = New-Object System.Drawing.Point(($f.Bounds.X + [int](($f.Bounds.Width - 320) / 2)), ($f.Bounds.Y + [int](($f.Bounds.Height - 230) / 2)))
+        $w.BackColor       = $(if ($f.Tests) { $pal.Accent } else { $pal.Panel })
+        $w.Name            = ('cvMonitorId{0}' -f $f.Number)
+        $num = New-Object System.Windows.Forms.Label
+        $num.Text      = "$($f.Number)"
+        $num.Font      = $grande
+        $num.Dock      = 'Fill'
+        $num.TextAlign = 'MiddleCenter'
+        $num.ForeColor = $(if ($f.Tests) { [System.Drawing.Color]::White } else { $pal.Fore })
+        $info = New-Object System.Windows.Forms.Label
+        $notas = @((Get-CvText -Key 'mon.resolucion' -Values @($f.Bounds.Width, $f.Bounds.Height)))
+        if ($f.Primary) { $notas += (Get-CvText -Key 'mon.principal') }
+        if ($f.Tests)   { $notas += (Get-CvText -Key 'mon.pruebas') }
+        $info.Text      = (Get-CvText -Key 'mon.info' -Values @($f.Number, ($notas -join ', ')))
+        $info.Font      = $chica
+        $info.Dock      = 'Bottom'
+        $info.Height    = 48
+        $info.TextAlign = 'MiddleCenter'
+        $info.ForeColor = $num.ForeColor
+        $w.Controls.Add($num)
+        $w.Controls.Add($info)
+        $w.Show()
+        $formas += $w
+    }
+    $t = New-Object System.Windows.Forms.Timer
+    $t.Interval = [Math]::Max(1, $Seconds) * 1000
+    $t.Add_Tick({
+        $t.Stop()
+        foreach ($w in $formas) { try { $w.Close(); $w.Dispose() } catch { } }
+        $t.Dispose()
+    }.GetNewClosure())
+    $t.Start()
+    return $filas
+}
+
+function Restore-CvGuiTestFocus {
+    <#
+        Modo pruebas: si una ventana de las pruebas se ha llevado el primer plano al ACTIVARSE, se lo
+        devuelve a la ventana de quien trabaja (CV_GUI_TEST_USER). Windows deja que un proceso que lanza
+        quien esta en primer plano active su primera ventana -por eso salian delante aunque nadie las
+        trajera-; y como en ese momento el primer plano es nuestro, SI se puede ceder. Las pruebas no
+        dependen del foco del sistema (pulsan con PerformClick y eventos), y las capturas pintan la
+        ventana como activa sin necesitarlo (WM_NCACTIVATE). Fuera del modo pruebas no hace nada.
+    #>
+    param($Form = $null)
+    try {
+        if (-not (Test-CvGuiTestMode)) { return $false }
+        $u = [int64]0
+        if (-not [int64]::TryParse("$env:CV_GUI_TEST_USER", [ref]$u) -or $u -eq 0) { return $false }
+        $fg = [CvGui.Native]::GetForegroundWindow()
+        if ($null -ne $Form -and $Form.IsHandleCreated -and $fg -ne $Form.Handle) { return $false }
+        return [bool][CvGui.Native]::SetForegroundWindow([System.IntPtr]$u)
+    } catch { return $false }
+}
+
 function Select-CvGuiTestArea {
     <#
         PURO. De los monitores (-Screens: lo que tenga DeviceName y WorkingArea, como Screen.AllScreens),
-        la zona de trabajo del PRIMERO que no sea -Current (el monitor donde trabaja quien lanza las
-        pruebas). $null si no hay otro: con un solo monitor no hay a donde mandar las ventanas y salen
-        donde siempre. Sin saber cual es el de quien trabaja (-Current vacio) tampoco se elige: mandarlas
-        a uno cualquiera podria ser justo el suyo.
+        la zona de trabajo donde salen las ventanas de las pruebas, segun -Mode (gui.testScreen):
+          other  - la del PRIMERO que no sea -Current (el monitor donde trabaja quien lanza las
+                   pruebas). $null si no hay otro: con un solo monitor no hay a donde mandar las
+                   ventanas y salen donde siempre. Sin saber cual es el de quien trabaja (-Current
+                   vacio) tampoco se elige: mandarlas a uno cualquiera podria ser justo el suyo.
+          mouse  - la del monitor del raton (-Mouse). Elegido a proposito, aunque sea el tuyo.
+          number - la del monitor -Number, por el numero de su DeviceName ('\\.\DISPLAY2' = 2), que
+                   es el que da Windows. Si no hay ninguno con ese numero, como 'other'.
     #>
-    param($Screens = @(), [string]$Current = '')
+    param($Screens = @(), [string]$Current = '', [string]$Mode = 'other', [int]$Number = 0, [string]$Mouse = '')
+    if ("$Mode" -eq 'mouse' -and "$Mouse" -ne '') {
+        foreach ($s in @($Screens)) { if ($null -ne $s -and "$($s.DeviceName)" -eq "$Mouse") { return $s.WorkingArea } }
+    }
+    if ("$Mode" -eq 'number' -and $Number -gt 0) {
+        foreach ($s in @($Screens)) {
+            if ($null -ne $s -and "$($s.DeviceName)" -match '(\d+)\s*$' -and [int]$Matches[1] -eq $Number) { return $s.WorkingArea }
+        }
+    }
     if ("$Current" -eq '') { return $null }
     foreach ($s in @($Screens)) {
         if ($null -eq $s) { continue }
@@ -2201,6 +2645,8 @@ function Set-CvGuiStartScreen {
     try {
         # Modo pruebas: TODAS al monitor libre, se centren donde se centren (Set-CvGuiTestScreen).
         if (Test-CvGuiTestMode) {
+            # Y si al abrirse se llevan el primer plano, se devuelve (Restore-CvGuiTestFocus).
+            $Form.Add_Activated({ param($s, $e) [void](Restore-CvGuiTestFocus -Form $s) })
             $zona = Get-CvGuiTestArea
             if ($null -ne $zona) {
                 $Form.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual

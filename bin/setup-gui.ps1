@@ -17,7 +17,10 @@
 param(
     # Fichero de configuracion a editar/gestionar (por defecto config.json junto al programa).
     # Admite ruta absoluta o relativa al directorio actual. Mismo parametro que setup.ps1.
-    [string]$Config = ''
+    [string]$Config = '',
+    # Abrir YA una seccion al arrancar: 'config' (el editor de la configuracion) o 'tools' (las
+    # herramientas). Lo usa la cola para sus botones Configuracion / Herramientas (fase A7).
+    [ValidateSet('', 'config', 'tools')][string]$Open = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -131,7 +134,7 @@ try {
 
     Set-CvSplashText -Splash $splash -Text (Get-CvText -Key 'splash.setup')
     # La ventana quita la pantalla de arranque en cuanto se dibuja (-Splash).
-    $ok = Show-CvSetupWindow -Context $ctx -Root $Root -CfgPath $CfgPath -CfgName $CfgName -IsAlt $isAlt -CurrentLog "$logFile" -Splash $splash
+    $ok = Show-CvSetupWindow -Context $ctx -Root $Root -CfgPath $CfgPath -CfgName $CfgName -IsAlt $isAlt -CurrentLog "$logFile" -Splash $splash -Open $Open
     if (-not $ok) {
         Write-CvLog 'SETUP' (Get-CvText -Key 'sg.noventana')
         Write-CvLog 'SETUP' (Get-CvText -Key 'sg.usaconsola')

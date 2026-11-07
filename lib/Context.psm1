@@ -5,7 +5,7 @@
 
 function Get-CvVersion {
     <# Version del proyecto (fuente unica; la usan Convert.ps1 y setup.ps1). #>
-    '4.7.6'
+    '4.7.7'
 }
 
 function Get-CvAppName {
@@ -23,8 +23,8 @@ function Get-CvStartupPrefs {
         todavia no se sabe si ese config es el que se va a usar; crearle las carpetas a uno que a lo
         mejor ni se elige es justo lo que dejaba Original\ y compania por ahi sembradas.
 
-        Devuelve @{ Language; AskConfigKey; SingleInstance; Splash; SplashTimeoutSec; Theme }, ya resueltos
-        contra sus catalogos.
+        Devuelve @{ Language; AskConfigKey; SingleInstance; Splash; SplashTimeoutSec; Theme; TestScreen;
+        TestScreenNumber }, ya resueltos contra sus catalogos.
     #>
     param([Parameter(Mandatory)][string]$Root, [string]$Path = '')
     $cfg  = Get-CvConfig -Root $Root -Path $Path
@@ -42,6 +42,10 @@ function Get-CvStartupPrefs {
         # Y con que tema (gui.theme, sin resolver: 'system' se resuelve con Resolve-CvGuiTheme).
         Theme          = (Resolve-CvOneOf "$($cfg.gui.theme)" @(@(Get-CvGuiThemes) | ForEach-Object { "$($_.Value)" }) "$($def.gui.theme)")
         SplashTimeoutSec = $(if ([int]$cfg.gui.splashTimeoutSec -ge 5) { [int]$cfg.gui.splashTimeoutSec } else { [int]$def.gui.splashTimeoutSec })
+        # Donde salen las ventanas de las PRUEBAS (gui.testScreen): lo leen las baterias y las capturas
+        # antes de abrir ninguna, sin contexto (ver Set-CvGuiTestScreen).
+        TestScreen       = (Resolve-CvOneOf "$($cfg.gui.testScreen)" @(@(Get-CvGuiTestScreens) | ForEach-Object { "$($_.Value)" }) "$($def.gui.testScreen)")
+        TestScreenNumber = [Math]::Max(0, [int]$cfg.gui.testScreenNumber)
     }
 }
 
@@ -439,6 +443,11 @@ function New-CvContext {
         GuiQueueStartGrace = $(if ([int]$cfg.gui.queueStartGraceSec -gt 0) { [int]$cfg.gui.queueStartGraceSec } else { [int]$def.gui.queueStartGraceSec })
         # Cuanto se queda quieta la lista tras tocarla (ver gui.queueFollowHoldSec). 0 es valido.
         GuiQueueFollowHold = [Math]::Max(0, [int]$cfg.gui.queueFollowHoldSec)
+        # Filas que ensenan las listas del editor del job (ver gui.jobListRowsMin / jobListRowsMax).
+        # Lo que dura 'Identificar monitores' en pantalla (ver gui.identifyMonitorsSec).
+        GuiIdentifySec    = $(if ([int]$cfg.gui.identifyMonitorsSec -gt 0) { [int]$cfg.gui.identifyMonitorsSec } else { [int]$def.gui.identifyMonitorsSec })
+        GuiJobListRowsMin = $(if ([int]$cfg.gui.jobListRowsMin -gt 0) { [int]$cfg.gui.jobListRowsMin } else { [int]$def.gui.jobListRowsMin })
+        GuiJobListRowsMax = $(if ([int]$cfg.gui.jobListRowsMax -gt 0) { [int]$cfg.gui.jobListRowsMax } else { [int]$def.gui.jobListRowsMax })
         # Deduccion de bordes en los archivos ya convertidos (ver gui.queueDoneProbe).
         GuiQueueDoneProbe = [Math]::Max(0, [int]$cfg.gui.queueDoneProbe)
         # Columna 'Calidad': cuantos originales se miran por refresco y el margen (ver gui.queueQualityProbe).

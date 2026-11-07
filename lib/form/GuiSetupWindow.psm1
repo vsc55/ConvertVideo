@@ -29,7 +29,10 @@ function Show-CvSetupWindow {
         # Log de la sesion EN CURSO: el visor lo marca y la limpieza lo respeta (esta en uso).
         [string]$CurrentLog = '',
         # Pantalla de arranque (Start-CvSplashWindow) que se quita en cuanto la ventana se dibuja.
-        $Splash = $null
+        $Splash = $null,
+        # Seccion que se abre sola en cuanto la ventana se ve: 'config' o 'tools' (la piden los
+        # botones de la cola). Es lo mismo que pulsar su boton.
+        [string]$Open = ''
     )
     if (-not (Initialize-CvGui)) { return $false }
 
@@ -185,11 +188,12 @@ function Show-CvSetupWindow {
     })
 
     & $addHeader (Get-CvText -Key 'setup.sec.herr')
-    [void](& $addButton ('  ' + (Get-CvText -Key 'setup.btn.herr')) {
+    $btnHerr = (& $addButton ('  ' + (Get-CvText -Key 'setup.btn.herr')) {
         Show-CvToolsWindow -Context $vivo.Ctx -Root $Root -CfgPath $CfgPath
         [void](& $recarga)   # se puede haber cambiado la version EN USO: el contexto la lleva dentro
         & $write (Get-CvText -Key 'setup.cab.estado') (Get-CvSetupStatusText -Context $vivo.Ctx -CfgPath $CfgPath -IsAlt $IsAlt)
     })
+    $btnHerr.Name = 'cvSetupTools'
 
     & $addHeader (Get-CvText -Key 'setup.sec.pruebas')
     foreach ($s in (Get-CvSetupTestSuites)) {
@@ -203,8 +207,22 @@ function Show-CvSetupWindow {
         }.GetNewClosure())
     }
 
+    # Que monitor es cada uno (para gui.testScreenNumber): su numero, en grande, en cada pantalla.
+    $btnMon = (& $addButton ('  ' + (Get-CvText -Key 'setup.btn.monitores')) {
+        $ini = Get-CvStartupPrefs -Root $Root -Path $CfgPath
+        $filas = @(Show-CvGuiMonitorIds -Seconds ([int]$vivo.Ctx.GuiIdentifySec) -Mode "$($ini.TestScreen)" -Number ([int]$ini.TestScreenNumber))
+        $txt = @($filas | ForEach-Object {
+            $n = @((Get-CvText -Key 'mon.resolucion' -Values @($_.Bounds.Width, $_.Bounds.Height)))
+            if ($_.Primary) { $n += (Get-CvText -Key 'mon.principal') }
+            if ($_.Tests)   { $n += (Get-CvText -Key 'mon.pruebas') }
+            (Get-CvText -Key 'mon.info' -Values @($_.Number, ($n -join ', ')))
+        })
+        & $write (Get-CvText -Key 'setup.cab.monitores') ((@((Get-CvText -Key 'setup.monitores.intro' -Values @("$($ini.TestScreen)", [int]$ini.TestScreenNumber))) + $txt) -join [Environment]::NewLine)
+    })
+    $btnMon.Name = 'cvSetupMonitors'
+
     & $addHeader (Get-CvText -Key 'setup.sec.config')
-    [void](& $addButton ('  ' + (Get-CvText -Key 'setup.btn.config' -Values @($CfgName))) {
+    $btnCfg = (& $addButton ('  ' + (Get-CvText -Key 'setup.btn.config' -Values @($CfgName))) {
         # Abrir el editor cuesta unos segundos (monta un arbol con todas las claves): con el cursor de
         # espera y el aviso en el panel, no parece que setup se haya colgado.
         & $write (Get-CvText -Key 'setup.cab.config') (Get-CvText -Key 'setup.cfg.abriendo')
@@ -222,6 +240,7 @@ function Show-CvSetupWindow {
             & $write (Get-CvText -Key 'setup.cab.config') (Get-CvText -Key 'setup.cfg.sincambios')
         }
     })
+    $btnCfg.Name = 'cvSetupConfig'
     # Perfiles: crear / duplicar / editar / borrar los PROPIOS de config.json ('profiles'), y los
     # de serie en solo lectura para poder duplicarlos. La ventana vive en GuiProfile.psm1 porque la
     # comparten setup y la cola.
@@ -288,6 +307,17 @@ function Show-CvSetupWindow {
     # detras de lo que estuvieras usando (ver Set-CvGuiForeground).
     $form.Add_Shown({ Stop-CvSplashWindow -Splash $Splash })
     if ([bool]$Context.GuiBringToFront) { $form.Add_Shown({ [void](Set-CvGuiForeground -Form $form) }) }
+    # -Open: la seccion pedida se abre sola, DESPUES de que la ventana se vea (BeginInvoke: si se
+    # abriera dentro de Shown, su dialogo saldria antes de que esta terminara de pintarse).
+    $abrir = switch ("$Open".ToLower()) { 'config' { $btnCfg } 'tools' { $btnHerr } default { $null } }
+    if ($null -ne $abrir) {
+        # La accion se crea AQUI, en el ambito de la funcion: un GetNewClosure anidado dentro de otro
+        # no ve las variables del de fuera ($abrir llegaba vacio; ver ref-gotchas.md).
+        $pulsar = [System.Action]({ $abrir.PerformClick() }.GetNewClosure())
+        $form.Add_Shown({
+            try { [void]$form.BeginInvoke($pulsar) } catch { }
+        }.GetNewClosure())
+    }
     [void]$form.ShowDialog()
     $form.Dispose()
     return $true

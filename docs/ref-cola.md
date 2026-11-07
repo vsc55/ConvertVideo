@@ -41,7 +41,7 @@ Estados (catálogo único `Get-CvQueueStates`, en `lib\WorkerCore.psm1`):
 
 | Estado | Cuándo | Qué hacer |
 |---|---|---|
-| **Sin preparar** | Hay vídeo en `Original\` pero no tiene `.job.json`. | Botón `Preparar pendientes` (o `Editar job` para uno solo). |
+| **Sin preparar** | Hay vídeo en `Original\` pero no tiene `.job.json`. | Botón `Preparar pendientes` (o `Editar` para uno solo). |
 | **En cola** | Tiene job y nadie lo ha reclamado. | `Iniciar`. |
 | **Codificando** | Lo tiene un worker vivo. | Mirar el progreso. |
 | **Bloqueo huérfano** | Quedó un `.lock` de un worker que ya no existe. | Menú contextual → *Liberar el bloqueo huérfano* (o lo roba solo el siguiente worker). |
@@ -110,7 +110,7 @@ La regla del prefijo `_` (forzar detección de bordes) se respeta igual que en c
 
 ### Editar un job suelto
 
-Botón **`Editar job`** (o doble clic en la fila, o menú contextual): abre el editor de **ese** archivo, para verlo o retocarlo. Sin nada seleccionado coge el primer archivo sin preparar.
+Botón **`Editar`** (o doble clic en la fila, o menú contextual): abre el editor de **ese** archivo, para verlo o retocarlo. Sin nada seleccionado coge el primer archivo sin preparar.
 
 Si el archivo **aún no tiene job**, lo primero que hace es **preguntar el perfil**, igual que la consola antes de preparar: el perfil decide si se recodifica, con qué encoder y a qué tamaño, así que no se elige por su cuenta (cancelar ahí = no se abre nada). Si el job ya existe, manda el perfil que tiene **congelado** — y se puede cambiar en el desplegable.
 
@@ -186,16 +186,18 @@ Analizar un archivo puede tardar: contar los cues de un subtitulo **sin el tag `
 | Botón | Qué hace |
 |---|---|
 | **Iniciar** | Comprueba que se puede trabajar desatendido (`Test-CvConvertReady`) y abre N workers, sin pasar de los archivos que hay en cola. Si hay filas **en cola marcadas**, codifica **solo esas** — el botón lo dice: *Iniciar (3 elegidos)*. **Completa hasta el máximo, nunca abre un grupo entero encima**: con workers en marcha abre solo los que falten hasta *Workers en paralelo* (`Get-CvQueueStartCount`), así que subir ese número y pulsar *Iniciar* añade los que falten; con el máximo ya en marcha se apaga (el tooltip dice por qué). Tras **Parar** vuelve a encenderse al momento: pulsarlo **anula la parada** —los workers que siguen codificando continúan con la cola en vez de salir al acabar su archivo— y abre los que falten hasta el máximo, que pueden ser ninguno. Mientras nacen los recién abiertos sigue apagado (`gui.queueStartGraceSec`). *Codificar solo estos* del menú contextual sigue el mismo tope. |
-| **Parar** | Parada **ordenada**: deja una bandera (`Proceso\stop.flag`) que los workers miran **entre archivos**; cada uno termina el que tenga y no coge más. Es la forma buena de parar: no deja temporales a medias. |
-| **Cancelar ahora** | Corta en seco los workers y su `ffmpeg` (primero los hijos, para no dejar el `ffmpeg` huérfano comiendo CPU). Pide confirmación: se pierde lo que llevara el archivo en curso y quedan temporales y un bloqueo caducado (se limpian desde setup, ver [ref-setup.md](ref-setup.md)). |
+| **Parar al acabar** | Parada **ordenada**: deja una bandera (`Proceso\stop.flag`) que los workers miran **entre archivos**; cada uno termina el que tenga y no coge más. Es la forma buena de parar: no deja temporales a medias. |
+| **Cancelar todo** | Corta en seco los workers y su `ffmpeg` (primero los hijos, para no dejar el `ffmpeg` huérfano comiendo CPU). Pide confirmación: se pierde lo que llevara el archivo en curso y quedan temporales y un bloqueo caducado (se limpian desde setup, ver [ref-setup.md](ref-setup.md)). |
 | **Preparar pendientes (N)** | El flujo normal: pregunta el perfil una vez y recorre los archivos sin preparar (arriba). Lleva el número de pendientes. |
-| **Editar job** | Abre el editor del archivo seleccionado o, si no hay ninguno, del primero sin preparar. |
+| **Editar** | Abre el editor del archivo seleccionado o, si no hay ninguno, del primero sin preparar. |
+| **Parar este** | Lo mismo que *Parar la conversión de este archivo* del botón derecho: mata **su** worker (y su `ffmpeg`), no los demás; el archivo vuelve a la cola. Solo se enciende con una fila que se está codificando. |
+| **Quitar de la cola** | Lo mismo que la opción del botón derecho: borra el job de los marcados que no esté codificando nadie. |
 | **Actualizar** | Refresca ya (la ventana se refresca sola cada segundo). |
 | **Ver las consolas de los workers** | Marcado, los workers abren su ventana; desmarcado (por defecto) van ocultos y se siguen por el panel de log. |
 
-Los botones son una **barra de herramientas**: planos, con icono y tooltip, y separados por una línea en cuatro grupos — **marcha** (*Iniciar*, *Parar*, *Cancelar ahora*), **preparación** (*Preparar pendientes*, *Editar job*), **carpetas** (*Original*, *Convertido*: las abre en el explorador, tal como estén configuradas en `paths`) y **vista** (*Actualizar* y ***Tema***, que cambia entre claro y oscuro en caliente y lo **guarda** en `gui.theme`; el resto de ventanas lo cogen al abrirse). Los iconos son los de **Segoe MDL2 Assets**, la fuente de iconos que trae Windows 10/11: los mismos símbolos que usa el sistema, nítidos a cualquier DPI y sin ficheros que instalar (`New-CvGuiIcon`; los códigos de glifo, en `Get-CvGuiIconGlyphs`). En un Windows sin esa fuente se cae a unos iconos dibujados con GDI+.
+Los botones son una **barra de herramientas**: planos, con icono y tooltip, y separados por una línea en grupos según **a qué afectan** — **toda la cola** (*Iniciar*, *Parar al acabar*, *Cancelar todo*), **el archivo marcado** (*Editar*, *Parar este*, *Quitar de la cola*, sin rótulo: la fila marcada ya se ve en la lista; antes parar o quitar uno solo estaba en el botón derecho y no se encontraba), **preparación** (*Preparar pendientes*), y **carpetas y vista**, solo con icono para que la barra quepa: *Original* y *Convertido* (las abre en el explorador, tal como estén configuradas en `paths`), *Actualizar* y ***Tema***, que cambia entre claro y oscuro en caliente y lo **guarda** en `gui.theme`; el resto de ventanas lo cogen al abrirse), y **setup**, también solo con icono: ***Configuración*** y ***Herramientas*** abren `setup-gui.ps1 -Open config|tools` en su propio proceso (`Start-CvSetupGui`, orden en `Get-CvSetupGuiArgs`), ya en esa sección y sobre el mismo config; la cola no se bloquea. Los iconos son los de **Segoe MDL2 Assets**, la fuente de iconos que trae Windows 10/11: los mismos símbolos que usa el sistema, nítidos a cualquier DPI y sin ficheros que instalar (`New-CvGuiIcon`; los códigos de glifo, en `Get-CvGuiIconGlyphs`). En un Windows sin esa fuente se cae a unos iconos dibujados con GDI+.
 
-Los **ajustes de la sesión** no están en la barra: viven en la pestaña **`Opciones`** de abajo, junto al resumen y el log — *workers en paralelo* (arranca con `behavior.workers`) y *ver las consolas de los workers*. No son acciones, y en la barra se salían de la ventana en pantallas normales.
+Los **ajustes de la sesión** no están en la barra: viven en la pestaña **`Sesión`** de abajo, junto al resumen y el log — *workers en paralelo* (arranca con `behavior.workers`) y *ver las consolas de los workers*. No son acciones, y en la barra se salían de la ventana en pantallas normales.
 
 Para codificar **solo unos cuantos**, márcalos en la lista (Ctrl+clic) y pulsa *Iniciar* — o botón derecho → *Codificar solo estos*: a los workers se les pasa `-Only` con esos nombres y no tocan el resto. Con varios workers, todos llevan la misma lista y se la reparten por el lock de siempre.
 
@@ -223,7 +225,7 @@ Medido con la ventana abierta y un worker publicando progreso: **0** relecturas 
 
 Los **botones** no esperan a nada de esto: el texto de *Iniciar* (`Iniciar (N elegidos)`), el de *Preparar pendientes*, y qué está disponible y qué no, se recalculan al marcar filas, con lo ya leído y sin tocar el disco.
 
-**Si recodificar no compensa, se queda el vídeo original.** En *Opciones* hay una casilla: *«Si el vídeo recodificado engorda, quedarse con el original»*. Marcada, al terminar de codificar el vídeo se compara con la pista del original y, si ha salido **más grande**, se tira lo codificado y se multiplexa el vídeo original — el audio y los subtítulos ya hechos se conservan, no se repite nada. Solo pasa cuando la imagen no se toca (sin recorte, escalado, tone-mapping ni cambio de fps). Lo que se marca aquí es el valor **de partida** y se guarda en la configuración (`encode.video.keepOriginalIfBigger`); cada archivo lo lleva congelado en su job, así que se puede cambiar por archivo en su editor o en varios a la vez. Cuando ocurre, la fila lo dice en la columna *Progreso*: **`[video ORIGINAL]`**, junto al tamaño. Se sabe porque la salida queda marcada (`CV_VIDEO=original`) y la cola lo lee con el mismo `ffprobe` que ya usa para deducir los bordes — así que aparece igual que ellos: con la cola parada y cacheado. Funciona por los dos caminos: por etapas se decide **antes** de multiplexar (se tira el temporal de vídeo y se une el original, que es lo que ya hace el perfil `copy`), y en la beta de una pasada se compara el fichero ya hecho y se le **cambia la pista de vídeo** con un remux.
+**Si recodificar no compensa, se queda el vídeo original.** En *Sesión* hay una casilla: *«Si el vídeo recodificado engorda, quedarse con el original»*. Marcada, al terminar de codificar el vídeo se compara con la pista del original y, si ha salido **más grande**, se tira lo codificado y se multiplexa el vídeo original — el audio y los subtítulos ya hechos se conservan, no se repite nada. Solo pasa cuando la imagen no se toca (sin recorte, escalado, tone-mapping ni cambio de fps). Lo que se marca aquí es el valor **de partida** y se guarda en la configuración (`encode.video.keepOriginalIfBigger`); cada archivo lo lleva congelado en su job, así que se puede cambiar por archivo en su editor o en varios a la vez. Cuando ocurre, la fila lo dice en la columna *Progreso*: **`[video ORIGINAL]`**, junto al tamaño. Se sabe porque la salida queda marcada (`CV_VIDEO=original`) y la cola lo lee con el mismo `ffprobe` que ya usa para deducir los bordes — así que aparece igual que ellos: con la cola parada y cacheado. Funciona por los dos caminos: por etapas se decide **antes** de multiplexar (se tira el temporal de vídeo y se une el original, que es lo que ya hace el perfil `copy`), y en la beta de una pasada se compara el fichero ya hecho y se le **cambia la pista de vídeo** con un remux.
 
 **La lista sigue al archivo que se está codificando.** Con la cola larga, la fila en curso se va por debajo de la zona visible y deja de verse justo lo único que se mueve. La lista se desplaza sola para dejarla a la vista, pero **solo cuando hay un motivo nuevo**, y nunca mientras la estás usando:
 
@@ -238,7 +240,7 @@ Se apaga del todo con `gui.queueFollowWorker = false`.
 
 **Atajos de teclado** (`Get-CvQueueShortcuts`, catálogo): `F5` actualizar, `F2` / `Intro` editar el job, `F6` preparar pendientes, `F9` iniciar, `Esc` parar, `Ctrl+A` marcar todas, `Ctrl+1/2/3` las pestañas, `Ctrl+O` / `Ctrl+D` las carpetas y `Ctrl+T` el tema. La ventana los engancha con `KeyPreview` y **pulsa el botón**, así que un atajo no puede hacer lo que el botón no deja (apagado = no pasa nada) y no hay una segunda copia de la lógica. Tres detalles que costaron: `Esc` **pregunta antes** (es la tecla refleja para cerrar cualquier cosa y aquí pararía la cola); `Ctrl+A` e `Intro` solo valen **con el foco en la lista**, porque dentro de un campo de texto significan otra cosa; y ese "¿tiene el foco la lista?" se le pregunta al control (`$lv.Focused`), no al formulario — `Form.ActiveControl` devuelve el contenedor de arriba (el divisor), no el control que de verdad lo tiene. Cada botón anuncia su tecla en la ayuda emergente.
 
-**La ventana puede vivir en el área de notificación** (`gui.minimizeToTray`, apagado; también en la pestaña *Opciones*). Al minimizarla se esconde y deja su icono junto al reloj, con menú (*Abrir* / *Cerrar*) y doble clic para volver — y vuelve **delante**, con el mismo `Set-CvGuiForeground`. El rótulo del icono es el resumen del pie (cuántos hay, cuántos se están codificando), recortado a los 63 caracteres que admite `NotifyIcon.Text`. Dos detalles que **no** son opcionales: el `NotifyIcon` se hace `Dispose` al cerrar (si no, queda el icono fantasma hasta que pasas el ratón por encima), y la ventana se abre con **`Application.Run`** y no con `ShowDialog` — sobre un diálogo modal, `Hide()` (o tocar `ShowInTaskbar`) **termina su bucle**, así que minimizarla cerraba el programa: medido, y por eso está escrito aquí.
+**La ventana puede vivir en el área de notificación** (`gui.minimizeToTray`, apagado; también en la pestaña *Sesión*). Al minimizarla se esconde y deja su icono junto al reloj, con menú (*Abrir* / *Cerrar*) y doble clic para volver — y vuelve **delante**, con el mismo `Set-CvGuiForeground`. El rótulo del icono es el resumen del pie (cuántos hay, cuántos se están codificando), recortado a los 63 caracteres que admite `NotifyIcon.Text`. Dos detalles que **no** son opcionales: el `NotifyIcon` se hace `Dispose` al cerrar (si no, queda el icono fantasma hasta que pasas el ratón por encima), y la ventana se abre con **`Application.Run`** y no con `ShowDialog` — sobre un diálogo modal, `Hide()` (o tocar `ShowInTaskbar`) **termina su bucle**, así que minimizarla cerraba el programa: medido, y por eso está escrito aquí.
 
 **Escondida, el icono se mueve mientras codifica** (`gui.trayAnimation`, de serie `progress`). Con la ventana junto al reloj lo único que se ve es su icono, así que con algún worker vivo deja de estar quieto: `progress` llena el anillo con el **avance de la tanda** y le hace parpadear la punta (el % tarda minutos en cambiar y sin el parpadeo parecería parado), `spin` gira la flecha de 45 en 45 grados, `dot` enciende y apaga un punto verde en la esquina y `off` lo deja quieto. Un fotograma cada `gui.trayAnimMs` (500 ms). Los fotogramas son el **mismo dibujo** del icono (`New-CvGuiAppBitmap` con `-Progress` / `-Spin` / `-Dot` / `-Pulse`), se montan una vez por dibujo y se guardan (`Get-CvGuiTrayFrameIcon`): la animación pasa una y otra vez por los mismos pocos. Qué pintar en cada fotograma es una función pura (`Get-CvTrayAnimFrame`) y cuándo moverse también (`Test-CvTrayAnimate`: escondida, con workers y con animación elegida); con la ventana a la vista o sin nada en marcha, el temporizador se para y vuelve el icono de siempre.
 
@@ -297,14 +299,14 @@ Por eso, al cerrar con workers vivos se **pregunta** (`gui.confirmCloseWithWorke
 |---|---|
 | *Dejarlos en segundo plano* | Cierra y los deja. Siguen codificando; al volver a abrir la cola aparecen con su progreso. |
 | *Parada ordenada* | Deja `stop.flag` y cierra: terminan el archivo que tengan y no cogen más. **No se pierde nada.** |
-| *Cancelar ahora* | Corta los workers **y su `ffmpeg`** y cierra. Se pierde el archivo en curso y quedan temporales y un bloqueo caducado. |
+| *Cancelar todo* | Corta los workers **y su `ffmpeg`** y cierra. Se pierde el archivo en curso y quedan temporales y un bloqueo caducado. |
 | *No cerrar* | Vuelve a la cola (también si cierras el aviso con la X). |
 
 Con `gui.confirmCloseWithWorkers = false` se cierra sin preguntar y los workers siguen vivos, que es el comportamiento de siempre.
 
 ### Resumen del archivo
 
-La zona de abajo tiene tres pestañas: **Resumen del archivo** (la que sale al abrir), **Log** y **Opciones**. Al marcar una fila, el resumen dice **qué se le va a hacer exactamente**:
+La zona de abajo tiene tres pestañas: **Resumen del archivo** (la que sale al abrir), **Log** y **Sesión** (antes *Opciones*: son los ajustes de esta sesión, no la configuración). Al marcar una fila, el resumen dice **qué se le va a hacer exactamente**:
 
 ```
 ARCHIVO : Serie_1x02   dura 0:42:10
@@ -376,7 +378,7 @@ La lista es de **selección múltiple** (Ctrl+clic, Mayús+clic, Ctrl+A). El men
 | *Eliminar la salida a medias* | **todos** los marcados que estén *sin terminar* |
 | *Quitar de la cola (borrar sus jobs)* | **todos** los marcados que tengan job y no esté codificando nadie |
 
-Las dos últimas llevan el recuento en el texto (*"Quitar de la cola los 3 seleccionados"*) y la de borrar confirma listando los archivos. Un archivo **en curso** nunca entra: quitarle el job no pararía al worker —ya lo leyó— y solo dejaría la cola inconsistente; para eso están *Parar* y *Cancelar ahora*.
+Las dos últimas llevan el recuento en el texto (*"Quitar de la cola los 3 seleccionados"*) y la de borrar confirma listando los archivos. Un archivo **en curso** nunca entra: quitarle el job no pararía al worker —ya lo leyó— y solo dejaría la cola inconsistente; para eso están *Parar este*, *Parar al acabar* y *Cancelar todo*.
 
 ## Workers desatendidos (`-Unattended`)
 

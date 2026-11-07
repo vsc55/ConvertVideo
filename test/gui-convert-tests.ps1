@@ -79,7 +79,12 @@ foreach ($m in $modules) {
 }
 # MODO PRUEBAS: las ventanas de la bateria salen en el monitor donde NO estas trabajando y ninguna te
 # quita el primer plano (Set-CvGuiTestScreen). Antes de abrir ninguna.
-if (Initialize-CvGui) { [void](Set-CvGuiTestScreen) }
+# Donde, lo dice gui.testScreen del config por defecto (el monitor donde no trabajas, el del raton o
+# uno fijo).
+if (Initialize-CvGui) {
+    $iniPant = Get-CvStartupPrefs -Root $Root
+    [void](Set-CvGuiTestScreen -Mode "$($iniPant.TestScreen)" -Number ([int]$iniPant.TestScreenNumber))
+}
 
 # --- Mini-harness (mismo estilo que unit-tests.ps1 / gui-tests.ps1) ---
 $script:pass = 0
@@ -795,6 +800,20 @@ Assert-True 'Cierre: N workers en plural'  ((Get-CvQueueCloseMessage -Workers 3)
 
 $sum = Get-CvQueueSummaryLine -Totals $tot -Workers 2 -Stopping $false
 Assert-True 'Resumen: cuenta archivos'  ($sum -match '5 archivo')
+# Los TROZOS de color de esa linea (fase A5): juntos dan la misma linea; lo que tiene problema, en rojo.
+$totP = [pscustomobject]@{ Total = 6; Working = 1; Queued = 1; Pending = 1; Done = 1; Partial = 1; Stale = 1 }
+$parts = @(Get-CvQueueSummaryParts -Totals $totP -Workers 1 -Stopping $true)
+Assert-Eq   'Totales: los trozos dan la misma linea'  (Get-CvQueueSummaryLine -Totals $totP -Workers 1 -Stopping $true) ((@($parts | ForEach-Object { $_.Text })) -join '')
+Assert-Eq   'Totales: sin terminar y huerfano, en rojo' 2 @($parts | Where-Object { $_.Role -eq 'error' }).Count
+Assert-Eq   'Totales: sin preparar y la parada, en naranja' 2 @($parts | Where-Object { $_.Role -eq 'warn' }).Count
+Assert-Eq   'Totales: todo bien, nada en rojo' 0 @(Get-CvQueueSummaryParts -Totals ([pscustomobject]@{ Total = 2; Done = 2 }) | Where-Object { $_.Role -in @('error', 'warn') }).Count
+# Listas COMPACTAS del editor del job (fase A6): al alto de sus pistas, entre el minimo y el maximo.
+$lh = Get-CvJobListHeights -AudioCount 2 -SubCount 20 -RowHeight 18 -HeaderHeight 24 -Chrome 70 -MinRows 3 -MaxRows 8 -Current 600
+Assert-Eq   'Listas job: pocas pistas, el minimo'   (24 + 3 * 18 + 4 + 70) $lh.Audio
+Assert-Eq   'Listas job: muchas, el maximo'         (24 + 8 * 18 + 4 + 70) $lh.Subs
+Assert-Eq   'Listas job: cuanto cambia la ventana'  (($lh.Audio + $lh.Subs) - 600) $lh.Delta
+Assert-Eq   'Listas job: sin medida previa, no se mueve' 0 (Get-CvJobListHeights -AudioCount 4 -SubCount 4).Delta
+Assert-True 'Escaneo plegado: dice los tres valores' ((Get-CvJobScanSummary -Start '120' -Duration '30' -Samples '6') -match '120\D+30\D+6\D')
 Assert-True 'Resumen: cuenta workers'   ($sum -match '2 worker')
 Assert-True 'Resumen: sin parada no avisa' ($sum -notmatch 'PARADA')
 Assert-True 'Resumen: con parada avisa'    ((Get-CvQueueSummaryLine -Totals $tot -Workers 1 -Stopping $true) -match 'PARADA PEDIDA')
@@ -1065,6 +1084,23 @@ if (-not $sta) {
             $script:playOut2 = @($menu.Items | Where-Object { "$($_.Text)" -match 'Reproducir el CONVERTIDO' })[0].Enabled
             $script:canStop  = $bSp.Enabled
             $script:canKill  = $bKl.Enabled
+            # El grupo del ARCHIVO MARCADO de la barra: con la fila 'Hecho' marcada no hay nada que
+            # parar ni que quitar; con la que se esta codificando, 'Parar este' se enciende.
+            $bK1 = $f.Controls.Find('cvKillOne', $true)
+            $bD1 = $f.Controls.Find('cvDropOne', $true)
+            # Sin rotulo con el nombre: sobraba (la fila marcada ya se ve en la lista).
+            $script:selGrp = ($bK1.Count -eq 1 -and $bD1.Count -eq 1 -and $f.Controls.Find('cvSelLabel', $true).Count -eq 0)
+            if ($script:selGrp) {
+                $script:killOneDone = $bK1[0].Enabled
+                $guardaSel = @($lv.SelectedIndices | ForEach-Object { [int]$_ })
+                $lv.SelectedItems.Clear()
+                foreach ($k in 0..($lv.Items.Count - 1)) {
+                    if ($lv.Items[$k].SubItems[(Get-QCol 'state')].Text -eq 'Codificando') { $lv.Items[$k].Selected = $true; $script:selRunName = $lv.Items[$k].Text; break }
+                }
+                $script:killOneRun = $bK1[0].Enabled
+                $lv.SelectedItems.Clear()
+                foreach ($k in $guardaSel) { $lv.Items[$k].Selected = $true }
+            }
             # 'Preparar / editar' tiene que estar disponible SIN seleccionar nada: hay un archivo sin
             # preparar y el boton coge ese (si hiciera falta seleccionar antes, no se encontraria).
             $script:canEdit  = $bEd.Enabled
@@ -1099,10 +1135,16 @@ if (-not $sta) {
             foreach ($k in 0..($lv.Items.Count - 1)) { $lv.Items[$k].Selected = ($lv.Items[$k].SubItems[(Get-QCol 'state')].Text -eq 'En cola') }
             $f.Controls.Find('cvRefresh', $true)[0].PerformClick()
             $script:sumText = "$($sumBox.Text)"
+            $script:sumRich = ($sumBox -is [System.Windows.Forms.RichTextBox])
+            # Totales (fase A5): el texto de siempre y, debajo, sus trozos con color para pintarlos.
+            $lt = $f.Controls.Find('cvTotals', $true)[0]
+            $tp = @((Get-CvGuiMarks -Control $lt)['Parts'])
+            $script:totParts = ($tp.Count -gt 0 -and ((@($tp | ForEach-Object { "$($_.Text)" }) -join '') -ceq "$($lt.Text)"))
             # ATAJOS, con la tecla de verdad sobre la ventana (OnKeyDown es protegido: reflexion).
             # Los botones tienen que existir -si no, el atajo no haría nada- y los que se prueban
             # aqui son los que NO abren dialogos: uno modal dejaria la bateria esperando un clic.
             $script:ataFaltan = @()
+            $script:setupBtns = ($f.Controls.Find('cvSetupConfig', $true).Count -eq 1 -and $f.Controls.Find('cvSetupTools', $true).Count -eq 1)
             foreach ($a in (Get-CvQueueShortcuts)) {
                 if ("$($a.Button)" -eq '') { continue }
                 if ($f.Controls.Find("$($a.Button)", $true).Count -ne 1) { $script:ataFaltan += "$($a.Button)" }
@@ -1241,6 +1283,9 @@ if (-not $sta) {
     Assert-Eq   'Menu: con el archivo hecho, si'         $true  $script:playOut2
     Assert-True 'Ventana: Parar activo (hay worker)' $script:canStop
     Assert-True 'Ventana: Cancelar activo'           $script:canKill
+    Assert-True 'Barra: grupo del archivo marcado (Parar este, Quitar; sin rotulo)' $script:selGrp
+    Assert-Eq   'Barra: con un Hecho marcado, nada que parar' $false $script:killOneDone
+    Assert-Eq   'Barra: con el que se codifica, se puede parar' $true $script:killOneRun
     Assert-True 'Ventana: Preparar/editar activo sin seleccion' $script:canEdit
     Assert-True 'Ventana: lista logs de Convert'     ($script:logItems -ge 1)
     Assert-True 'Ventana: se pueden marcar varias filas' $script:multiSel
@@ -1248,9 +1293,10 @@ if (-not $sta) {
     # Con 8 columnas, lo que se comprueba es que la de progreso se queda con lo que sobra y nunca
     # por debajo de su minimo (el reparto exacto lo fija el caso siguiente).
     Assert-True 'Ventana: progreso no baja del minimo' ($script:progW -ge 220)
-    Assert-Eq   'Ventana: pestanas en orden' 'Resumen del archivo|Log|Opciones' $script:tabNames
+    Assert-Eq   'Ventana: pestanas en orden' 'Resumen del archivo|Log|Sesión' $script:tabNames
     Assert-Eq   'Ventana: arranca en el resumen'  'Resumen del archivo' $script:tabActive
     Assert-Eq   'Atajos: los botones del catalogo estan en la ventana' '' (@($script:ataFaltan) -join ', ')
+Assert-True 'Barra: Configuracion y Herramientas (abren setup)' $script:setupBtns
     Assert-True 'Atajos: Ctrl+A marca todas las filas'  $script:ataTodas
     Assert-True 'Atajos: Ctrl+2 va a la pestana del log' $script:ataTabLog
     Assert-True 'Atajos: con Parar apagado, Esc no pregunta' $script:ataStopOff
@@ -1259,6 +1305,8 @@ if (-not $sta) {
     Assert-True 'Ventana: el divisor se puede arrastrar' $script:splitOk
     Assert-True 'Ventana: el resumen se lleva ~la mitad' ($script:splitFrac -ge 0.35 -and $script:splitFrac -le 0.7)
     Assert-True 'Ventana: el resumen se rellena'  ($script:sumText -match 'ARCHIVO :')
+Assert-True 'Ventana: totales en trozos de color' $script:totParts
+Assert-True 'Ventana: el resumen va por bloques (RichTextBox)' $script:sumRich
     Assert-Eq   'Ventana: progreso ocupa lo que sobra' (Get-CvQueueProgressWidth -ClientWidth $script:clientW -OtherWidths $script:otherW) $script:progW
     Assert-Eq   'Ventana: workers por defecto de config' 2 $script:defWork
     Assert-Eq   'Ventana: los ajustes siguen ahi' 1 $script:optChk
@@ -1670,6 +1718,29 @@ if ($null -eq $jobInfo) {
     Assert-Eq   'Resumen: sin recuento no inventa'    $false ((@(Get-CvJobSummaryLines -Context $ctxJob -Name 'Serie_2x01' -Info $jobInfo) -join ' ') -match '\d+ lineas')
     # Sin job, lo dice y no revienta.
     Assert-True 'Resumen: sin job lo explica'   ((@(Get-CvJobSummaryLines -Context $ctxJob -Name 'no-existe') -join ' ') -match 'Sin preparar')
+    # POR BLOQUES (fase A3): -WithKind da las MISMAS lineas, cada una con lo que es. La ventana pinta
+    # con eso; si alguna se perdiera o cambiara, el resumen ensenaria menos de lo que ensenaba.
+    $sumPlano = @(Get-CvJobSummaryLines -Context $ctxJob -Name 'Serie_2x01' -Info $jobInfo)
+    $sumTipos = @(Get-CvJobSummaryLines -Context $ctxJob -Name 'Serie_2x01' -Info $jobInfo -WithKind)
+    Assert-Eq   'Bloques: las mismas lineas'          ($sumPlano -join '|') (@($sumTipos | ForEach-Object { $_.Text }) -join '|')
+    Assert-Eq   'Bloques: empieza por el archivo'     'title' "$($sumTipos[0].Kind)"
+    Assert-Eq   'Bloques: tres cabeceras'             3 @($sumTipos | Where-Object { $_.Kind -eq 'head' }).Count
+    Assert-True 'Bloques: pistas que se quedan'       (@($sumTipos | Where-Object { $_.Kind -eq 'keep' }).Count -gt 0)
+    Assert-True 'Bloques: y las que no'               (@($sumTipos | Where-Object { $_.Kind -eq 'drop' }).Count -gt 0)
+    Assert-True 'Bloques: lo que queda'               (@($sumTipos | Where-Object { $_.Kind -eq 'result' }).Count -gt 0)
+    Assert-True 'Bloques: [x] es keep, [ ] es drop'   (@($sumTipos | Where-Object { ($_.Kind -eq 'keep' -and $_.Text -match '^\s+.\[ \]') -or ($_.Kind -eq 'drop' -and $_.Text -match '^\s+.\[x\]') }).Count -eq 0)
+    Assert-Eq   'Bloques: sin job, una linea'         'meta' "$(@(Get-CvJobSummaryLines -Context $ctxJob -Name 'no-existe' -WithKind)[0].Kind)"
+    # Y el pintado: cada linea donde dice que esta, y un hueco antes de cada cabecera (nada mas).
+    $runs = Get-CvGuiSummaryRuns -Lines $sumTipos
+    $runsOk = $true
+    for ($ri = 0; $ri -lt $sumTipos.Count; $ri++) {
+        $ru = @($runs.Runs)[$ri]
+        if ($runs.Text.Substring($ru.Start, $ru.Length) -cne "$($sumTipos[$ri].Text)") { $runsOk = $false }
+    }
+    Assert-True 'Bloques: cada linea en su sitio'     $runsOk
+    Assert-Eq   'Bloques: solo se anaden los huecos'  ($sumTipos.Count + 3) @($runs.Text -split "`n").Count
+    Assert-True 'Bloques: cabecera en negrita'        ([bool](@($runs.Runs | Where-Object { $_.Kind -eq 'head' })[0].Bold))
+    Assert-Eq   'Bloques: lo descartado, atenuado'    'muted' "$(@($runs.Runs | Where-Object { $_.Kind -eq 'drop' })[0].Role)"
     Remove-CvJob -Context $ctxJob -Name 'Serie_2x01'
 
     # --- La VENTANA del editor, dirigida sin raton ---
@@ -1771,6 +1842,35 @@ if ($null -eq $jobInfo) {
                 $keyArgs2[0] = (New-Object System.Windows.Forms.KeyEventArgs([System.Windows.Forms.Keys]::Enter)).psobject.BaseObject
                 [void]$txS.GetType().GetMethod('OnKeyDown', [System.Reflection.BindingFlags]'Instance, NonPublic').Invoke($txS, $keyArgs2)
                 $script:jobSubLangRow = "$($lvSu.Items[2].SubItems[1].Text)"
+                # FASE A6. El escaneo, plegado: una linea con los tres valores, y las cajas ocultas
+                # hasta pulsarla.
+                $lnk = $f.Controls.Find('cvJobScanFold', $true)[0]
+                $boxIni = $f.Controls.Find('cvJobScanStart', $true)[0]
+                $script:jobFoldTxt   = "$($lnk.Text)"
+                $script:jobFoldAntes = ([bool]$lnk.Visible -and -not [bool]$boxIni.Visible)
+                $onLink = $lnk.GetType().GetMethod('OnLinkClicked', [System.Reflection.BindingFlags]'Instance, NonPublic')
+                $linkArgs = New-Object object[] 1
+                $linkArgs[0] = (New-Object System.Windows.Forms.LinkLabelLinkClickedEventArgs($lnk.Links[0])).psobject.BaseObject
+                [void]$onLink.Invoke($lnk, $linkArgs)
+                $script:jobFoldDespues = ([bool]$boxIni.Visible -and -not [bool]$lnk.Visible)
+                # Listas compactas: el bloque de audio queda al alto de sus pistas (fila fija).
+                $script:jobCompact = ("$($lvAu.Parent.Parent.Parent.RowStyles[3].SizeType)" -eq 'Absolute')
+                # Editar EN LA CELDA: doble clic en el idioma de la 3a pista, escribir e Intro.
+                $ixL = [int](Get-CvGuiCatalogIndex -Items (Get-CvJobAudioColumns) -Key 'lang')
+                $rc  = $lvAu.Items[2].SubItems[$ixL].Bounds
+                $chk2Antes = [bool]$lvAu.Items[2].Checked
+                $dbl = New-Object object[] 1
+                $dbl[0] = (New-Object System.Windows.Forms.MouseEventArgs([System.Windows.Forms.MouseButtons]::Left, 2, ($rc.X + 5), ($rc.Y + 5), 0)).psobject.BaseObject
+                [void]$lvAu.GetType().GetMethod('OnMouseDoubleClick', [System.Reflection.BindingFlags]'Instance, NonPublic').Invoke($lvAu, $dbl)
+                $ed = @($lvAu.Controls.Find('cvCellEditor', $false))
+                $script:jobCellOpen = $ed.Count
+                if ($ed.Count -eq 1) {
+                    $ed[0].Text = ' ITA '
+                    [void]$ed[0].GetType().GetMethod('OnKeyDown', [System.Reflection.BindingFlags]'Instance, NonPublic').Invoke($ed[0], $keyArgs)
+                }
+                $script:jobCellRow  = "$($lvAu.Items[2].SubItems[$ixL].Text)"
+                $script:jobCellBar  = "$($txL.Text)"
+                $script:jobCellKeep = ($chk2Antes -eq [bool]$lvAu.Items[2].Checked)
                 $bSv.PerformClick()
             } catch {
                 $tj.Stop()
@@ -1800,6 +1900,14 @@ if ($null -eq $jobInfo) {
         Assert-Eq   'Sincronia: y la caja de la fila tambien'        (Format-CvNumber 0) $script:jobSyncCaja
         Assert-True 'Sincronia: y dice que ninguna lo necesita'      ($script:jobSyncMsg -match 'ninguna necesita')
         Assert-Eq   'Editor: Intro tambien en la barra de subtitulos'  'eng' $script:jobSubLangRow
+        Assert-True 'A6: el escaneo sale plegado (linea, sin cajas)'     $script:jobFoldAntes
+        Assert-True 'A6: la linea lleva los tres valores'                ($script:jobFoldTxt -match ('{0}\D+{1}\D+{2}\D' -f [int]$ctxJob.BorderStart, [int]$ctxJob.BorderDur, [int]$ctxJob.BorderSamples))
+        Assert-True 'A6: al pulsarla salen las cajas'                    $script:jobFoldDespues
+        Assert-True 'A6: el audio, al alto de sus pistas'                $script:jobCompact
+        Assert-Eq   'A6: doble clic abre el editor de la celda'          1 $script:jobCellOpen
+        Assert-Eq   'A6: lo escrito en la celda se normaliza y se queda' 'ita' $script:jobCellRow
+        Assert-Eq   'A6: es lo mismo que la barra (su campo, igual)'     'ita' $script:jobCellBar
+        Assert-True 'A6: y no marca ni desmarca la pista'                $script:jobCellKeep
     Assert-Eq   'Editor: estan todos los controles del catalogo' '' (@($script:jobFaltan) -join ', ')
         $saved = Read-CvJobDraft -Context $ctxJob -Name 'Serie_2x01'
         Assert-Eq   'Editor: dos pistas de audio' 2 @($saved.Audio).Count

@@ -150,6 +150,11 @@ function Show-CvConvertWindow {
         $b.ImageAlign        = 'MiddleLeft'
         $b.TextAlign         = 'MiddleLeft'
         $b.Padding           = New-Object System.Windows.Forms.Padding(4, 0, 6, 0)
+        # Solo icono (sin texto): centrado y sin el hueco que deja sitio al texto.
+        if ("$Text" -eq '') {
+            $b.ImageAlign = 'MiddleCenter'
+            $b.Padding    = New-Object System.Windows.Forms.Padding(0)
+        }
         if ($Icon) {
             $img = New-CvGuiIcon -Kind $Icon
             if ($null -ne $img) { $b.Image = $img }
@@ -159,22 +164,34 @@ function Show-CvConvertWindow {
         $bar.Controls.Add($b)
         return $b
     }
-    # GRUPO 1 - la marcha de las conversiones.
+    # GRUPO 1 - TODA la cola: arrancar, parar al acabar lo que esta en marcha, o cortarlo todo ya.
     $btnStart   = & $mkBtn (Get-CvText -Key 'cola.btn.iniciar')   90 'cvStart' 'play'   (Get-CvText -Key 'cola.tip.iniciar') 8
     $btnStop    = & $mkBtn (Get-CvText -Key 'cola.btn.parar')     80 'cvStop'  'stop'   (Get-CvText -Key 'cola.tip.parar')
-    $btnKill    = & $mkBtn (Get-CvText -Key 'cola.btn.cancelar') 120 'cvKill'  'cancel' (Get-CvText -Key 'cola.tip.cancelar')
+    $btnKill    = & $mkBtn (Get-CvText -Key 'cola.btn.cancelar') 110 'cvKill'  'cancel' (Get-CvText -Key 'cola.tip.cancelar')
     & $mkSep
-    # GRUPO 2 - preparar (decidir que se le hace a cada archivo).
+    # GRUPO 2 - el ARCHIVO MARCADO (o los marcados). Antes parar uno o quitarlo de la cola solo estaba
+    # en el boton derecho, y no se encontraba. Sin rotulo (ocupaba sitio y la fila marcada ya se ve en
+    # la lista); los botones hacen lo mismo que sus opciones del menu (PerformClick), con su
+    # confirmacion y sus comprobaciones.
+    $btnEdit    = & $mkBtn (Get-CvText -Key 'cola.btn.editar')    80 'cvPrepareGui' 'edit'   (Get-CvText -Key 'cola.tip.editar')
+    $btnKillOne = & $mkBtn (Get-CvText -Key 'cola.btn.pararuno')  80 'cvKillOne'    'stop'   (Get-CvText -Key 'cola.tip.pararuno')
+    $btnDropOne = & $mkBtn (Get-CvText -Key 'cola.btn.quitar')   110 'cvDropOne'    'remove' (Get-CvText -Key 'cola.tip.quitar')
+    & $mkSep
+    # GRUPO 3 - preparar lo que llegue nuevo.
     $btnPrepAll = & $mkBtn (Get-CvText -Key 'cola.btn.preparar') 160 'cvPrepareAll' 'prepare' (Get-CvText -Key 'cola.tip.preparar')
-    $btnEdit    = & $mkBtn (Get-CvText -Key 'cola.btn.editar')   110 'cvPrepareGui' 'edit'    (Get-CvText -Key 'cola.tip.editar')
     & $mkSep
-    # GRUPO 3 - las carpetas de trabajo (a donde se mira cuando algo no cuadra).
-    $btnDirIn  = & $mkBtn (Get-CvText -Key 'cola.btn.original')   100 'cvDirOriginal'   'folder' (Get-CvText -Key 'cola.tip.original')
-    $btnDirOut = & $mkBtn (Get-CvText -Key 'cola.btn.convertido') 115 'cvDirConvertido' 'folder' (Get-CvText -Key 'cola.tip.convertido')
+    # GRUPO 4 - carpetas y vista: SOLO icono (el nombre y el atajo van en su ayuda emergente). Con texto,
+    # la barra no cabia en la ventana, que es donde se quedaban fuera los ultimos botones.
+    $btnDirIn   = & $mkBtn '' 32 'cvDirOriginal'   'folder'  (Get-CvText -Key 'cola.tip.original')
+    $btnDirOut  = & $mkBtn '' 32 'cvDirConvertido' 'output'  (Get-CvText -Key 'cola.tip.convertido')
+    $btnRefresh = & $mkBtn '' 32 'cvRefresh'       'refresh' (Get-CvText -Key 'cola.tip.actualizar')
+    $btnTheme   = & $mkBtn '' 32 'cvTheme'         'theme'   (Get-CvText -Key 'cola.tip.tema')
     & $mkSep
-    # GRUPO 4 - la vista.
-    $btnRefresh = & $mkBtn (Get-CvText -Key 'comun.actualizar') 105 'cvRefresh' 'refresh' (Get-CvText -Key 'cola.tip.actualizar')
-    $btnTheme   = & $mkBtn (Get-CvText -Key 'cola.btn.tema')     75 'cvTheme'   'theme'   (Get-CvText -Key 'cola.tip.tema')
+    # GRUPO 5 - lo que vive en setup, sin tener que ir a buscarlo (fase A7): la configuracion y las
+    # herramientas. Abren la ventana de setup en SU proceso, ya en esa seccion, sobre este mismo
+    # config; la cola sigue a lo suyo mientras tanto.
+    $btnCfg     = & $mkBtn '' 32 'cvSetupConfig'   'options' (Get-CvText -Key 'cola.tip.config')
+    $btnTools   = & $mkBtn '' 32 'cvSetupTools'    'tools'   (Get-CvText -Key 'cola.tip.herr')
 
     $chkCon = New-Object System.Windows.Forms.CheckBox
     $chkCon.Text     = (Get-CvText -Key 'cola.consolas')
@@ -330,12 +347,15 @@ function Show-CvConvertWindow {
     [void]$sumGrid.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute, 32)))
     $tabSum.Controls.Add($sumGrid)
 
-    $txtSum = New-Object System.Windows.Forms.TextBox
+    # RichTextBox (fase A3 del rediseno): el MISMO texto, pintado por bloques -VIDEO / AUDIO / SUBS
+    # con su cabecera, lo descartado atenuado, lo que QUEDA en verde- con Set-CvGuiSummaryText.
+    $txtSum = New-Object System.Windows.Forms.RichTextBox
     $txtSum.Dock       = 'Fill'
     $txtSum.Multiline  = $true
     $txtSum.ReadOnly   = $true
     $txtSum.ScrollBars = 'Both'
     $txtSum.WordWrap   = $false
+    $txtSum.DetectUrls = $false
     $txtSum.Font       = (New-CvGuiFont 9)
     $txtSum.Name       = 'cvSummary'
     $sumGrid.Controls.Add($txtSum, 0, 0)
@@ -473,6 +493,53 @@ function Show-CvConvertWindow {
         TbSig    = ''      # lo ultimo pintado en el boton de la barra de tareas
     }
 
+    # ---- Como se PINTAN el estado y el progreso (fase A2 del rediseno) ----
+    # Solo cambia como se VE, no lo que pone: las celdas tienen el mismo texto de siempre
+    # (Format-CvQueueRow), y el pintor lo dibuja. El estado, dentro de una etiqueta de su color. En el
+    # progreso de lo que se esta codificando, la barra hecha con caracteres se dibuja como una barra
+    # de verdad (el porcentaje y la velocidad siguen en el texto). Los avisos (sin preparar, a medias,
+    # bloqueo huerfano), en gris. La fila se lee de $st.Rows por su posicion, la misma de la lista.
+    $iState     = Get-CvGuiCatalogIndex -Items $cols -Key 'state'
+    $tipoEstado = @{
+        done    = 'ok'
+        working = 'run'
+        queued  = 'q'
+        pending = 'warn'
+        partial = 'err'
+        stale   = 'err'
+    }
+    $pintorCola = {
+        param($e, $h, $r)
+        $col = $e.ColumnIndex
+        if ($col -ne $iState -and $col -ne $iProg) { return $false }
+        $filas = $st.Rows
+        $i = $e.ItemIndex
+        if ($null -eq $filas -or $i -lt 0 -or $i -ge @($filas).Count) { return $false }
+        $fila = @($filas)[$i]
+        $sel  = [bool]$e.Item.Selected
+        $font = $e.Item.ListView.Font
+        if ($col -eq $iState) {
+            $k = $tipoEstado["$($fila.State)"]
+            if (-not $k) { $k = 'q' }
+            Write-CvGuiCellChip -Graphics $e.Graphics -Rect $r -Text $e.SubItem.Text -Kind $k -Selected $sel -Tools $h -Font $font
+            return $true
+        }
+        if ("$($fila.State)" -eq 'working' -and [int]$fila.Percent -ge 0) {
+            # El mismo texto sin la barra de caracteres ('[####    ]'), que pasa a ser la barra dibujada.
+            $txt = (("$($e.SubItem.Text)" -replace '\[[^\]]*\]', ' ') -replace '\s{2,}', '  ').Trim()
+            Write-CvGuiCellBar -Graphics $e.Graphics -Rect $r -Percent ([int]$fila.Percent) -Text $txt -Selected $sel -Tools $h -Font $font
+            return $true
+        }
+        if ("$($fila.State)" -in @('pending', 'partial', 'stale')) {
+            $rt = [System.Drawing.Rectangle]::new(($r.X + 2), $r.Y, [Math]::Max(0, $r.Width - 4), $r.Height)
+            $c  = if ($sel) { [System.Drawing.Color]::White } else { $h.Muted }
+            [System.Windows.Forms.TextRenderer]::DrawText($e.Graphics, "$($e.SubItem.Text)", $font, $rt, $c, $h.FlagsLeft)
+            return $true
+        }
+        return $false
+    }.GetNewClosure()
+    [void](Set-CvGuiListCellPainter -List $lv -Painter $pintorCola)
+
     # ---- Menu contextual de la lista ----
     $menu = New-Object System.Windows.Forms.ContextMenuStrip
     $lv.ContextMenuStrip = $menu
@@ -581,7 +648,11 @@ function Show-CvConvertWindow {
                     $info = $st.Infos[$r.Name]
                 } elseif ($r.HasJob) {
                     # Primero el resumen SIN ffprobe, que se vea ya; luego se enriquece.
-                    $txtSum.Text = ((@(Get-CvJobSummaryLines -Context $Context -Name $r.Name) + @('', (Get-CvText -Key 'cola.sum.leyendo'))) -join [Environment]::NewLine)
+                    $lineas = @(Get-CvJobSummaryLines -Context $Context -Name $r.Name -WithKind) + @(
+                        [pscustomobject]@{ Text = ''; Kind = 'meta' }
+                        [pscustomobject]@{ Text = (Get-CvText -Key 'cola.sum.leyendo'); Kind = 'meta' }
+                    )
+                    [void](Set-CvGuiSummaryText -Box $txtSum -Lines $lineas)
                     [System.Windows.Forms.Application]::DoEvents()
                     try { $info = Get-MediaInfo -Context $Context -File $r.Path } catch { $info = $null }
                     $st.Infos[$r.Name] = $info
@@ -589,8 +660,8 @@ function Show-CvConvertWindow {
             }
             $cues = $null
             if ($st.Cues.ContainsKey($r.Name)) { $cues = $st.Cues[$r.Name] }
-            $txt = ((@(Get-CvJobSummaryLines -Context $Context -Name $r.Name -Info $info -CueCounts $cues)) -join [Environment]::NewLine)
-            if ($txt -ne $txtSum.Text) { $txtSum.Text = $txt }
+            # Solo repinta si cambia algo (lo mira Set-CvGuiSummaryText).
+            [void](Set-CvGuiSummaryText -Box $txtSum -Lines @(Get-CvJobSummaryLines -Context $Context -Name $r.Name -Info $info -CueCounts $cues -WithKind))
             $miCount.Enabled = ($r.HasJob -and -not $st.Cues.ContainsKey($r.Name))
         } catch {
             $txtSum.Text = (Get-CvText -Key 'cola.sum.error' -Values @($_.Exception.Message))
@@ -603,7 +674,8 @@ function Show-CvConvertWindow {
         if ($null -ne $r -and $null -ne $ahora -and "$($ahora.Name)" -ne "$($r.Name)") { & $updateSummary $true }
     }
     $miCopy.Add_Click({
-        try { if ("$($txtSum.Text)" -ne '') { [System.Windows.Forms.Clipboard]::SetText($txtSum.Text) } } catch { }
+        # El RichTextBox guarda los saltos como '\n': al portapapeles van como los de Windows.
+        try { if ("$($txtSum.Text)" -ne '') { [System.Windows.Forms.Clipboard]::SetText(("$($txtSum.Text)" -replace "\r?\n", "`r`n")) } } catch { }
     })
     # Contar las lineas del archivo marcado: lo LENTO, a peticion y una sola vez por archivo.
     $miCount.Add_Click({
@@ -684,6 +756,11 @@ function Show-CvConvertWindow {
         if ("$($tipBar.GetToolTip($btnStart))" -cne $tipStart) { $tipBar.SetToolTip($btnStart, $tipStart) }
         $btnStop.Enabled  = ([int]$st.Live -gt 0) -and (-not [bool]$st.Stopping)
         $btnKill.Enabled  = ([int]$st.Live -gt 0)
+        # El grupo del ARCHIVO MARCADO: parar / quitar se encienden con la misma regla que sus
+        # opciones del menu (Get-CvQueueBulkActions).
+        $accSel = Get-CvQueueBulkActions -Rows $selQAll
+        $btnKillOne.Enabled = (@($accSel.Kill).Count -gt 0)
+        $btnDropOne.Enabled = (@($accSel.Drop).Count -gt 0)
         # 'Editar job': con una fila elegida vale la suya; sin elegir nada, el primero que este sin
         # preparar. Solo se apaga si no hay ninguno de los dos casos.
         $lote = @((Get-CvQueueBulkActions -Rows $selQAll).Edit)
@@ -925,7 +1002,8 @@ function Show-CvConvertWindow {
         # ARRANCANDO (recien abiertos, aun sin publicar su estado): Iniciar y enseguida Parar dejaba
         # que se retirase antes de que llegaran, y esos no la veian y hacian la cola entera.
         if ($stopping -and $live.Count -eq 0 -and -not [bool](& $arrancando)) { Clear-CvWorkerStop -Context $Context; $stopping = $false; $st.Stopping = $false }
-        $lblTot.Text = Get-CvQueueSummaryLine -Totals (Get-CvQueueTotals -Rows $rows) -Workers $live.Count -Stopping $stopping
+        # Fase A5 del rediseno: el mismo texto, con lo que tiene problema en rojo (Get-CvQueueSummaryParts).
+        [void](Set-CvGuiPartsLabel -Label $lblTot -Parts @(Get-CvQueueSummaryParts -Totals (Get-CvQueueTotals -Rows $rows) -Workers $live.Count -Stopping $stopping))
         # Escondida en la barra, el rotulo del icono es lo unico que se ve: que diga lo mismo que el
         # pie (cuantos hay, cuantos se estan codificando), recortado a lo que admite.
         [void](Set-CvGuiTrayText -Icon $tray -Text $lblTot.Text)
@@ -1157,6 +1235,16 @@ function Show-CvConvertWindow {
     # Cambiar de claro a oscuro y al reves sin salir del programa. Se aplica a la ventana abierta y
     # se GUARDA en el config (gui.theme), asi que la proxima vez arranca como lo dejaste; el resto de
     # ventanas lo cogen al abrirse. Si no se puede escribir el config, se avisa pero el cambio se ve.
+    # Configuracion / Herramientas: setup-gui.ps1 -Open, en su proceso (Start-CvSetupGui).
+    $cfgSetup = $(if ("$CfgPath" -ne '') { "$CfgPath" } else { Get-CvDefaultConfigPath -Root $Root })
+    $btnCfg.Add_Click({
+        try { [void](Start-CvSetupGui -Root $Root -CfgPath $cfgSetup -Open 'config') }
+        catch { Show-CvGuiInfo -Title (Get-CvText -Key 'cola.setup.tit') -Message (Get-CvText -Key 'cola.setup.error' -Values @($_.Exception.Message)) }
+    })
+    $btnTools.Add_Click({
+        try { [void](Start-CvSetupGui -Root $Root -CfgPath $cfgSetup -Open 'tools') }
+        catch { Show-CvGuiInfo -Title (Get-CvText -Key 'cola.setup.tit') -Message (Get-CvText -Key 'cola.setup.error' -Values @($_.Exception.Message)) }
+    })
     $btnTheme.Add_Click({
         $nuevo = $(if ((Get-CvGuiThemeName) -eq 'dark') { 'light' } else { 'dark' })
         [void](Set-CvGuiTheme -Form $form -Theme $nuevo)
@@ -1363,6 +1451,11 @@ function Show-CvConvertWindow {
         $sel = if ($r.Done) { $r.OutPath } else { $r.Path }
         [void](Open-CvGuiPath -Path $sel -Select -Title (Get-CvText -Key 'cola.carpeta.tit'))
     })
+    # Los botones del archivo marcado (barra) hacen EXACTAMENTE lo de su opcion del menu.
+    # PerformClick no hace nada sobre una opcion APAGADA, y el menu se quedo como estaba la ultima vez
+    # que se abrio: se enciende antes. La propia accion vuelve a mirar a que filas aplica.
+    $btnKillOne.Add_Click({ $miKill.Enabled = $true; $miKill.PerformClick() })
+    $btnDropOne.Add_Click({ $miDrop.Enabled = $true; $miDrop.PerformClick() })
     $miKill.Add_Click({
         # Corta la codificacion de UN archivo (o de los que se hayan marcado): se mata SU worker -y
         # con el su ffmpeg-, no todos. El resto de workers sigue a lo suyo. Lo que queda es lo mismo
@@ -1666,6 +1759,18 @@ function Show-CvConvertWindow {
         if ($tipAhora -notmatch [regex]::Escape("$($at.Label)")) {
             $tipBar.SetToolTip($ctl[0], (Get-CvText -Key 'cola.atajo.tip' -Values @($tipAhora, "$($at.Label)")))
         }
+    }
+    # ...y a la VISTA en los botones con texto (fase A1 del rediseno): su tecla en una cajita a la
+    # derecha. La primera del catalogo para cada boton (Editar: F2, no Intro). Los de solo icono no la
+    # llevan: ahi no cabe, y la tienen en la ayuda emergente.
+    $conTecla = @{}
+    foreach ($at in (Get-CvQueueShortcuts)) {
+        $bn = "$($at.Button)"
+        if ($bn -eq '' -or $conTecla.ContainsKey($bn)) { continue }
+        $ctl = @($form.Controls.Find($bn, $true))
+        if ($ctl.Count -ne 1 -or "$($ctl[0].Text)" -eq '') { continue }
+        [void](Add-CvGuiButtonKey -Button $ctl[0] -Key "$($at.Label)")
+        $conTecla[$bn] = $true
     }
 
     # Tema de la SESION (lo fija el lanzador con lo que diga la config, y lo cambia el boton

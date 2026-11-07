@@ -38,7 +38,7 @@ Si `Proceso\` se ha quedado con restos de un lote abandonado, en setup hay una l
 
 Se puede borrar por partes: jobs, bloqueos y ficheros de estado de los workers, temporales, o todo. Los vídeos de `Original\` y lo ya convertido **no se tocan**.
 
-> No borres los bloqueos con workers en marcha: dos workers pueden acabar cogiendo el mismo archivo. Primero `Parar` (o `Cancelar ahora`), y luego limpias.
+> No borres los bloqueos con workers en marcha: dos workers pueden acabar cogiendo el mismo archivo. Primero `Parar al acabar` (o `Cancelar todo`), y luego limpias.
 
 ## Si hace falta ir más abajo
 

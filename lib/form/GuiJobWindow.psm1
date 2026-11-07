@@ -91,7 +91,7 @@ function Show-CvJobWindow {
     $form.Text          = (Get-CvText -Key 'job.tit' -Values @($Name))
     $form.StartPosition = 'CenterParent'
     $form.Size          = New-Object System.Drawing.Size(1000, 880)
-    $form.MinimumSize   = New-Object System.Drawing.Size(940, 700)   # la barra del audio entera
+    $form.MinimumSize   = New-Object System.Drawing.Size(940, 560)   # la barra del audio entera (el alto lo ajustan las listas)
 
     $grid = New-Object System.Windows.Forms.TableLayoutPanel
     $grid.Dock        = 'Fill'
@@ -102,6 +102,8 @@ function Show-CvJobWindow {
     [void]$grid.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute, 68)))   # estado / motivos
     [void]$grid.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute, 36)))   # perfil
     [void]$grid.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute, 192)))  # video
+    # Audio y subtitulos se reparten el alto hasta que hay pistas; entonces se AJUSTAN a ellas
+    # ($compactLists): el audio a lo justo y los subtitulos se quedan con lo que sobre.
     [void]$grid.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 50)))    # audio
     [void]$grid.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 50)))    # subtitulos
     [void]$grid.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute, 26)))   # mensaje
@@ -222,6 +224,29 @@ function Show-CvJobWindow {
     $txtScanIni.Text = $st.ScanIniDefault
     $txtScanDur.Text = "$([int]$Context.BorderDur)"
     $txtScanNum.Text = "$([int]$Context.BorderSamples)"
+
+    # El escaneo, PLEGADO bajo 'Avanzado' (fase A6): casi nunca se toca, y eran tres cajas en medio
+    # del video. En su fila, una linea con los tres valores (no se esconde ningun dato) que al
+    # pulsarla despliega las cajas. Va DENTRO de la misma fila (su FlowLayoutPanel): una segunda
+    # celda en el mismo sitio del TableLayoutPanel la mandaria a otra posicion.
+    $flowScan = @($vGrid.Controls.Find('cvJobScan', $false))[0]
+    $cajasScan = @($flowScan.Controls)
+    $lnkScan = New-Object System.Windows.Forms.LinkLabel
+    $lnkScan.AutoSize = $true
+    $lnkScan.Margin   = New-Object System.Windows.Forms.Padding(0, 5, 3, 3)
+    $lnkScan.Name     = 'cvJobScanFold'
+    $lnkScan.LinkBehavior = 'HoverUnderline'
+    $flowScan.Controls.Add($lnkScan)
+    $flowScan.Controls.SetChildIndex($lnkScan, 0)
+    foreach ($c in $cajasScan) { $c.Visible = $false }
+    $pintaScan = { $lnkScan.Text = (Get-CvJobScanSummary -Start $txtScanIni.Text -Duration $txtScanDur.Text -Samples $txtScanNum.Text) }
+    & $pintaScan
+    foreach ($c in @($txtScanIni, $txtScanDur, $txtScanNum)) { $c.Add_TextChanged({ & $pintaScan }) }
+    $lnkScan.Add_LinkClicked({
+        $lnkScan.Visible = $false
+        foreach ($c in $cajasScan) { $c.Visible = $true }
+        [void]$txtScanIni.Focus()
+    })
 
     # ---------- Audio ----------
     $gbA = New-Object System.Windows.Forms.GroupBox
@@ -433,6 +458,86 @@ function Show-CvJobWindow {
                 if ($it.Checked -ne [bool]$r.Keep) { $it.Checked = [bool]$r.Keep }
             }
         } finally { $st.Loading = $false }
+    }
+
+    # Listas COMPACTAS (fase A6): cada bloque, al alto de sus pistas (Get-CvJobListHeights, entre
+    # gui.jobListRowsMin y gui.jobListRowsMax filas). El audio queda fijo y los subtitulos se llevan
+    # lo que sobre, asi que agrandar la ventana a mano sigue sirviendo. La ventana encoge (o crece)
+    # lo que cambien los dos bloques, sin pasarse de la pantalla ni de su minimo.
+    $compactLists = {
+        try {
+            if ($st.Closing -or $st.Compacted) { return }
+            $st.Compacted = $true
+            $fila = 18
+            if ($lvA.Items.Count -gt 0) { $fila = [Math]::Max(14, $lvA.GetItemRect(0).Height) }
+            elseif ($lvS.Items.Count -gt 0) { $fila = [Math]::Max(14, $lvS.GetItemRect(0).Height) }
+            $cab = 24
+            if ($lvA.Items.Count -gt 0) { $cab = [Math]::Max(18, $lvA.GetItemRect(0).Top) }
+            # Lo que el bloque pone alrededor de las FILAS: su margen en la celda (Dock Fill lo resta),
+            # el marco, la barra de botones y el borde de la propia lista. Medido, no supuesto: con
+            # 'alto del bloque menos alto de la lista' faltaban el margen y el borde, y la tercera
+            # pista quedaba cortada.
+            $marco = [Math]::Max(40, ($gbA.Height + $gbA.Margin.Vertical - $lvA.ClientSize.Height))
+            $alt = Get-CvJobListHeights -AudioCount $lvA.Items.Count -SubCount $lvS.Items.Count -RowHeight $fila -HeaderHeight $cab `
+                -Chrome $marco -MinRows ([int]$Context.GuiJobListRowsMin) -MaxRows ([int]$Context.GuiJobListRowsMax) -Current ($gbA.Height + $gbS.Height)
+            $grid.SuspendLayout()
+            $grid.RowStyles[3] = New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute, [single]$alt.Audio)
+            $grid.RowStyles[4] = New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 100)
+            $grid.ResumeLayout()
+            if ($form.WindowState -eq [System.Windows.Forms.FormWindowState]::Normal -and $alt.Delta -ne 0) {
+                $pant = [System.Windows.Forms.Screen]::FromControl($form).WorkingArea
+                $nuevo = [Math]::Max($form.MinimumSize.Height, [Math]::Min($pant.Height, ($form.Height + $alt.Delta)))
+                $arriba = [Math]::Max($pant.Top, ($form.Top - [int](($nuevo - $form.Height) / 2)))
+                $form.SetBounds($form.Left, $arriba, $form.Width, $nuevo)
+            }
+        } catch { }
+    }
+
+    # EDITAR EN LA CELDA (fase A6): doble clic en el idioma o el retardo de una pista y se escribe ahi
+    # mismo. Por debajo es lo MISMO que la barra de abajo -se escribe en su campo y se confirma con su
+    # commit-, asi que valida y normaliza igual. La barra sigue ahi. El doble clic en esas columnas no
+    # marca ni desmarca la pista (lo que hace el ListView con casillas por su cuenta).
+    $editA = @{
+        lang = $txtLang
+        sync = $txtSync
+    }
+    $editS = @{
+        lang = $txtSubLang
+    }
+    $claveEn = {
+        param($Lista, $Cols, $Punto)
+        $h = $Lista.HitTest($Punto)
+        if ($null -eq $h.Item -or $null -eq $h.SubItem) { return $null }
+        $ix = $h.Item.SubItems.IndexOf($h.SubItem)
+        if ($ix -le 0 -or $ix -ge @($Cols).Count) { return $null }
+        return [pscustomobject]@{
+            Item = $h.Item
+            Sub  = $ix
+            Key  = "$(@($Cols)[$ix].Key)"
+        }
+    }
+    $editarCelda = {
+        param($Lista, $Cols, $Campos, $Punto, [string]$Que)
+        $c = & $claveEn $Lista $Cols $Punto
+        if ($null -eq $c -or -not $Campos.ContainsKey($c.Key)) { return }
+        $c.Item.Selected = $true
+        $c.Item.Focused  = $true
+        $campo = $Campos[$c.Key]
+        if (-not $campo.Enabled) { return }
+        $st.CellField = $campo
+        $st.CellWhat  = $Que
+        [void](Show-CvGuiCellEditor -List $Lista -ItemIndex $c.Item.Index -SubIndex $c.Sub -Text "$($campo.Text)" -OnDone {
+            param($Texto, $Ok)
+            if (-not $Ok -or $null -eq $st.CellField -or $st.Closing) { return }
+            $st.CellField.Text = $Texto
+            if ($st.CellWhat -eq 'audio') { & $commitAudio } else { & $commitSubs }
+        })
+    }
+    $noMarcar = {
+        param($Lista, $Cols, $Campos, $E)
+        if ($E.Clicks -lt 2) { return }
+        $c = & $claveEn $Lista $Cols $E.Location
+        if ($null -ne $c -and $Campos.ContainsKey($c.Key)) { $st.SkipCheck = $true }
     }
 
     $curA = { if ($lvA.SelectedIndices.Count -eq 0) { return $null }; $i = $lvA.SelectedIndices[0]; if ($i -lt 0 -or $i -ge @($st.Audio).Count) { return $null }; return @($st.Audio)[$i] }
@@ -746,6 +851,15 @@ function Show-CvJobWindow {
     }
     $btnPrev.Add_Click({    & $playVideo "$($st.Draft.Crop)" })
     $btnPrevOrg.Add_Click({ & $playVideo '' })
+
+    $lvA.Add_MouseDown({ & $noMarcar $lvA $colsA $editA $_ })
+    $lvA.Add_MouseUp({ $st.SkipCheck = $false })
+    $lvA.Add_ItemCheck({ if ($st.SkipCheck) { $_.NewValue = $_.CurrentValue } })
+    $lvA.Add_MouseDoubleClick({ & $editarCelda $lvA $colsA $editA $_.Location 'audio' })
+    $lvS.Add_MouseDown({ & $noMarcar $lvS $colsS $editS $_ })
+    $lvS.Add_MouseUp({ $st.SkipCheck = $false })
+    $lvS.Add_ItemCheck({ if ($st.SkipCheck) { $_.NewValue = $_.CurrentValue } })
+    $lvS.Add_MouseDoubleClick({ & $editarCelda $lvS $colsS $editS $_.Location 'subs' })
 
     $lvA.Add_ItemChecked({
         if ($st.Loading -or $st.Closing) { return }
@@ -1217,6 +1331,7 @@ function Show-CvJobWindow {
             & $syncVideoControls
             & $buildAudio
             & $buildSubs
+            & $compactLists
             # Sin fila marcada todavia: los campos de las dos barras arrancan apagados (ver $armAudio).
             & $armAudio
             & $armSubs

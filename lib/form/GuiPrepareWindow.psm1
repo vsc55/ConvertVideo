@@ -77,7 +77,9 @@ function Show-CvPrepareWindow {
     $lblProf = New-Object System.Windows.Forms.Label
     $lblProf.Dock      = 'Fill'
     $lblProf.TextAlign = 'MiddleLeft'
-    $lblProf.Text      = (Get-CvText -Key 'prep.perfil' -Values @((Format-CvProfileLabel -Prof $prof)))
+    # En palabras (fase A4); la etiqueta compacta, en su ayuda emergente.
+    $lblProf.Text      = (Get-CvText -Key 'prep.perfil' -Values @((Format-CvProfileWords -Prof $prof)))
+    $lblProf.AutoEllipsis = $true
     $lblProf.Name      = 'cvPrepProfile'
     $grid.Controls.Add($lblProf, 0, 0)
 

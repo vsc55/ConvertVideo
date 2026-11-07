@@ -68,7 +68,12 @@ foreach ($m in $modules) {
 }
 # MODO PRUEBAS: las ventanas de la bateria salen en el monitor donde NO estas trabajando y ninguna te
 # quita el primer plano (Set-CvGuiTestScreen). Antes de abrir ninguna.
-if (Initialize-CvGui) { [void](Set-CvGuiTestScreen) }
+# Donde, lo dice gui.testScreen del config por defecto (el monitor donde no trabajas, el del raton o
+# uno fijo).
+if (Initialize-CvGui) {
+    $iniPant = Get-CvStartupPrefs -Root $Root
+    [void](Set-CvGuiTestScreen -Mode "$($iniPant.TestScreen)" -Number ([int]$iniPant.TestScreenNumber))
+}
 
 # --- Mini-harness (mismo estilo que unit-tests.ps1) ---
 $script:pass = 0
@@ -1167,6 +1172,9 @@ if (-not $sta) {
                 $script:swMenu += ("{0}|{1}" -f $(if ($c -is [System.Windows.Forms.Button]) { 'b' } else { 'h' }), "$($c.Text)".Trim())
             }
             $script:swOut = "$($f.Controls.Find('cvSetupOut', $true)[0].Text)"
+            # Los botones que la cola abre con -Open tienen que poder encontrarse por su nombre.
+            $script:swMon  = ($f.Controls.Find('cvSetupMonitors', $true).Count -eq 1)
+            $script:swOpen = ($f.Controls.Find('cvSetupConfig', $true).Count -eq 1 -and $f.Controls.Find('cvSetupTools', $true).Count -eq 1)
             $f.Close()
         } catch { $tSw.Stop(); $script:swErr = "$_"; foreach ($fm in @([System.Windows.Forms.Application]::OpenForms)) { $fm.Close() } }
     })
@@ -1175,6 +1183,10 @@ if (-not $sta) {
     $tSw.Stop()
 
     Assert-Eq   'Ventana setup: sin excepciones'  '' $script:swErr
+# La COLA abre setup en su proceso, ya en una seccion (fase A7): la orden sale de Get-CvSetupGuiArgs.
+$sgA = @(Get-CvSetupGuiArgs -Root 'D:\cv' -CfgPath 'D:\cv\config\config.json' -Open 'tools')
+Assert-Eq   'Setup desde la cola: la orden' '-NoProfile -ExecutionPolicy Bypass -Sta -WindowStyle Hidden -File "D:\cv\bin\setup-gui.ps1" -Config "D:\cv\config\config.json" -Open tools' ($sgA -join ' ')
+Assert-Eq   'Setup desde la cola: sin seccion, sin -Open' $false (((Get-CvSetupGuiArgs -Root 'D:\cv' -CfgPath 'x.json') -join ' ') -match '-Open')
     Assert-True 'Ventana setup: hay menu'         (@($script:swMenu).Count -ge 6)
     # El ORDEN: primero el titulo de Estado, y sus DOS botones (ver estado y la GPU) antes de que
     # llegue el titulo siguiente. Era lo que estaba al reves: Herramientas abria el menu.
@@ -1184,6 +1196,27 @@ if (-not $sta) {
     Assert-Eq   'Ventana setup: y despues, las herramientas'     ("h|" + (Get-CvText -Key 'setup.sec.herr'))   "$(@($script:swMenu)[3])"
     # El panel arranca con el estado, y el estado dice las rutas.
     Assert-True 'Ventana setup: el panel abre con el estado' ($script:swOut -match [regex]::Escape((Get-CvVersion)))
+Assert-True 'Ventana setup: Configuracion y Herramientas con nombre (para -Open)' $script:swOpen
+Assert-True 'Ventana setup: boton Identificar monitores' $script:swMon
+# -Open de VERDAD: la ventana se abre y, sola, abre encima la seccion pedida. REGRESION: la accion
+# iba en un GetNewClosure dentro de otro y llegaba sin el boton (no abria nada).
+$script:soVistos = @()
+$script:soN = 0
+$tSo = New-Object System.Windows.Forms.Timer
+$tSo.Interval = 300
+$tSo.Add_Tick({
+    $script:soN++
+    $fs = @([System.Windows.Forms.Application]::OpenForms)
+    if ($fs.Count -ge 2 -or $script:soN -gt 60) {
+        $tSo.Stop()
+        $script:soVistos = @($fs | ForEach-Object { "$($_.Text)" })
+        for ($i = $fs.Count - 1; $i -ge 0; $i--) { try { $fs[$i].Close() } catch { } }
+    }
+})
+$tSo.Start()
+[void](Show-CvSetupWindow -Context $ctx -Root $tmpRoot -CfgPath $tmpCfg -CfgName 'config.json' -IsAlt $false -CurrentLog '' -Open 'tools')
+$tSo.Stop()
+Assert-Eq   'Ventana setup: -Open tools abre las herramientas' 2 @($script:soVistos).Count
     Assert-True 'Ventana setup: con la ruta de Original'     ($script:swOut -match [regex]::Escape("$($ctx.Original)"))
 }
 

@@ -112,6 +112,44 @@ function Get-CvSetupGpuText {
     return ($L -join [Environment]::NewLine)
 }
 
+function Get-CvSetupGuiArgs {
+    <#
+        PURO. La orden con la que se abre la ventana de setup (setup-gui.ps1) sobre una configuracion,
+        y si se pide, ya en una seccion (-Open 'config' / 'tools'). Lo usa la cola para sus botones
+        Configuracion y Herramientas: setup se abre en SU proceso, asi la cola sigue viva y al dia.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Root,
+        [Parameter(Mandatory)][string]$CfgPath,
+        [string]$Open = ''
+    )
+    $script = Get-CvScriptPath -Root $Root -Name 'setup-gui.ps1'
+    $argv = @(
+        '-NoProfile'
+        '-ExecutionPolicy'
+        'Bypass'
+        '-Sta'
+        '-WindowStyle'
+        'Hidden'
+        '-File'
+        ('"{0}"' -f $script)
+        '-Config'
+        ('"{0}"' -f $CfgPath)
+    )
+    if ("$Open" -ne '') { $argv += @('-Open', "$Open") }
+    return $argv
+}
+
+function Start-CvSetupGui {
+    <# Abre la ventana de setup en su propio proceso (Get-CvSetupGuiArgs) y devuelve sin esperar. #>
+    param(
+        [Parameter(Mandatory)][string]$Root,
+        [Parameter(Mandatory)][string]$CfgPath,
+        [string]$Open = ''
+    )
+    return (Start-Process -FilePath 'powershell.exe' -ArgumentList (Get-CvSetupGuiArgs -Root $Root -CfgPath $CfgPath -Open $Open) -PassThru)
+}
+
 function Start-CvSetupTask {
     <#
         Lanza 'setup.ps1 -Task <...>' en su PROPIA consola (Start-Process) y devuelve sin esperar: asi

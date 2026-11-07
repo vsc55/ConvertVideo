@@ -11,6 +11,49 @@
     varios a la vez) y form\GuiPrepareWindow.psm1 (preparar los pendientes).
 #>
 
+function Get-CvJobListHeights {
+    <#
+        PURO. Alto de los bloques AUDIO y SUBTITULOS del editor del job ajustado a sus PISTAS (fase A6):
+        cada lista ensena tantas filas como pistas, entre -MinRows y -MaxRows (con mas, barra de
+        scroll). -RowHeight / -HeaderHeight son los de la lista de verdad (los mide la ventana); -Chrome
+        es lo que el bloque anade alrededor (marco, barra de botones, margenes). Devuelve tambien
+        -Delta: cuanto cambia el alto de la ventana respecto a -Current (lo que median antes).
+    #>
+    param(
+        [int]$AudioCount = 0,
+        [int]$SubCount   = 0,
+        [int]$RowHeight  = 18,
+        [int]$HeaderHeight = 24,
+        [int]$Chrome     = 70,
+        [int]$MinRows    = 3,
+        [int]$MaxRows    = 8,
+        [int]$Current    = 0
+    )
+    $min = [Math]::Max(1, $MinRows)
+    $max = [Math]::Max($min, $MaxRows)
+    $alto = {
+        param([int]$n)
+        $filas = [Math]::Min($max, [Math]::Max($min, $n))
+        return ($HeaderHeight + ($filas * $RowHeight) + 4 + $Chrome)
+    }
+    $a = & $alto $AudioCount
+    $s = & $alto $SubCount
+    return [pscustomobject]@{
+        Audio = [int]$a
+        Subs  = [int]$s
+        Delta = $(if ($Current -gt 0) { [int](($a + $s) - $Current) } else { 0 })
+    }
+}
+
+function Get-CvJobScanSummary {
+    <#
+        PURO. El escaneo de bordes PLEGADO (fase A6): una linea con los tres valores -no se esconde
+        ningun dato- y la invitacion a cambiarlos. Los valores vienen tal cual de sus campos.
+    #>
+    param([string]$Start = '', [string]$Duration = '', [string]$Samples = '')
+    return (Get-CvText -Key 'job.escaneo.plegado' -Values @("$Start".Trim(), "$Duration".Trim(), "$Samples".Trim()))
+}
+
 function Get-CvJobVideoRows {
     <#
         Las filas del bloque VIDEO del editor de un job, como DATOS: la ventana solo las dibuja (con

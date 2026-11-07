@@ -415,7 +415,7 @@ Assert-Eq   'all sin duplicados'       $all.Count ($all | Select-Object -Unique)
 # ================================================================================================
 Write-Host "`nFuentes unicas (Context / Profile)" -ForegroundColor Cyan
 Assert-Eq 'Get-CvAppName' 'ConvertVideo' (Get-CvAppName)
-Assert-Eq 'Get-CvVersion' '4.7.6'        (Get-CvVersion)
+Assert-Eq 'Get-CvVersion' '4.7.7'        (Get-CvVersion)
 Assert-Eq 'perfiles de serie = 13' 13 ((Get-CvProfiles | ForEach-Object { $_.Profiles } | Measure-Object).Count)
 # Los perfiles de serie con changeSize '1920:-2' (RESIZE fijo) deben ser solo-reduce (NoUpscale).
 $rzProfs = @(Get-CvProfiles | ForEach-Object { $_.Profiles } | Where-Object { "$($_.ChangeSize)" -ne '' })
@@ -976,6 +976,15 @@ Assert-Eq 'Label NVENC' 'A: 192K, V: h265[NV]/M10/L5/Q(1-23)' (Format-CvProfileL
 Assert-True 'Label RESIZE escala siempre' ((Format-CvProfileLabel (New-CvProfile -VideoEncoder 'hevc_nvenc' -ChangeSize '1920:-2')) -match 'RESIZE 1920:-2')
 Assert-True 'Label RESIZE<= solo reduce'  ((Format-CvProfileLabel (New-CvProfile -VideoEncoder 'hevc_nvenc' -ChangeSize '1920:-2' -NoUpscale $true)) -match 'RESIZE<= 1920:-2')
 Assert-Eq 'Label copy' 'A: COPY, V: COPY' (Format-CvProfileLabel (New-CvProfile -VideoEncoder 'copy' -AudioEncoder 'copy'))
+# EN PALABRAS (fase A4): los mismos datos que la etiqueta compacta, dichos para leerlos.
+# (Patrones en ASCII: este fichero va sin BOM y PowerShell 5.1 lo lee en ANSI; '.' cubre la tilde y el punto medio.)
+Assert-True 'Palabras NVENC' ((Format-CvProfileWords $np) -match '^V.deo h265 \(GPU\), 10 bits, nivel 5, calidad 1-23  .  Audio AAC 192 kbps$')
+Assert-True 'Palabras copy'  ((Format-CvProfileWords (New-CvProfile -VideoEncoder 'copy' -AudioEncoder 'copy')) -match '^V.deo: se copia sin recodificar  .  Audio: se copia$')
+Assert-True 'Palabras: solo reduce'   ((Format-CvProfileWords (New-CvProfile -VideoEncoder 'hevc_nvenc' -ChangeSize '1920:-2' -NoUpscale $true)) -match 'reduce a 1920:-2 \(nunca agranda\)')
+Assert-True 'Palabras: auto no es un encoder' ((Format-CvProfileWords (New-CvProfile -VideoEncoder 'auto')) -match 'mejor encoder del equipo')
+Assert-True 'Palabras: CRF de CPU'    ((Format-CvProfileWords (New-CvProfile -VideoEncoder 'libsvtav1' -Crf 30)) -match 'calidad CRF 30')
+# Ningun perfil de serie se queda sin decir lo que hace (ni con una clave sin traducir).
+Assert-Eq 'Palabras: todos los de serie' 0 @(Get-CvProfiles | ForEach-Object { $_.Profiles } | Where-Object { (Format-CvProfileWords $_) -match 'pw\.|^\s*$' }).Count
 Assert-Eq 'catalogo encoders = 7' 7 (Get-CvVideoEncoders).Count
 Assert-True 'encoders incluye libsvtav1' (@(Get-CvVideoEncoders | ForEach-Object { $_.Value }) -contains 'libsvtav1')
 Assert-True 'encoders incluye av1_nvenc'  (@(Get-CvVideoEncoders | ForEach-Object { $_.Value }) -contains 'av1_nvenc')
@@ -1298,6 +1307,8 @@ Remove-Item -Recurse -Force $taDir
 Assert-Eq   'Config: preparar no se cierra sola'        $false ([bool](Get-CvConfigDefaults).gui.prepareAutoClose)
 Assert-Eq   'Config: y cuando lo hace, se ve un momento' 1200 ([int](Get-CvConfigDefaults).gui.prepareAutoCloseMs)
 Assert-Eq   'Config: la lista quieta mientras la usas'  3 ([int](Get-CvConfigDefaults).gui.queueFollowHoldSec)
+Assert-Eq   'Config: listas del job, minimo de filas'    3 ([int](Get-CvConfigDefaults).gui.jobListRowsMin)
+Assert-Eq   'Config: listas del job, maximo de filas'    8 ([int](Get-CvConfigDefaults).gui.jobListRowsMax)
 $w1 = @([pscustomobject]@{ Pid = 10; File = 'Serie_1x01'; Status = 'working' })
 $w2 = @([pscustomobject]@{ Pid = 10; File = 'Serie_1x01'; Status = 'working' })
 Assert-Eq   'Huella: el porcentaje no cuenta' (Get-CvWorkerSignature -Workers $w1) (Get-CvWorkerSignature -Workers $w2)
@@ -3547,6 +3558,24 @@ Assert-Eq   'Monitor libre: trabajando en el segundo'    0 ([int](Select-CvGuiTe
 Assert-Eq   'Monitor libre: con tres, el primero que no es el tuyo' 0 ([int](Select-CvGuiTestArea -Screens $rlTres -Current '\\.\DISPLAY2').X)
 Assert-Eq   'Monitor libre: sin saber el tuyo, ninguno'  $null (Select-CvGuiTestArea -Screens $rlDos -Current '')
 Assert-Eq   'Monitor libre: sin pantallas, ninguno'      $null (Select-CvGuiTestArea -Screens @() -Current '\\.\DISPLAY1')
+# gui.testScreen: el monitor del RATON (aunque sea el tuyo: es lo que se pide) o uno FIJO por numero.
+Assert-Eq   'Monitor pruebas: el del raton'              0 ([int](Select-CvGuiTestArea -Screens $rlDos -Current '\\.\DISPLAY1' -Mode 'mouse' -Mouse '\\.\DISPLAY1').X)
+Assert-Eq   'Monitor pruebas: uno fijo, el 2'            -1920 ([int](Select-CvGuiTestArea -Screens $rlDos -Current '\\.\DISPLAY2' -Mode 'number' -Number 2).X)
+Assert-Eq   'Monitor pruebas: fijo que no existe, el otro' -1920 ([int](Select-CvGuiTestArea -Screens $rlDos -Current '\\.\DISPLAY1' -Mode 'number' -Number 9).X)
+Assert-Eq   'Monitor pruebas: de serie, el que no usas'  'other' "$((Get-CvConfigDefaults).gui.testScreen)"
+# 'Identificar monitores': el numero es el de Windows (DISPLAYn) y se marca donde salen las pruebas.
+$rlMon = @((& $rlPant '\\.\DISPLAY1' 0), (& $rlPant '\\.\DISPLAY2' -1920))
+$rlMon[0] | Add-Member -NotePropertyName Bounds -NotePropertyValue $rlMon[0].WorkingArea
+$rlMon[0] | Add-Member -NotePropertyName Primary -NotePropertyValue $true
+$rlMon[1] | Add-Member -NotePropertyName Bounds -NotePropertyValue $rlMon[1].WorkingArea
+$rlMon[1] | Add-Member -NotePropertyName Primary -NotePropertyValue $false
+$rlFil = @(Get-CvGuiMonitorRows -Screens $rlMon -TestArea $rlMon[1].WorkingArea)
+Assert-Eq   'Identificar: numero de Windows'             '1|2' ((@($rlFil | ForEach-Object { $_.Number })) -join '|')
+Assert-Eq   'Identificar: cual es el principal'          '1' "$(@($rlFil | Where-Object { $_.Primary })[0].Number)"
+Assert-Eq   'Identificar: donde salen las pruebas'       '2' "$(@($rlFil | Where-Object { $_.Tests })[0].Number)"
+Assert-Eq   'Identificar: sin zona, ninguno marcado'     0 @(@(Get-CvGuiMonitorRows -Screens $rlMon) | Where-Object { $_.Tests }).Count
+Assert-Eq   'Identificar: segundos de serie'             3 ([int](Get-CvConfigDefaults).gui.identifyMonitorsSec)
+Assert-Eq   'Monitor pruebas: catalogo'                  'other|mouse|number' ((@(Get-CvGuiTestScreens) | ForEach-Object { $_.Value }) -join '|')
 # La zona elegida viaja en una variable de entorno (la lee tambien la pantalla de arranque).
 $rlEnvT = $env:CV_GUI_TEST; $rlEnvA = $env:CV_GUI_TEST_AREA
 try {
@@ -3558,6 +3587,14 @@ try {
     Assert-Eq   'Sin modo pruebas: nada, aunque haya zona' $null (Get-CvGuiTestArea)
     Assert-Eq   'Sin modo pruebas: no esta activo'       $false (Test-CvGuiTestMode)
 } finally { $env:CV_GUI_TEST = $rlEnvT; $env:CV_GUI_TEST_AREA = $rlEnvA }
+# Devolver el foco a quien trabaja SOLO en modo pruebas: en la app normal no toca nada.
+$rlEnvT2 = $env:CV_GUI_TEST; $rlEnvU = $env:CV_GUI_TEST_USER
+try {
+    $env:CV_GUI_TEST = ''; $env:CV_GUI_TEST_USER = '12345'
+    Assert-Eq   'Foco: fuera del modo pruebas no se toca'  $false (Restore-CvGuiTestFocus)
+    $env:CV_GUI_TEST = '1'; $env:CV_GUI_TEST_USER = ''
+    Assert-Eq   'Foco: sin ventana apuntada, nada'         $false (Restore-CvGuiTestFocus)
+} finally { $env:CV_GUI_TEST = $rlEnvT2; $env:CV_GUI_TEST_USER = $rlEnvU }
 
 # ================================================================================================
 $total = $script:pass + $script:fail

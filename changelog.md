@@ -1,5 +1,63 @@
 # CHANGELOG
 
+## VERSION 4.7.7 - 07/11/2026
+### UPDATE
+  - **Versión 4.7.7.** La 4.7.6 ya estaba etiquetada (`v4.7.6`): todo lo de esta sección va en la nueva (`Get-CvVersion` y su test unitario, a la par).
+  - **Identificar monitores** (setup, sección *Pruebas*): como el de Windows, cada pantalla enseña su **número** en grande unos segundos (`gui.identifyMonitorsSec`, 3), con su resolución, si es el principal y, resaltado en azul, si es donde salen **ahora** las ventanas de las pruebas. Es el número que va en `gui.testScreenNumber`; el panel de setup lo deja además por escrito. `Show-CvGuiMonitorIds` / `Get-CvGuiMonitorRows` (puro, probado) en `Gui.psm1`.
+  - **Se puede elegir en qué monitor salen las ventanas de las pruebas** (`gui.testScreen`, avanzada): `other` (de serie, lo de hasta ahora) = el monitor donde **no** estás trabajando; `mouse` = el del **ratón**; `number` = uno **fijo**, el de `gui.testScreenNumber` (el número de Windows: `DISPLAY1` = 1…; si no existe, como `other`). Vale para las baterías de ventanas y las capturas del manual, que lo leen del config por defecto antes de abrir ninguna (`Get-CvStartupPrefs`); la app no cambia. En el editor de configuración sale como desplegable (`Get-CvGuiTestScreens`). La elección es pura (`Select-CvGuiTestArea -Mode -Number -Mouse`) y está probada con pantallas simuladas.
+  - **Las capturas del manual (y las baterías de ventanas) ya no te quitan el foco ni salen en tu monitor.** Medido con un vigía que apunta cada 200 ms dónde está cada ventana y si tiene el primer plano: antes, 50-59 muestras con el foco robado; ahora, 0, y todas en el otro monitor.
+    - `manual\generar-capturas.ps1` no usaba el modo pruebas (`Set-CvGuiTestScreen`): sus ventanas salían encima de lo que estuvieras haciendo. Ahora sí.
+    - Además las ponía delante A LA FUERZA (Activate en bucle y, si no, minimizar y restaurar) para que la barra de título saliera encendida. En modo pruebas ya no: se le pide que se pinte como activa (`WM_NCACTIVATE`) sin darle el foco. Las capturas salen igual.
+    - Y aun sin forzarlo, Windows deja que un proceso lanzado desde la ventana activa active su primera ventana. En modo pruebas, cada ventana que se activa devuelve el primer plano a la de quien trabaja (`Restore-CvGuiTestFocus`, la ventana apuntada al empezar en `CV_GUI_TEST_USER`). La app normal no cambia.
+    - Protecciones: una ventana que arranca minimizada se restaura sin activarla, y en modo pruebas una foto de pantalla fuera del monitor libre no se guarda (pasó al probar: salió tu pantalla en vez de la ventana; esas capturas se han regenerado).
+  - **Rediseño de la interfaz, fase A7: Configuración y Herramientas desde la cola.**
+    - Dos botones nuevos al final de la barra, solo con icono: **Configuración** (rueda) y **Herramientas** (llave). Abren la ventana de setup **ya en esa sección**, sobre el mismo config que la cola y en **su propio proceso**: la cola no se bloquea mientras tanto.
+    - `setup-gui.ps1 -Open config|tools` (y `Show-CvSetupWindow -Open`): abre esa sección en cuanto la ventana se ve. La orden sale de `Get-CvSetupGuiArgs` (pura, probada) y la lanza `Start-CvSetupGui` (`GuiSetup.psm1`).
+    - Probado de verdad: la batería de setup abre la ventana con `-Open tools` y comprueba que sale la de herramientas encima. Ese caso destapó un fallo (un `GetNewClosure` dentro de otro no veía el botón: no abría nada), corregido y apuntado en `ref-gotchas.md`.
+  - **Rediseño de la interfaz, fase A6: el editor del job, más compacto y con edición en la celda.** No se quita ningún control ni ningún dato.
+    - **Escaneo de bordes plegado:** en su fila sale una línea con los tres valores (*desde el segundo 120, 120 s por muestra, 6 muestras*) y *Avanzado: cambiarlo ▸*, que despliega las tres cajas de siempre.
+    - **Listas al alto de sus pistas:** audio y subtítulos ya no se reparten media ventana cada una con filas vacías; enseñan entre `gui.jobListRowsMin` (3) y `gui.jobListRowsMax` (8) filas (claves nuevas, avanzadas) y la ventana encoge lo que sobra. Agrandarla a mano sigue dando más sitio a los subtítulos.
+    - **Editar en la celda:** doble clic en el **idioma** o el **Sync** de una pista (o el idioma de un subtítulo), escribir e Intro; Esc lo deja como estaba. Por debajo es lo mismo que los campos de la barra (se escribe en su campo y se confirma con su commit), que siguen ahí. El doble clic en esas columnas ya no marca ni desmarca la pista.
+    - **Cómo:** `Get-CvJobListHeights` y `Get-CvJobScanSummary` (`GuiJob.psm1`, puros y probados), `Show-CvGuiCellEditor` (`Gui.psm1`). La batería de la cola prueba en la ventana de verdad el plegado, el despliegue, el alto y la edición en la celda de principio a fin.
+  - **Rediseño de la interfaz, fase A4: el perfil, en palabras.** `Format-CvProfileWords` (`Profile.psm1`) cuenta el perfil con los MISMOS datos que la etiqueta compacta: *Vídeo h265 (GPU), 10 bits, nivel 5, calidad 1-23, bordes negros: detección automática · Audio AAC 192 kbps* en vez de `A: 192K, V: h265[NV]/M10/L5/Q(1-23)/AUTO-BORDE`.
+    - Sale en el **resumen** del archivo (con la etiqueta compacta debajo, en gris: no se pierde), en la cabecera de **Preparar pendientes** y en el perfil elegido de la **edición en bloque**.
+    - Los desplegables de perfiles, los menús de consola y el job siguen con la etiqueta compacta: es la que los identifica y con la que se comparan.
+    - El encoder `auto` se dice como lo que es (*con el mejor encoder del equipo*). Probado: unitarios con un perfil NVENC, copy, solo-reduce, CRF, `auto` y todos los de serie (ninguno sale sin traducir).
+  - **Rediseño de la interfaz, fase A5: la pestaña *Sesión* y los totales con color.**
+    - La pestaña *Opciones* de la cola se llama ahora ***Sesión***: lo que hay ahí son los ajustes de esta sesión (workers, ver consolas, quedarse con el original, minimizar a la bandeja), y *Opciones* se confundía con la configuración. Mismo contenido y mismo atajo (`Ctrl+3`).
+    - La línea de **totales** bajo la lista tiene el MISMO texto, pero lo que necesita atención se ve: *sin terminar* y *bloqueo(s) huérfano(s)* en rojo, *sin preparar* y *parada pedida* en naranja (los colores de sus etiquetas en la lista), los separadores atenuados.
+    - **Cómo:** `Get-CvQueueSummaryParts` (`GuiConvert.psm1`, puro) da la línea en trozos con su rol de color, y `Get-CvQueueSummaryLine` es ahora la unión de esos trozos (mismo texto: lo usan el icono de la bandeja y los tests). `Set-CvGuiPartsLabel` (`Gui.psm1`) los pinta en la etiqueta con los colores del tema.
+    - Manual y docs actualizados (*Opciones* → *Sesión*).
+  - **Barra de la cola sin rótulos.** Fuera el rótulo *Cola* del primer grupo y el que repetía el nombre del archivo marcado: ocupaban sitio y no decían nada que no se vea ya (la fila marcada está resaltada en la lista; los separadores ya agrupan los botones). Los botones, sus teclas y lo que hacen no cambian. Se quitan sus textos (`cola.grp.*`) de `lang\es.json` y `lang\en.json`, y la batería de la cola comprueba que el rótulo ya no está.
+  - **Rediseño de la interfaz, fase A3: el resumen del archivo, por bloques.** Mismo texto y mismas líneas que antes (se copia igual); solo cambia cómo se pinta.
+    - **Vídeo, Audio y Subtítulos** van separados por una línea en blanco, con la cabecera en negrita y en azul.
+    - Las pistas que **se descartan** (`[ ]`), en gris; las que se quedan, en el color normal.
+    - Lo que **QUEDA** (tamaño, códec, canales…) en verde y en negrita: es lo que se va a obtener.
+    - El nombre del archivo en negrita; el perfil, atenuado.
+    - **Cómo:** `Get-CvJobSummaryLines -WithKind` devuelve las mismas líneas con lo que es cada una (sin `-WithKind` sale lo de siempre); `Get-CvGuiSummaryRuns` (puro, probado) decide dónde va cada estilo y `Set-CvGuiSummaryText` lo pinta en el `RichTextBox` que sustituye al cuadro de texto. Al cambiar de tema se repinta con sus colores. Al copiar, los saltos vuelven a ser los de Windows.
+    - Probado: unitarios 1626/1626, cola 642/642 (13 casos nuevos: mismas líneas con y sin `-WithKind`, cada línea en su sitio, solo se añaden los huecos), setup 456/456; captura clara de la cola regenerada y revisada.
+  - **Rediseño de la interfaz, fin de la fase A1: el rótulo «Cola» y las teclas a la vista.**
+    - El primer grupo de la barra (*Iniciar*, *Parar al acabar*, *Cancelar todo*) lleva su rótulo, *Cola*, como el de la selección.
+    - Los botones con texto que tienen atajo lo enseñan en una cajita a su derecha: *Iniciar* `F9`, *Parar al acabar* `Esc`, *Editar* `F2`, *Preparar pendientes* `F6`. Sale del mismo catálogo que los atajos (`Get-CvQueueShortcuts`): si cambia una tecla, cambia lo que se ve. Los botones de solo icono la siguen teniendo en su ayuda emergente.
+    - **Cómo:** `Add-CvGuiButtonKey` (`Gui.psm1`) ensancha el relleno derecho del botón y pinta la tecla con los colores del tema; atenuada si el botón está desactivado.
+    - Probado: unitarios 1626/1626, cola 629/629, setup 456/456; captura clara de la cola regenerada y revisada.
+  - **Rediseño de la interfaz, fase A2: el estado y el progreso de la cola se VEN.** Solo cambia cómo se pinta la lista, no lo que pone: las columnas, sus textos y sus datos son los de siempre (`Format-CvQueueRow` no se toca, ni sus tests).
+    - **Estado:** el mismo texto dentro de una etiqueta de su color: verde *Hecho*, azul *Codificando*, gris *En cola*, naranja *Sin preparar*, rojo *Sin terminar* y *Bloqueo huérfano*.
+    - **Progreso** de lo que se codifica: la barra hecha con caracteres se dibuja como una barra de verdad; el paso, el porcentaje y la velocidad siguen en el texto.
+    - **Los avisos** (*falta PREPARAR*, *a medias*, *su worker ya no existe*) en gris, para que se distingan de los datos.
+    - **La columna Estado** pasa de 120 a 135 px: *Bloqueo huérfano* ya no se corta.
+    - **Cómo:** `Set-CvGuiListCellPainter` (`Gui.psm1`) hace que una lista se pinte a mano también en tema claro y le pone un pintor para sus celdas; `Write-CvGuiCellChip` y `Write-CvGuiCellBar` pintan la etiqueta y la barra con los pinceles del tema (`Get-CvGuiListPaintTools`). Las demás listas siguen pintándolas Windows en claro.
+    - Probado: unitarios 1626/1626, cola 629/629, setup 456/456; captura clara de la cola regenerada y revisada.
+  - **Rediseño de la interfaz, fase A1: la barra de la cola agrupada por a qué afecta cada botón.** Primera fase de la propuesta A (evolución conservadora) de la auditoría de la interfaz.
+    - **Toda la cola:** *Iniciar*, *Parar al acabar* (antes *Parar*) y *Cancelar todo* (antes *Cancelar ahora*). El diálogo de cerrar la cola usa los mismos nombres.
+    - **El archivo marcado:** un rótulo con su nombre (o «N marcados») y *Editar*, *Parar este* y *Quitar de la cola*.
+      - Antes, parar o quitar un solo archivo solo estaba en el botón derecho, y no se encontraba.
+      - Hacen lo mismo que sus opciones del menú (con su confirmación y sus comprobaciones) y se encienden con la misma regla (`Get-CvQueueBulkActions`).
+    - **Preparación:** *Preparar pendientes*.
+    - **Carpetas y vista:** las carpetas *Original* y *Convertido*, *Actualizar* y *Tema*, solo con icono; su nombre y su atajo salen en la ayuda emergente. Con texto, la barra no cabía en la ventana.
+    - Manual, `docs\ref-cola.md` y capturas de la cola regenerados.
+    - Probado: unitarios 1626/1626, cola 629/629 (cuatro casos nuevos del grupo del archivo), setup 456/456.
+
 ## VERSION 4.7.6 - 16/10/2026
 ### UPDATE
   - **El menú del botón derecho de la cola lleva iconos**: los mismos de la barra de botones (la fuente de iconos de Windows, `New-CvGuiIcon`), con los que faltaban añadidos a su catálogo (`Get-CvGuiIconGlyphs`).

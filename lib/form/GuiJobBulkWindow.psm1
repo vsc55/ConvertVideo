@@ -104,7 +104,7 @@ function Show-CvJobBulkWindow {
                     $p = Show-CvJobProfileDialog -Context $Context -Info (Get-CvText -Key 'bulk.perfil.info' -Values @($names.Count))
                     if ($null -eq $p) { return }
                     $st.Prof = $p
-                    $ctrl['prof'].Val.Text = (Format-CvProfileLabel -Prof $p)
+                    $ctrl['prof'].Val.Text = (Format-CvProfileWords -Prof $p)
                     $ctrl['prof'].Chk.Checked = $true
                 }.GetNewClosure())
                 $gb.Controls.Add($btn)

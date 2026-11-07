@@ -29,7 +29,7 @@ function Get-CvQueueColumns {
         @{ Key = 'file';    Text = (Get-CvText -Key 'cola.col.archivo');  Width = 300 }
         @{ Key = 'size';    Text = (Get-CvText -Key 'cola.col.tamano');   Width = 85  }
         @{ Key = 'quality'; Text = (Get-CvText -Key 'cola.col.calidad');  Width = 105 }
-        @{ Key = 'state';   Text = (Get-CvText -Key 'cola.col.estado');   Width = 120 }
+        @{ Key = 'state';   Text = (Get-CvText -Key 'cola.col.estado');   Width = 135 }
         @{ Key = 'borders'; Text = (Get-CvText -Key 'cola.col.bordes');   Width = 55  }
         @{ Key = 'audio';   Text = (Get-CvText -Key 'cola.col.audio');    Width = 150 }
         @{ Key = 'worker';  Text = (Get-CvText -Key 'cola.col.worker');   Width = 70  }
@@ -122,21 +122,37 @@ function Format-CvQueueRow {
     )
 }
 
+function Get-CvQueueSummaryParts {
+    <#
+        PURO. La linea de totales bajo la lista, en TROZOS con su rol de color (Get-CvGuiRoleColor):
+        lo que tiene un problema -sin terminar, bloqueo huerfano- en 'error'; lo que falta preparar,
+        en 'warn' (los mismos colores que sus etiquetas en la lista); la parada pedida, en 'warn'; lo
+        demas, normal. Los separadores van como trozos propios, asi que juntar los textos da EXACTAMENTE
+        la linea de siempre (Get-CvQueueSummaryLine).
+    #>
+    param($Totals, [int]$Workers = 0, [bool]$Stopping = $false)
+    $p = @()
+    $p += [pscustomobject]@{ Text = (Get-CvText -Key 'cola.res.total' -Values @([int]$Totals.Total)); Role = 'fore' }
+    if ([int]$Totals.Working -gt 0) { $p += [pscustomobject]@{ Text = (Get-CvText -Key 'cola.res.working' -Values @($Totals.Working)); Role = 'fore' } }
+    if ([int]$Totals.Queued  -gt 0) { $p += [pscustomobject]@{ Text = (Get-CvText -Key 'cola.res.queued'  -Values @($Totals.Queued));  Role = 'fore' } }
+    if ([int]$Totals.Pending -gt 0) { $p += [pscustomobject]@{ Text = (Get-CvText -Key 'cola.res.pending' -Values @($Totals.Pending)); Role = 'warn' } }
+    if ([int]$Totals.Done    -gt 0) { $p += [pscustomobject]@{ Text = (Get-CvText -Key 'cola.res.done'    -Values @($Totals.Done));    Role = 'fore' } }
+    if ([int]$Totals.Partial -gt 0) { $p += [pscustomobject]@{ Text = (Get-CvText -Key 'cola.res.partial' -Values @($Totals.Partial)); Role = 'error' } }
+    if ([int]$Totals.Stale   -gt 0) { $p += [pscustomobject]@{ Text = (Get-CvText -Key 'cola.res.stale'   -Values @($Totals.Stale));   Role = 'error' } }
+    $p += [pscustomobject]@{ Text = (Get-CvText -Key 'cola.res.workers' -Values @($Workers)); Role = 'fore' }
+    $out = @()
+    for ($i = 0; $i -lt $p.Count; $i++) {
+        if ($i -gt 0) { $out += [pscustomobject]@{ Text = '  -  '; Role = 'muted' } }
+        $out += $p[$i]
+    }
+    if ($Stopping) { $out += [pscustomobject]@{ Text = (Get-CvText -Key 'cola.res.parada'); Role = 'warn' } }
+    return $out
+}
+
 function Get-CvQueueSummaryLine {
     <# PURO. Resumen de una linea bajo la lista (lo mismo que el recuento de Get-CvQueueTotals). #>
     param($Totals, [int]$Workers = 0, [bool]$Stopping = $false)
-    $p = @()
-    $p += (Get-CvText -Key 'cola.res.total' -Values @([int]$Totals.Total))
-    if ([int]$Totals.Working -gt 0) { $p += (Get-CvText -Key 'cola.res.working' -Values @($Totals.Working)) }
-    if ([int]$Totals.Queued  -gt 0) { $p += (Get-CvText -Key 'cola.res.queued'  -Values @($Totals.Queued)) }
-    if ([int]$Totals.Pending -gt 0) { $p += (Get-CvText -Key 'cola.res.pending' -Values @($Totals.Pending)) }
-    if ([int]$Totals.Done    -gt 0) { $p += (Get-CvText -Key 'cola.res.done'    -Values @($Totals.Done)) }
-    if ([int]$Totals.Partial -gt 0) { $p += (Get-CvText -Key 'cola.res.partial' -Values @($Totals.Partial)) }
-    if ([int]$Totals.Stale   -gt 0) { $p += (Get-CvText -Key 'cola.res.stale'   -Values @($Totals.Stale)) }
-    $p += (Get-CvText -Key 'cola.res.workers' -Values @($Workers))
-    $txt = ($p -join '  -  ')
-    if ($Stopping) { $txt += (Get-CvText -Key 'cola.res.parada') }
-    return $txt
+    return ((@(Get-CvQueueSummaryParts -Totals $Totals -Workers $Workers -Stopping $Stopping) | ForEach-Object { "$($_.Text)" }) -join '')
 }
 
 function Test-CvQueueKeepRows {
