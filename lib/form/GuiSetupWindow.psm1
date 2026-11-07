@@ -27,7 +27,9 @@ function Show-CvSetupWindow {
         [string]$CfgName = 'config.json',
         [bool]$IsAlt = $false,
         # Log de la sesion EN CURSO: el visor lo marca y la limpieza lo respeta (esta en uso).
-        [string]$CurrentLog = ''
+        [string]$CurrentLog = '',
+        # Pantalla de arranque (Start-CvSplashWindow) que se quita en cuanto la ventana se dibuja.
+        $Splash = $null
     )
     if (-not (Initialize-CvGui)) { return $false }
 
@@ -200,6 +202,11 @@ function Show-CvSetupWindow {
 
     & $addHeader (Get-CvText -Key 'setup.sec.config')
     [void](& $addButton ('  ' + (Get-CvText -Key 'setup.btn.config' -Values @($CfgName))) {
+        # Abrir el editor cuesta unos segundos (monta un arbol con todas las claves): con el cursor de
+        # espera y el aviso en el panel, no parece que setup se haya colgado.
+        & $write (Get-CvText -Key 'setup.cab.config') (Get-CvText -Key 'setup.cfg.abriendo')
+        $out.Refresh()
+        [System.Windows.Forms.Cursor]::Current = [System.Windows.Forms.Cursors]::WaitCursor
         if (Show-CvConfigWindow -Root $Root -CfgPath $CfgPath -CfgName $CfgName) {
             # Se relee lo guardado y se ensena el estado YA con lo nuevo: si se ha cambiado
             # paths.base, lo primero que se quiere ver es a donde apunta ahora cada carpeta.
@@ -267,6 +274,7 @@ function Show-CvSetupWindow {
     [void](Set-CvGuiTheme -Form $form)
     # Al frente en cuanto se dibuje: lanzada desde un acceso directo MINIMIZADO, Windows la dejaria
     # detras de lo que estuvieras usando (ver Set-CvGuiForeground).
+    $form.Add_Shown({ Stop-CvSplashWindow -Splash $Splash })
     if ([bool]$Context.GuiBringToFront) { $form.Add_Shown({ [void](Set-CvGuiForeground -Form $form) }) }
     [void]$form.ShowDialog()
     $form.Dispose()

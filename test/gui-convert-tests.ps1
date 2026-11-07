@@ -589,11 +589,15 @@ foreach ($par in @(
     $cp = $palO[$par.P]
     Assert-Eq ("Arranque oscuro: {0} = {1} de la paleta" -f $par.S, $par.P) ("{0},{1},{2}" -f $cp.R, $cp.G, $cp.B) (@($splO[$par.S]) -join ',')
 }
-$splOsc = Start-CvSplashWindow -Title 'x' -Text 'x' -TimeoutSec 30 -Dark $true
+# En la barra de tareas, solo con el icono del programa: sin el, se queda fuera (no con el de WinForms).
+Assert-True 'Arranque: el icono de la app existe' (Test-Path -LiteralPath (Join-Path $Root 'icon.ico'))
+$splOsc = Start-CvSplashWindow -Title 'x' -Text 'x' -TimeoutSec 30 -Dark $true -IconPath (Join-Path $Root 'icon.ico')
 if ($null -ne $splOsc) {
     $espera = [Diagnostics.Stopwatch]::StartNew()
     while (-not [bool]$splOsc.State.Shown -and $espera.Elapsed.TotalSeconds -lt 10) { Start-Sleep -Milliseconds 50 }
     Assert-Eq   'Arranque oscuro: lleva sus colores' '32,32,32' (@($splOsc.State.Colors.Bottom) -join ',')
+    Assert-Eq   'Arranque: con el icono del programa' (Join-Path $Root 'icon.ico') "$($splOsc.State.Icon)"
+
     Stop-CvSplashWindow -Splash $splOsc
     Assert-True 'Arranque oscuro: se cierra' ([bool]$splOsc.Handle.IsCompleted)
 }
@@ -615,7 +619,8 @@ if ($null -ne $spl) {
     Assert-True 'Arranque: se cierra y suelta su hilo' ([bool]$spl.Handle.IsCompleted)
 }
 # Un plazo cumplido la cierra aunque nadie se lo pida (si quien la abrio se muere, no se queda).
-$splT = Start-CvSplashWindow -Title 'x' -Text 'x' -TimeoutSec 5
+$splT = Start-CvSplashWindow -Title 'x' -Text 'x' -TimeoutSec 5 -IconPath (Join-Path $tmpRoot 'no-hay.ico')
+Assert-Eq   'Arranque: sin icono, no lo inventa' '' "$($splT.State.Icon)"
 if ($null -ne $splT) {
     $espera = [Diagnostics.Stopwatch]::StartNew()
     while (-not $splT.Handle.IsCompleted -and $espera.Elapsed.TotalSeconds -lt 15) { Start-Sleep -Milliseconds 100 }

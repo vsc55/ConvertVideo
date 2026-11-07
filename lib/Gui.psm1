@@ -1053,6 +1053,8 @@ Add-Type -Namespace CvGui -Name Native -MemberDefinition @'
     public static extern bool AttachThreadInput(uint hiloA, uint hiloB, bool enganchar);
     [DllImport("kernel32.dll")]
     public static extern uint GetCurrentThreadId();
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern System.IntPtr SendMessage(System.IntPtr hwnd, int msg, System.IntPtr wp, string lp);
 '@ -ErrorAction SilentlyContinue
 
 $script:CvGuiTheme   = ''     # tema RESUELTO de esta sesion ('light' / 'dark')
@@ -1895,11 +1897,63 @@ function Add-CvGuiTabChanged {
     return $Tabs
 }
 
+function Get-CvGuiCenteredLocation {
+    <#
+        PURO. Donde poner una ventana de -Width x -Height para que quede CENTRADA en un area de
+        trabajo (-Area, la de un monitor) sin salirse por arriba ni por la izquierda si es mas grande.
+        Devuelve un System.Drawing.Point.
+    #>
+    param(
+        [Parameter(Mandatory)]$Area,
+        [int]$Width = 0,
+        [int]$Height = 0
+    )
+    $x = [int]$Area.X + [int][Math]::Floor(([int]$Area.Width - $Width) / 2)
+    $y = [int]$Area.Y + [int][Math]::Floor(([int]$Area.Height - $Height) / 2)
+    return (New-Object System.Drawing.Point([Math]::Max([int]$Area.X, $x), [Math]::Max([int]$Area.Y, $y)))
+}
+
+function Set-CvGuiStartScreen {
+    <#
+        Que una ventana que se abre se CENTRE en el monitor donde esta la ventana PRINCIPAL (la
+        primera abierta y a la vista), no donde este el raton. WinForms, con 'CenterScreen', usa el
+        monitor del RATON: con dos pantallas, un dialogo de la cola salia en la otra.
+
+        Solo toca las que iban a 'CenterScreen' (o a donde Windows quiera): las que se centran en su
+        dueno o tienen sitio propio se quedan como estan. Sin principal a la vista (la primera ventana,
+        o la principal escondida junto al reloj), tampoco. Las ventanas de OTRO hilo (la pantalla de
+        arranque) no cuentan: no se pueden tocar desde aqui. Nunca lanza.
+    #>
+    param([Parameter(Mandatory)]$Form)
+    try {
+        $pos = "$($Form.StartPosition)"
+        if ($pos -ne 'CenterScreen' -and $pos -ne 'WindowsDefaultLocation') { return $Form }
+        $ref = $null
+        foreach ($o in @([System.Windows.Forms.Application]::OpenForms)) {
+            if ($null -eq $o -or [object]::ReferenceEquals($o, $Form)) { continue }
+            if ($o.InvokeRequired -or -not $o.Visible) { continue }
+            if ($o.WindowState -eq [System.Windows.Forms.FormWindowState]::Minimized) { continue }
+            $ref = $o
+            break
+        }
+        if ($null -eq $ref) { return $Form }
+        $area = ([System.Windows.Forms.Screen]::FromControl($ref)).WorkingArea
+        $Form.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
+        # La posicion se calcula al CARGAR, con el tamano ya definitivo (hay ventanas que se ponen el
+        # suyo recordado despues de esta llamada).
+        $Form.Add_Load({
+            try { $Form.Location = Get-CvGuiCenteredLocation -Area $area -Width $Form.Width -Height $Form.Height } catch { }
+        }.GetNewClosure())
+    } catch { }
+    return $Form
+}
+
 function Set-CvGuiTheme {
     <#
         Aplica el tema a una ventana ENTERA, justo antes de ensenarla: colores por control, barra de
-        titulo oscura (DWM), las cabeceras de lista y barras de scroll en oscuro, y el icono de la
-        aplicacion (que no depende del tema, pero este es el sitio por el que pasan todas).
+        titulo oscura (DWM), las cabeceras de lista y barras de scroll en oscuro, el icono de la
+        aplicacion y el monitor donde sale (que no dependen del tema, pero este es el sitio por el
+        que pasan todas).
 
         -Theme es lo que diga la config ('system' / 'light' / 'dark'); sin el, el de la sesion. La
         barra de titulo se pide en Shown ademas de ahora: antes de que la ventana tenga handle, DWM
@@ -1912,8 +1966,10 @@ function Set-CvGuiTheme {
     $nombre = $(if ("$Theme" -ne '') { Set-CvGuiThemeDefault -Theme $Theme } else { Get-CvGuiThemeName })
     $pal = Get-CvGuiPalette -Theme $nombre
     # El icono de la aplicacion se pone aqui porque es el unico sitio por el que pasan TODAS las
-    # ventanas; no depende del tema (es el mismo en claro y en oscuro).
+    # ventanas; no depende del tema (es el mismo en claro y en oscuro). Por lo mismo, aqui se decide
+    # en que MONITOR sale: el de la ventana principal (Set-CvGuiStartScreen).
     [void](Set-CvGuiAppIcon -Form $Form)
+    [void](Set-CvGuiStartScreen -Form $Form)
     [void](Set-CvGuiThemeControl -Control $Form -Palette $pal)
     $oscuro = ($nombre -eq 'dark')
     $poner = {
@@ -1940,6 +1996,28 @@ function Set-CvGuiTheme {
         [void](Set-CvGuiThemeControl -Control $Form -Palette $pal)
     }.GetNewClosure())
     return $pal
+}
+
+function Set-CvGuiCueBanner {
+    <#
+        El texto GRIS de ejemplo dentro de un campo vacio ('Buscar...'), el que se va al escribir. Es
+        del propio Windows (EM_SETCUEBANNER), asi que sigue el tema del campo sin pintar nada. Con
+        -Always tambien se ve con el foco puesto (si no, se va al entrar, que en un buscador es justo
+        cuando hace falta). Necesita el control ya creado: se aplica en cuanto tenga ventana.
+        Nunca lanza: sin el ejemplo el campo funciona igual.
+    #>
+    param(
+        [Parameter(Mandatory)]$TextBox,
+        [string]$Text = '',
+        [bool]$Always = $true
+    )
+    $poner = {
+        try { [void][CvGui.Native]::SendMessage($TextBox.Handle, 0x1501, [System.IntPtr]([int]$Always), "$Text") } catch { }
+    }.GetNewClosure()
+    try {
+        if ($TextBox.IsHandleCreated) { & $poner } else { $TextBox.Add_HandleCreated($poner) }
+    } catch { }
+    return $TextBox
 }
 
 function Set-CvGuiForeground {

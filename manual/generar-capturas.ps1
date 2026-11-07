@@ -781,10 +781,18 @@ if (Test-Group 'setup') {
         if ($null -eq $f) { Wait-Step; return }
         $tr = @($f.Controls.Find('cvTree', $true))
         if ($tr.Count -eq 0 -or $tr[0].Nodes.Count -eq 0) { Wait-Step; return }
+        # Con el BUSCADOR en uso: es lo que mas ayuda a encontrar una opcion en un arbol tan largo.
         if ($script:step -eq 0) {
-            $n = & $script:findNode $tr[0].Nodes 'encode/video/videoEncoder'
-            if ($null -ne $n) { $tr[0].SelectedNode = $n; $n.EnsureVisible() }
+            $bus = @($f.Controls.Find('cvCfgSearch', $true))
+            if ($bus.Count -gt 0) { $bus[0].Text = 'sync' }
             $script:step = 1
+            return
+        }
+        if ($script:step -lt 4) { $script:step++; return }   # deja que el arbol se filtre
+        if ($script:step -eq 4) {
+            $n = & $script:findNode $tr[0].Nodes 'encode/audio/syncMaxAhead'
+            if ($null -ne $n) { $tr[0].SelectedNode = $n; $n.EnsureVisible() }
+            $script:step = 5
             return
         }
         $shotTimer.Stop()

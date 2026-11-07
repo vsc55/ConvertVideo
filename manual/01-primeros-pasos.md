@@ -83,6 +83,7 @@ Cada job se queda con la versión de FFmpeg con la que se preparó, así que un 
 
 Un árbol con todas las secciones y, a la derecha, la clave elegida: su valor (con el control que le toque — desplegable para las opciones cerradas, texto para números, una línea por elemento en las listas), **qué significa** y **cuál es el valor de fábrica**.
 
+- **El buscador de arriba** (o `Ctrl+F`) deja en el árbol solo lo que casa con lo que escribas: el nombre de la opción, lo que dice su ayuda, su valor o las opciones de su lista. Da igual con tilde o sin ella, y con varias palabras busca las que tengan todas. Salen también las avanzadas, aunque no esté marcada la casilla. `Intro` lleva al primer resultado y `Esc` lo borra.
 - **`Volver al valor por defecto`** deshace esa clave.
 - **`Mostrar opciones avanzadas`** enseña también las secciones que no se tocan a diario (como el catálogo de descargas).
 - Al **guardar** se escribe **solo lo que difiere del valor por defecto**: tu `config.json` no se llena de claves que no has cambiado, y lo que devuelves al default desaparece del fichero.

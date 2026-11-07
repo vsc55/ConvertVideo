@@ -904,6 +904,9 @@ function Get-CvConfigDefaults {
             # que config*.json trabajar en vez de abrir directo el de siempre: es Convert-gui-Config.cmd
             # sin cambiar de lanzador. Catalogo en Get-CvAskConfigKeys ('off' = nunca).
             askConfigKey       = 'shift'
+            # El BUSCADOR del editor de config filtra el arbol al dejar de escribir este rato (ms):
+            # rehacer el arbol en cada tecla, con 200 claves, se notaria al teclear.
+            configSearchDelayMs = 250
             # Cuando el editor del job se para a CONFIRMAR UN RECORTE (perfil con detectBorder 'true', o
             # un archivo que empieza por '_'), reproducir antes el ORIGINAL y luego CON EL RECORTE, como
             # hace la consola en ese mismo punto. Con $false, solo pregunta: los botones 'Ver original'
@@ -1006,7 +1009,14 @@ function Get-CvConfigHelp {
         concatena con (Get-CvConfigAdvancedMark)-, porque es metadato del editor y no texto: metido
         en la traduccion, un descuido al traducir desmarcaria la opcion sin que nadie lo notara.
     #>
-    @{
+    # CACHEADO por idioma: son ~200 Get-CvText y el editor la pedia una vez POR OPCION (via
+    # Test-CvConfigAdvanced): medido, abrir el editor tardaba 12 s, 8 de ellos aqui, y dejaba setup
+    # sin responder. Se devuelve una COPIA, para que quien la toque no estropee la de todos.
+    $idioma = "$(Get-CvLanguage)"
+    if ($null -ne $script:CvConfigHelpCache -and "$($script:CvConfigHelpCache.Lang)" -eq $idioma) {
+        return $script:CvConfigHelpCache.Map.Clone()
+    }
+    $map = @{
         'downloads' = ((Get-CvConfigAdvancedMark) + (Get-CvText -Key 'cfg.help.downloads'))
 
         'languages' = (Get-CvText -Key 'cfg.help.languages')
@@ -1211,6 +1221,7 @@ function Get-CvConfigHelp {
         'gui/splash' = (Get-CvText -Key 'cfg.help.gui.splash')
         'gui/splashTimeoutSec' = ((Get-CvConfigAdvancedMark) + (Get-CvText -Key 'cfg.help.gui.splashTimeoutSec'))
         'gui/askConfigKey' = (Get-CvText -Key 'cfg.help.gui.askConfigKey')
+        'gui/configSearchDelayMs' = ((Get-CvConfigAdvancedMark) + (Get-CvText -Key 'cfg.help.gui.configSearchDelayMs'))
         'gui/previewCropOnAsk' = (Get-CvText -Key 'cfg.help.gui.previewCropOnAsk')
         'gui/focusSaveCropPct' = (Get-CvText -Key 'cfg.help.gui.focusSaveCropPct')
         'gui/prepareAutoClose' = (Get-CvText -Key 'cfg.help.gui.prepareAutoClose')
@@ -1229,6 +1240,11 @@ function Get-CvConfigHelp {
         'profiles' = ((Get-CvConfigAdvancedMark) + (Get-CvText -Key 'cfg.help.profiles'))
         'defaultProfile' = (Get-CvText -Key 'cfg.help.defaultProfile')
     }
+    $script:CvConfigHelpCache = @{
+        Lang = $idioma
+        Map  = $map
+    }
+    return $map.Clone()
 }
 
 function Get-CvConfigPathKeys {

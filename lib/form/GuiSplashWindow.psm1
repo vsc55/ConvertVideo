@@ -59,7 +59,10 @@ function Start-CvSplashWindow {
         Abre la pantalla de arranque en su propio hilo y vuelve AL MOMENTO (no espera a que se vea).
         -Title (nombre y version) y -Text (lo que se esta haciendo). -TimeoutSec la cierra sola pase
         lo que pase: si quien la abrio se muere sin cerrarla, no se queda para siempre en pantalla.
-        -Dark, con los colores del tema oscuro (Get-CvSplashColors).
+        -Dark, con los colores del tema oscuro (Get-CvSplashColors). -IconPath, el .ico de la
+        aplicacion (icon.ico de la raiz, que es el mismo dibujo que el de las ventanas): sin el, su
+        boton de la barra de tareas salia con el icono generico de WinForms. Si no esta, la pantalla
+        no sale en la barra de tareas (mejor nada que un icono que no es el del programa).
 
         Devuelve el objeto que piden Set-CvSplashText / Stop-CvSplashWindow, o $null si no se pudo
         (sin GUI, sin runspace...): una pantalla de arranque nunca puede impedir arrancar.
@@ -69,7 +72,8 @@ function Start-CvSplashWindow {
         [string]$Text = '',
         [int]$TimeoutSec = 120,
         [int]$FrameMs = 40,
-        [bool]$Dark = $false
+        [bool]$Dark = $false,
+        [string]$IconPath = ''
     )
     try {
         $estado = [hashtable]::Synchronized(@{
@@ -80,6 +84,7 @@ function Start-CvSplashWindow {
             Timeout = [Math]::Max(5, $TimeoutSec)
             FrameMs = [Math]::Max(15, $FrameMs)
             Colors  = (Get-CvSplashColors -Dark $Dark)
+            Icon    = $(if ("$IconPath" -ne '' -and (Test-Path -LiteralPath $IconPath)) { "$IconPath" } else { '' })
         })
         $rs = [runspacefactory]::CreateRunspace()
         $rs.ApartmentState = 'STA'
@@ -98,7 +103,15 @@ function Start-CvSplashWindow {
             $f = New-Object System.Windows.Forms.Form
             $f.FormBorderStyle = 'None'
             $f.StartPosition   = 'CenterScreen'
-            $f.ShowInTaskbar   = $true
+            # En la barra de tareas solo con el icono del programa (con el generico de WinForms
+            # parecia otra cosa).
+            $f.ShowInTaskbar   = $false
+            if ("$($estado.Icon)" -ne '') {
+                try {
+                    $f.Icon = New-Object System.Drawing.Icon("$($estado.Icon)")
+                    $f.ShowInTaskbar = $true
+                } catch { }
+            }
             # SIEMPRE ENCIMA mientras dura. Lanzada desde un acceso directo MINIMIZADO, el proceso nace
             # sin derecho de primer plano y Windows la dejaba DETRAS de lo que estuvieras usando (el
             # explorador desde el que se abrio): Activate() no basta. TopMost es orden de apilado, no

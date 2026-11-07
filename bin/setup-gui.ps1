@@ -59,46 +59,84 @@ $modules = @(
     'form\GuiProfilesWindow'
     'form\GuiSplashWindow'
 )
-foreach ($m in $modules) {
+# Primero SOLO lo ligero, para sacar cuanto antes la PANTALLA DE ARRANQUE (gui.splash), igual que la
+# cola: setup tardaba varios segundos en salir sin nada a la vista. Lo demas carga con ella delante.
+$ligeros = @(
+    'Log'
+    'Io'
+    'I18n'
+    'Config'
+    'Context'
+    'form\GuiSplashWindow'
+)
+foreach ($m in $ligeros) {
     Import-Module (Join-Path $Lib ("{0}.psm1" -f $m)) -Force
 }
+$ini = Get-CvStartupPrefs -Root $Root -Path $Config
+[void](Set-CvLanguage -Lang $ini.Language)
+$splashTit = ("{0} {1}" -f (Get-CvAppName), (Get-CvVersion))
+$splashOscura = ((Resolve-CvGuiTheme -Theme "$($ini.Theme)" -SystemDark (Test-CvWindowsDarkMode)) -eq 'dark')
+$abrirSplash = {
+    param([string]$Key)
+    if (-not [bool]$ini.Splash) { return $null }
+    return (Start-CvSplashWindow -Title $splashTit -Text (Get-CvText -Key $Key) -TimeoutSec ([int]$ini.SplashTimeoutSec) `
+        -Dark $splashOscura -IconPath (Join-Path $Root 'icon.ico'))
+}
+$splash = & $abrirSplash 'splash.modulos'
 
-# Sin -Config se PREGUNTA que configuracion gestionar (config.json, config.debug.json, u otra), la
-# misma pregunta que hace setup.ps1 en consola y sobre la misma lista. Con -Config explicito no se
-# pregunta. Cancelar = no abrir nada.
-if ([string]::IsNullOrWhiteSpace($Config)) {
-    if (-not (Initialize-CvGui)) {
-        Write-Host (Get-CvText -Key 'sg.singui')
-        return
+try {
+    foreach ($m in $modules) {
+        # Los ligeros ya estan: volver a cargarlos con -Force solo costaria tiempo.
+        if ($null -ne (Get-Module -Name (Split-Path -Leaf $m))) { continue }
+        Import-Module (Join-Path $Lib ("{0}.psm1" -f $m)) -Force
     }
-    # El idioma de la sesion lo fija Start-CvSession con el config ELEGIDO, que es justo lo que se
-    # esta preguntando; para la pregunta se usa el del config por defecto.
-    [void](Set-CvLanguage -Lang (Get-CvStartupPrefs -Root $Root).Language)
-    $Config = Show-CvSetupConfigChooser -Root $Root
-    if ([string]::IsNullOrWhiteSpace($Config)) { return }   # cancelado por el usuario
+
+    # Sin -Config se PREGUNTA que configuracion gestionar (config.json, config.debug.json, u otra), la
+    # misma pregunta que hace setup.ps1 en consola y sobre la misma lista. Con -Config explicito no se
+    # pregunta. Cancelar = no abrir nada.
+    if ([string]::IsNullOrWhiteSpace($Config)) {
+        if (-not (Initialize-CvGui)) {
+            Write-Host (Get-CvText -Key 'sg.singui')
+            return
+        }
+        # El idioma de la sesion lo fija Start-CvSession con el config ELEGIDO, que es justo lo que se
+        # esta preguntando; para la pregunta vale el de las preferencias de arranque (arriba). La
+        # pantalla de arranque se quita mientras se elige (estaria encima del selector) y vuelve
+        # para lo que queda.
+        Stop-CvSplashWindow -Splash $splash
+        $Config = Show-CvSetupConfigChooser -Root $Root
+        if ([string]::IsNullOrWhiteSpace($Config)) { return }   # cancelado por el usuario
+        $splash = & $abrirSplash 'splash.sesion'
+    }
+    Set-CvSplashText -Splash $splash -Text (Get-CvText -Key 'splash.sesion')
+
+    # Arranque comun (config + contexto + marcas + log + apariencia + cabecera), igual que setup.ps1: asi
+    # la ventana usa EXACTAMENTE el mismo contexto y deja su propio transcript en logs\.
+    $sess    = Start-CvSession -Root $Root -Config $Config -TitleSuffix ' - Setup (ventana)' -Subtitle 'Setup' -LogPrefix 'setup-gui'
+    $ctx     = $sess.Context
+    $CfgPath = $sess.ConfigPath
+    $CfgName = Split-Path -Leaf $CfgPath
+    $logFile = $sess.LogFile
+
+    # Tema de las ventanas (gui.theme) para toda la sesion; ver Convert-gui.ps1.
+    [void](Set-CvGuiThemeDefault -Theme "$($ctx.GuiTheme)")
+
+    # 'Alterno' = NO es el config.json de junto al programa. Se compara la RUTA ya resuelta, no si vino
+    # -Config: ahora el chooser siempre rellena -Config, y elegir el normal no debe salir como alterno.
+    $isAlt = ($CfgPath -ne (Get-CvDefaultConfigPath -Root $Root))
+    Write-CvLog 'SETUP' (Get-CvText -Key 'sg.abriendo' -Values @($CfgName))
+
+    Set-CvSplashText -Splash $splash -Text (Get-CvText -Key 'splash.setup')
+    # La ventana quita la pantalla de arranque en cuanto se dibuja (-Splash).
+    $ok = Show-CvSetupWindow -Context $ctx -Root $Root -CfgPath $CfgPath -CfgName $CfgName -IsAlt $isAlt -CurrentLog "$logFile" -Splash $splash
+    if (-not $ok) {
+        Write-CvLog 'SETUP' (Get-CvText -Key 'sg.noventana')
+        Write-CvLog 'SETUP' (Get-CvText -Key 'sg.usaconsola')
+    }
+
+    Write-CvLog 'SETUP' (Get-CvText -Key 'cli.hecho')
+    if ($logFile) { Stop-CvLog }
+} finally {
+    # Por si algo ha salido antes de abrir la ventana (un error, cancelar el selector).
+    Stop-CvSplashWindow -Splash $splash
 }
-
-# Arranque comun (config + contexto + marcas + log + apariencia + cabecera), igual que setup.ps1: asi
-# la ventana usa EXACTAMENTE el mismo contexto y deja su propio transcript en logs\.
-$sess    = Start-CvSession -Root $Root -Config $Config -TitleSuffix ' - Setup (ventana)' -Subtitle 'Setup' -LogPrefix 'setup-gui'
-$ctx     = $sess.Context
-$CfgPath = $sess.ConfigPath
-$CfgName = Split-Path -Leaf $CfgPath
-$logFile = $sess.LogFile
-
-# Tema de las ventanas (gui.theme) para toda la sesion; ver Convert-gui.ps1.
-[void](Set-CvGuiThemeDefault -Theme "$($ctx.GuiTheme)")
-
-# 'Alterno' = NO es el config.json de junto al programa. Se compara la RUTA ya resuelta, no si vino
-# -Config: ahora el chooser siempre rellena -Config, y elegir el normal no debe salir como alterno.
-$isAlt = ($CfgPath -ne (Get-CvDefaultConfigPath -Root $Root))
-Write-CvLog 'SETUP' (Get-CvText -Key 'sg.abriendo' -Values @($CfgName))
-
-$ok = Show-CvSetupWindow -Context $ctx -Root $Root -CfgPath $CfgPath -CfgName $CfgName -IsAlt $isAlt -CurrentLog "$logFile"
-if (-not $ok) {
-    Write-CvLog 'SETUP' (Get-CvText -Key 'sg.noventana')
-    Write-CvLog 'SETUP' (Get-CvText -Key 'sg.usaconsola')
-}
-
-Write-CvLog 'SETUP' (Get-CvText -Key 'cli.hecho')
-if ($logFile) { Stop-CvLog }

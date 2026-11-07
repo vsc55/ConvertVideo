@@ -39,6 +39,7 @@ function Show-CvConfigWindow {
         Loading = $false     # $true mientras se rellenan los controles (evita marcar Dirty)
         Bold    = $null      # fuente de las claves editadas (se crea al montar el arbol)
         PickKind = ''        # 'folder'/'file' si la clave elegida es una ruta (ver Get-CvConfigPathKind)
+        Index   = $null      # indice del buscador (Get-CvCfgSearchIndex): se monta al buscar
     }
 
     $form = New-Object System.Windows.Forms.Form
@@ -75,16 +76,45 @@ function Show-CvConfigWindow {
         $split.Panel2MinSize = $p2Min
     })
 
-    # Panel izquierdo en REJILLA (interruptor arriba, arbol debajo). Con Dock Top+Fill el reparto
+    # Panel izquierdo en REJILLA (buscador, interruptor y arbol debajo). Con Dock Top+Fill el reparto
     # depende del z-order y el arbol quedaba RECORTADO por arriba, tapado por el interruptor.
     $leftGrid = New-Object System.Windows.Forms.TableLayoutPanel
     $leftGrid.Dock        = 'Fill'
     $leftGrid.ColumnCount = 1
-    $leftGrid.RowCount    = 2
+    $leftGrid.RowCount    = 3
     [void]$leftGrid.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 100)))
+    [void]$leftGrid.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute, 30)))
     [void]$leftGrid.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute, 26)))
     [void]$leftGrid.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 100)))
     $split.Panel1.Controls.Add($leftGrid)
+
+    # BUSCADOR: filtra el arbol por el nombre de la opcion, su ayuda, su valor o las opciones de su
+    # lista (Get-CvCfgSearchIndex / Find-CvCfgSearchHits). Al lado, cuantas opciones salen.
+    $findRow = New-Object System.Windows.Forms.TableLayoutPanel
+    $findRow.Dock        = 'Fill'
+    $findRow.ColumnCount = 2
+    $findRow.RowCount    = 1
+    $findRow.Margin      = New-Object System.Windows.Forms.Padding(0, 3, 0, 0)
+    [void]$findRow.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 100)))
+    [void]$findRow.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::AutoSize)))
+    [void]$findRow.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 100)))
+    $leftGrid.Controls.Add($findRow, 0, 0)
+
+    $txtFind = New-Object System.Windows.Forms.TextBox
+    $txtFind.Dock = 'Fill'
+    $txtFind.Name = 'cvCfgSearch'
+    $findRow.Controls.Add($txtFind, 0, 0)
+    [void](Set-CvGuiCueBanner -TextBox $txtFind -Text (Get-CvText -Key 'cfg.buscar'))
+    $tipFind = New-Object System.Windows.Forms.ToolTip
+    $tipFind.SetToolTip($txtFind, (Get-CvText -Key 'cfg.buscar.tip'))
+
+    $lblFind = New-Object System.Windows.Forms.Label
+    $lblFind.AutoSize  = $true
+    $lblFind.Anchor    = 'Left'
+    $lblFind.Margin    = New-Object System.Windows.Forms.Padding(6, 0, 4, 0)
+    $lblFind.ForeColor = (Get-CvGuiCurrentPalette).Muted
+    $lblFind.Name      = 'cvCfgSearchCount'
+    $findRow.Controls.Add($lblFind, 1, 0)
 
     # Interruptor de opciones avanzadas, encima del arbol. Sin marcar (lo normal) el arbol muestra solo
     # lo que se toca a diario; marcado, aparece todo (catalogo de descargas, betas, tuning...).
@@ -92,7 +122,7 @@ function Show-CvConfigWindow {
     $chkAdv.Dock     = 'Fill'
     $chkAdv.Text     = (Get-CvText -Key 'cfg.avanzadas')
     $chkAdv.Name     = 'cvAdvanced'
-    $leftGrid.Controls.Add($chkAdv, 0, 0)
+    $leftGrid.Controls.Add($chkAdv, 0, 1)
 
     $tree = New-Object System.Windows.Forms.TreeView
     $tree.Dock       = 'Fill'
@@ -101,7 +131,7 @@ function Show-CvConfigWindow {
     # Los controles que manipula el usuario van con .Name para poder encontrarlos (Controls.Find):
     # asi la bateria de humo puede dirigir la ventana sin raton (ver test\gui-tests.ps1).
     $tree.Name       = 'cvTree'
-    $leftGrid.Controls.Add($tree, 0, 1)
+    $leftGrid.Controls.Add($tree, 0, 2)
 
     # --- panel derecho: clave, control del valor, default y ayuda ---
     # En REJILLA (TableLayoutPanel), no en posiciones absolutas: con Location/Width fijos, al estrechar
@@ -262,6 +292,7 @@ function Show-CvConfigWindow {
         $old = Get-CvNodeVal $parent $key
         if ("$old" -ceq "$newVal" -and (Get-CvNodeKind $old) -ne 'array') { return }   # sin cambio real
         Set-CvNodeVal $parent $key $newVal
+        $st.Index = $null      # el buscador tambien mira el valor: se rehace la proxima vez
         if ($st.Node) {
             Update-CvCfgNodeText -TreeNode $st.Node -Value $newVal
             # Reevaluar el resaltado: si el valor deja de ser el de fabrica se marca, y si vuelve a
@@ -496,16 +527,27 @@ function Show-CvConfigWindow {
     # sigue estando visible. La etiqueta del check avisa si se quedan opciones EDITADAS ocultas.
     $buildTree = {
         $keep = "$($st.Path)"
-        $stats = @{ Hidden = 0 }
+        $stats = @{
+            Hidden  = 0
+            Matches = 0
+        }
+        # Con algo en el buscador, solo lo que casa (y las avanzadas tambien: ver Add-CvCfgNodes).
+        $match = $null
+        if ("$($txtFind.Text)".Trim() -ne '') {
+            if ($null -eq $st.Index) { $st.Index = Get-CvCfgSearchIndex -Node $st.Cfg }
+            $match = Find-CvCfgSearchHits -Index $st.Index -Query "$($txtFind.Text)"
+        }
         $tree.BeginUpdate()
         $tree.Nodes.Clear()
-        [void](Add-CvCfgNodes -Parent $tree -Node $st.Cfg -Path '' -BoldFont $st.Bold -ShowAdvanced $chkAdv.Checked -Stats $stats)
+        [void](Add-CvCfgNodes -Parent $tree -Node $st.Cfg -Path '' -BoldFont $st.Bold -ShowAdvanced $chkAdv.Checked -Stats $stats -Match $match)
         $tree.EndUpdate()
         $chkAdv.Text = if ($stats.Hidden -gt 0) {
             Get-CvText -Key 'cfg.avanzadas.n' -Values @($stats.Hidden)
         } else {
             Get-CvText -Key 'cfg.avanzadas'
         }
+        $lblFind.Text = $(if ($null -eq $match) { '' } elseif ([int]$stats.Matches -gt 0) { Get-CvText -Key 'cfg.buscar.n' -Values @($stats.Matches) } else { Get-CvText -Key 'cfg.buscar.nada' })
+        $lblFind.ForeColor = $(if ($null -ne $match -and [int]$stats.Matches -eq 0) { (Get-CvGuiCurrentPalette).Warn } else { (Get-CvGuiCurrentPalette).Muted })
         if ($keep) {
             $find = {
                 param($Nodes, [string]$P)
@@ -521,10 +563,61 @@ function Show-CvConfigWindow {
         }
     }
     $chkAdv.Add_CheckedChanged($buildTree)
+
+    # El buscador filtra al DEJAR de escribir (gui.configSearchDelayMs): rehacer 200 nodos en cada
+    # tecla se notaria al teclear.
+    $findTimer = New-Object System.Windows.Forms.Timer
+    $retardo = [int](Get-CvNodeVal (Get-CvNodeVal $st.Before 'gui') 'configSearchDelayMs')
+    $findTimer.Interval = $(if ($retardo -gt 0) { $retardo } else { [int](Get-CvConfigDefaultValue 'gui/configSearchDelayMs') })
+    $findTimer.Add_Tick({ $findTimer.Stop(); & $buildTree })
+    $txtFind.Add_TextChanged({ $findTimer.Stop(); $findTimer.Start() })
+    # El primer resultado (una opcion, no una seccion): a donde va Intro.
+    $firstLeaf = {
+        param($Nodes)
+        foreach ($n in $Nodes) {
+            if ($n.Nodes.Count -eq 0) { return $n }
+            $r = & $firstLeaf $n.Nodes
+            if ($r) { return $r }
+        }
+        return $null
+    }
+    $txtFind.Add_KeyDown({
+        param($s, $e)
+        if ($e.KeyCode -eq [System.Windows.Forms.Keys]::Escape) {
+            # Esc borra la busqueda (y NO cierra la ventana): el arbol vuelve entero.
+            $e.SuppressKeyPress = $true
+            $e.Handled = $true
+            $txtFind.Text = ''
+            $findTimer.Stop()
+            & $buildTree
+        } elseif ($e.KeyCode -eq [System.Windows.Forms.Keys]::Enter -or $e.KeyCode -eq [System.Windows.Forms.Keys]::Down) {
+            # Intro / flecha abajo: al primer resultado, con el arbol ya filtrado aunque no haya
+            # pasado el rato de espera.
+            $e.SuppressKeyPress = $true
+            $e.Handled = $true
+            if ($findTimer.Enabled) { $findTimer.Stop(); & $buildTree }
+            $n = & $firstLeaf $tree.Nodes
+            if ($n) { $tree.SelectedNode = $n; $n.EnsureVisible() }
+            [void]$tree.Focus()
+        }
+    })
+    # Ctrl+F, este donde este el foco, lleva al buscador.
+    $form.KeyPreview = $true
+    $form.Add_KeyDown({
+        param($s, $e)
+        if ($e.Control -and $e.KeyCode -eq [System.Windows.Forms.Keys]::F) {
+            $e.SuppressKeyPress = $true
+            $e.Handled = $true
+            [void]$txtFind.Focus()
+            $txtFind.SelectAll()
+        }
+    })
     & $buildTree
     & $layoutBar
     [void](Set-CvGuiTheme -Form $form)   # tema de la sesion
     [void]$form.ShowDialog()
+    $findTimer.Dispose()
+    $tipFind.Dispose()
     $form.Dispose()
     return $st.Saved
 }

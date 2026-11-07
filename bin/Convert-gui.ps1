@@ -131,7 +131,8 @@ $splashOscura = ((Resolve-CvGuiTheme -Theme "$($ini.Theme)" -SystemDark (Test-Cv
 $abrirSplash = {
     param([string]$Key)
     if (-not [bool]$ini.Splash) { return $null }
-    return (Start-CvSplashWindow -Title $splashTit -Text (Get-CvText -Key $Key) -TimeoutSec ([int]$ini.SplashTimeoutSec) -Dark $splashOscura)
+    return (Start-CvSplashWindow -Title $splashTit -Text (Get-CvText -Key $Key) -TimeoutSec ([int]$ini.SplashTimeoutSec) `
+        -Dark $splashOscura -IconPath (Join-Path $Root 'icon.ico'))
 }
 $splash = & $abrirSplash 'splash.modulos'
 

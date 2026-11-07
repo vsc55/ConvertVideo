@@ -406,6 +406,37 @@ $cntCfg = [pscustomobject]@{
 }
 Assert-Eq 'Editadas: cuenta solo lo distinto' 1 (Get-CvCfgModifiedCount -Node $cntCfg -Path '')
 
+# Las ventanas se centran en el monitor de la PRINCIPAL: el calculo, puro.
+[void](Initialize-CvGui)   # System.Drawing, para el rectangulo del monitor
+$cArea = New-Object System.Drawing.Rectangle(-1920, 0, 1920, 1040)
+$cPos  = Get-CvGuiCenteredLocation -Area $cArea -Width 1000 -Height 600
+Assert-Eq   'Monitor: centrada en el de la izquierda' '-1460,220' ("{0},{1}" -f $cPos.X, $cPos.Y)
+$cPos  = Get-CvGuiCenteredLocation -Area $cArea -Width 2500 -Height 1500
+Assert-Eq   'Monitor: mas grande que el monitor, pegada arriba a la izquierda' '-1920,0' ("{0},{1}" -f $cPos.X, $cPos.Y)
+
+# BUSCADOR del editor: sin tildes ni mayusculas, todas las palabras, y mira nombre, ayuda y valor.
+Assert-Eq   'Buscar: sin tildes ni mayusculas' 'sincronia del audio' (ConvertTo-CvCfgSearchText -Text ('Sincron{0}a del AUDIO' -f [char]0x00ED))
+$bIdx = Get-CvCfgSearchIndex -Node (Get-CvConfigDefaults)
+Assert-True 'Buscar: indexa secciones y claves' ($bIdx.ContainsKey('encode') -and $bIdx.ContainsKey('encode/audio/syncMaxAhead'))
+Assert-Eq   'Buscar: vacio no filtra'           $null (Find-CvCfgSearchHits -Index $bIdx -Query '   ')
+$bHit = Find-CvCfgSearchHits -Index $bIdx -Query 'syncmaxahead'
+Assert-True 'Buscar: por el nombre de la clave' $bHit.ContainsKey('encode/audio/syncMaxAhead')
+Assert-True 'Buscar: con la ruta de los docs'   (Find-CvCfgSearchHits -Index $bIdx -Query 'encode.audio.syncMaxAhead').ContainsKey('encode/audio/syncMaxAhead')
+# Por la AYUDA: 'notificacion' (sin tilde) sale de la ayuda de minimizeToTray, que la lleva.
+Assert-True 'Buscar: por la ayuda, sin tildes'  (Find-CvCfgSearchHits -Index $bIdx -Query 'area notificacion').ContainsKey('gui/minimizeToTray')
+# Todas las palabras: una que no esta deja fuera la clave.
+Assert-Eq   'Buscar: todas las palabras'        $false ((Find-CvCfgSearchHits -Index $bIdx -Query 'syncmaxahead zzzz').ContainsKey('encode/audio/syncMaxAhead'))
+# Por el VALOR y por las opciones de su lista (Get-CvEditorOptions).
+Assert-True 'Buscar: por el valor'              (Find-CvCfgSearchHits -Index $bIdx -Query 'hevc_nvenc').ContainsKey('encode/video/videoEncoder')
+Assert-True 'Buscar: por las opciones de la lista' (Find-CvCfgSearchHits -Index $bIdx -Query 'squareheight').ContainsKey('encode/video/anamorphic')
+Assert-True 'Buscar: por la descripcion de una opcion' (Find-CvCfgSearchHits -Index $bIdx -Query 'punto parpadea').ContainsKey('gui/trayAnimation')
+# Una seccion sale entera solo por su NOMBRE; por una palabra de su ayuda, solo las opciones que casen.
+$bSec = Find-CvCfgSearchHits -Index $bIdx -Query 'sincronia audio'
+Assert-Eq   'Buscar: la seccion no casa por su ayuda' $false $bSec.ContainsKey('encode/audio')
+Assert-True 'Buscar: pero sus opciones si'      $bSec.ContainsKey('encode/audio/syncAdelay')
+Assert-Eq   'Buscar: y no las que no tienen que ver' $false $bSec.ContainsKey('encode/audio/hz')
+Assert-True 'Buscar: la seccion, por su nombre' (Find-CvCfgSearchHits -Index $bIdx -Query 'audio').ContainsKey('encode/audio')
+
 # ================================================================================================
 Write-Host "`nSetupCore - configuraciones que se ofrecen al arrancar sin -Config" -ForegroundColor Cyan
 # Solo existe config.json en el root temporal: aun asi debe salir el 1o y marcado como default.
@@ -602,6 +633,40 @@ if (-not $sta) {
             $tree.SelectedNode = (& $findNode $tree.Nodes 'behavior/workers')
             $script:pickNo   = $pick.Visible
 
+            # 0b2) MONITOR: un dialogo abierto desde aqui sale centrado en el monitor de esta ventana
+            #      (WinForms usaba el del raton). Se crea, se le aplica el tema y se mira su sitio.
+            $dlg = New-Object System.Windows.Forms.Form
+            $dlg.Size = New-Object System.Drawing.Size(300, 200)
+            $dlg.StartPosition = 'CenterScreen'
+            [void](Set-CvGuiTheme -Form $dlg)
+            $dlg.Show()
+            $esperado = Get-CvGuiCenteredLocation -Area ([System.Windows.Forms.Screen]::FromControl($f)).WorkingArea -Width $dlg.Width -Height $dlg.Height
+            $script:monDlg = ("{0},{1}" -f $dlg.Location.X, $dlg.Location.Y)
+            $script:monEsp = ("{0},{1}" -f $esperado.X, $esperado.Y)
+            $dlg.Close()
+            $dlg.Dispose()
+
+            # 0c) BUSCADOR: filtra al dejar de escribir; salen tambien las AVANZADAS (la casilla esta
+            #     sin marcar) y lo que no casa se va. Al vaciarlo vuelve el arbol entero.
+            $busca = $f.Controls.Find('cvCfgSearch', $true)[0]
+            $cuenta = $f.Controls.Find('cvCfgSearchCount', $true)[0]
+            $esperaArbol = {
+                $sw = [Diagnostics.Stopwatch]::StartNew()
+                while ($sw.ElapsedMilliseconds -lt 1200) { [System.Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 30 }
+            }
+            $busca.Text = 'syncCrossWindow'
+            & $esperaArbol
+            $script:busAdv   = ($null -ne (& $findNode $tree.Nodes 'encode/audio/syncCrossWindow'))
+            $script:busFuera = ($null -eq (& $findNode $tree.Nodes 'encode/video/videoEncoder'))
+            $script:busCuenta = "$($cuenta.Text)"
+            $busca.Text = 'zzzz no existe'
+            & $esperaArbol
+            $script:busNada  = ($tree.Nodes.Count -eq 0)
+            $script:busNadaTxt = "$($cuenta.Text)"
+            $busca.Text = ''
+            & $esperaArbol
+            $script:busVuelve = ($null -ne (& $findNode $tree.Nodes 'encode/video/videoEncoder')) -and ($null -eq (& $findNode $tree.Nodes 'downloads'))
+
             # 1) NUMERO: behavior/workers 3 -> 5, sin salir del campo (lo confirma el cambio de nodo).
             $tree.SelectedNode = (& $findNode $tree.Nodes 'behavior/workers')
             $script:sawText = $text.Visible
@@ -643,6 +708,13 @@ if (-not $sta) {
     Assert-True 'Rutas: una carpeta lleva boton de buscar'   $script:pickDir
     Assert-True 'Rutas: un programa tambien'                 $script:pickFile
     Assert-True 'Rutas: una clave normal no lo lleva'        (-not $script:pickNo)
+    Assert-Eq   'Monitor: el dialogo sale en el de la ventana principal' $script:monEsp $script:monDlg
+    Assert-True 'Buscar: encuentra una avanzada sin marcar la casilla' $script:busAdv
+    Assert-True 'Buscar: lo que no casa se va'               $script:busFuera
+    Assert-Eq   'Buscar: dice cuantas salen'                 (Get-CvText -Key 'cfg.buscar.n' -Values @(1)) $script:busCuenta
+    Assert-True 'Buscar: sin nada, arbol vacio'              $script:busNada
+    Assert-Eq   'Buscar: y lo dice'                          (Get-CvText -Key 'cfg.buscar.nada') $script:busNadaTxt
+    Assert-True 'Buscar: al vaciarlo vuelve el arbol normal' $script:busVuelve
     Assert-True 'Guardado confirmado'     $saved
     Assert-True 'Numero -> cuadro de texto' $script:sawText
     Assert-True 'Enum -> desplegable'       $script:sawCombo
